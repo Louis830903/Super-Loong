@@ -1,0 +1,12 @@
+# 运行时数据（不应被 Git 追踪）
+data/
+gateway_state.json
+gateway_state.tmp
+.media/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.env

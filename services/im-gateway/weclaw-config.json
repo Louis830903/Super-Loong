@@ -1,0 +1,12 @@
+{
+  "agents": {
+    "super-agent": {
+      "type": "http",
+      "endpoint": "http://localhost:8642/weclaw/chat",
+      "headers": {
+        "X-API-Key": ""
+      },
+      "default": true
+    }
+  }
+}

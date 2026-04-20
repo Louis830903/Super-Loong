@@ -1,0 +1,49 @@
+# ====== 依赖与构建 ======
+node_modules/
+dist/
+.next/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# ====== 环境配置（含密钥）======
+.env
+.env.local
+
+# ====== 数据库文件 ======
+*.db
+*.db-journal
+*.db.bak
+*.bak
+data/super-agent.db
+data/super-agent.db.bak
+data/backups/
+data/cache/
+data/logs/
+data/sessions/
+
+# ====== 会话记录（含用户聊天数据）======
+packages/api/data/sessions/
+data/sessions/
+
+# ====== 个人测试文件 ======
+*.mp3
+*.png
+*.xlsx
+test-api.mjs
+tsc_*.txt
+check_mic.ps1
+信息收集表单.html
+精酿啤酒电商销售策略分析报告.md
+
+# ====== Python ======
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+
+# ====== 系统文件 ======
+.DS_Store
+*.log
+Thumbs.db

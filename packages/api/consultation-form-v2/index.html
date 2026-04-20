@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>预约咨询表单</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            background: #fff;
+            border-radius: 16px;
+            padding: 30px 20px;
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+
+        .header {
+            margin-bottom: 25px;
+        }
+
+        .header h1 {
+            color: #1a1a1a;
+            font-size: 22px;
+            font-weight: 600;
+        }
+
+        .header .subtitle {
+            color: #999;
+            font-size: 13px;
+            margin-top: 6px;
+        }
+
+        .form-item {
+            margin-bottom: 18px;
+        }
+
+        .form-item label {
+            display: block;
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .form-item label::after {
+            content: '*';
+            color: #ff4d4f;
+            margin-left: 4px;
+        }
+
+        .form-item input,
+        .form-item textarea {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            background: #fafafa;
+            transition: all 0.2s;
+        }
+
+        .form-item input:focus,
+        .form-item textarea:focus {
+            background: #fff;
+            border-color: #1890ff;
+            outline: none;
+        }
+
+        .form-item input::placeholder,
+        .form-item textarea::placeholder {
+            color: #bbb;
+        }
+
+        .form-item textarea {
+            min-height: 90px;
+            resize: vertical;
+        }
+
+        .btn-submit {
+            width: 100%;
+            padding: 14px;
+            background: #1890ff;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: opacity 0.2s;
+        }
+
+        .btn-submit:active {
+            opacity: 0.85;
+        }
+
+        .btn-submit:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .tips {
+            margin-top: 20px;
+            padding: 12px;
+            background: #f6ffed;
+            border: 1px solid #b7eb8f;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #52c41a;
+        }
+
+        .success-page {
+            display: none;
+            text-align: center;
+            padding: 50px 20px;
+        }
+
+        .success-icon {
+            width: 70px;
+            height: 70px;
+            background: #52c41a;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            color: #fff;
+            font-size: 36px;
+        }
+
+        .success-page h2 {
+            color: #333;
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+
+        .success-page p {
+            color: #999;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 表单页面 -->
+        <div id="formPage">
+            <div class="header">
+                <h1>预约咨询</h1>
+                <div class="subtitle">请填写您的信息，我们将尽快安排</div>
+            </div>
+
+            <form id="infoForm">
+                <div class="form-item">
+                    <label>您的姓名</label>
+                    <input type="text" name="name" placeholder="请输入姓名" required>
+                </div>
+
+                <div class="form-item">
+                    <label>联系电话</label>
+                    <input type="tel" name="phone" placeholder="请输入11位手机号" maxlength="11" required>
+                </div>
+
+                <div class="form-item">
+                    <label>预约时间</label>
+                    <input type="datetime-local" name="time" required>
+                </div>
+
+                <div class="form-item">
+                    <label>咨询内容</label>
+                    <textarea name="question" placeholder="请简述您需要咨询的问题..." required></textarea>
+                </div>
+
+                <button type="submit" class="btn-submit" id="submitBtn">立即提交</button>
+            </form>
+
+            <div class="tips">
+                💡 提示：请确保联系方式准确，方便我们与您取得联系
+            </div>
+        </div>
+
+        <!-- 成功页面 -->
+        <div id="successPage" class="success-page">
+            <div class="success-icon">✓</div>
+            <h2>提交成功</h2>
+            <p>感谢您的预约<br>我们的工作人员将在24小时内与您联系</p>
+        </div>
+    </div>
+
+    <script>
+        // 设置最小时间
+        const timeInput = document.querySelector('input[name="time"]');
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        timeInput.min = now.toISOString().slice(0, 16);
+
+        // 表单提交
+        document.getElementById('infoForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const data = Object.fromEntries(formData);
+            
+            // 手机号校验
+            if (!/^1[3-9]\d{9}$/.test(data.phone)) {
+                alert('请输入正确的手机号');
+                return;
+            }
+
+            const btn = document.getElementById('submitBtn');
+            btn.disabled = true;
+            btn.textContent = '提交中...';
+
+            // 模拟提交
+            setTimeout(() => {
+                console.log('提交数据:', data);
+                document.getElementById('formPage').style.display = 'none';
+                document.getElementById('successPage').style.display = 'block';
+            }, 1000);
+        });
+
+        // 限制手机号输入
+        document.querySelector('input[name="phone"]').addEventListener('input', function(e) {
+            e.target.value = e.target.value.replace(/\D/g, '');
+        });
+    </script>
+</body>
+</html>
