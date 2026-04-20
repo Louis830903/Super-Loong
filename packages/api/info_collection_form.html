@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>信息收集表</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 480px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px 25px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: #888;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            color: #555;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .form-group label .required {
+            color: #e74c3c;
+            margin-left: 2px;
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e8e8e8;
+            border-radius: 12px;
+            font-size: 15px;
+            color: #333;
+            background: #fafafa;
+            transition: all 0.3s ease;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            background: #fff;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-group input.error,
+        .form-group textarea.error {
+            border-color: #e74c3c;
+            background: #fdf2f2;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .radio-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .radio-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            background: #fafafa;
+            border: 2px solid #e8e8e8;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .radio-item:hover {
+            background: #f0f0f0;
+        }
+
+        .radio-item.selected {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .radio-item input[type="radio"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 12px;
+            accent-color: #667eea;
+            cursor: pointer;
+        }
+
+        .radio-item label {
+            margin: 0;
+            cursor: pointer;
+            flex: 1;
+            color: #555;
+        }
+
+        .error-message {
+            color: #e74c3c;
+            font-size: 12px;
+            margin-top: 6px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .submit-btn:active {
+            transform: translateY(0);
+        }
+
+        .submit-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 20px;
+            padding: 40px 30px;
+            text-align: center;
+            max-width: 320px;
+            width: 100%;
+            animation: modalIn 0.3s ease;
+        }
+
+        @keyframes modalIn {
+            from {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto 20px;
+        }
+
+        .success-icon::after {
+            content: '✓';
+            color: white;
+            font-size: 40px;
+            font-weight: bold;
+        }
+
+        .modal-content h2 {
+            color: #333;
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+
+        .modal-content p {
+            color: #888;
+            font-size: 14px;
+            margin-bottom: 25px;
+        }
+
+        .modal-btn {
+            padding: 12px 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            cursor: pointer;
+        }
+
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .submit-btn.loading .spinner {
+            display: inline-block;
+        }
+
+        .submit-btn.loading .btn-text {
+            display: none;
+        }
+
+        @media (max-width: 380px) {
+            .container {
+                padding: 25px 20px;
+            }
+            .header h1 {
+                font-size: 22px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 信息收集表</h1>
+            <p>请填写以下信息，我们会尽快与您联系</p>
+        </div>
+
+        <form id="infoForm">
+            <div class="form-group">
+                <label>姓名 <span class="required">*</span></label>
+                <input type="text" name="name" id="name" placeholder="请输入您的姓名">
+                <span class="error-message" id="nameError">请输入姓名</span>
+            </div>
+
+            <div class="form-group">
+                <label>联系电话 <span class="required">*</span></label>
+                <input type="tel" name="phone" id="phone" placeholder="请输入11位手机号码">
+                <span class="error-message" id="phoneError">请输入正确的手机号码</span>
+            </div>
+
+            <div class="form-group">
+                <label>电子邮箱 <span class="required">*</span></label>
+                <input type="email" name="email" id="email" placeholder="请输入您的邮箱地址">
+                <span class="error-message" id="emailError">请输入正确的邮箱地址</span>
+            </div>
+
+            <div class="form-group">
+                <label>联系地址 <span class="required">*</span></label>
+                <input type="text" name="address" id="address" placeholder="请输入您的详细地址">
+                <span class="error-message" id="addressError">请输入地址</span>
+            </div>
+
+            <div class="form-group">
+                <label>咨询问题类型 <span class="required">*</span></label>
+                <div class="radio-group">
+                    <div class="radio-item">
+                        <input type="radio" name="question" id="q1" value="产品咨询">
+                        <label for="q1">📦 产品咨询</label>
+                    </div>
+                    <div class="radio-item">
+                        <input type="radio" name="question" id="q2" value="技术支持">
+                        <label for="q2">🔧 技术支持</label>
+                    </div>
+                    <div class="radio-item">
+                        <input type="radio" name="question" id="q3" value="售后服务">
+                        <label for="q3">🛠️ 售后服务</label>
+                    </div>
+                    <div class="radio-item">
+                        <input type="radio" name="question" id="q4" value="商务合作">
+                        <label for="q4">🤝 商务合作</label>
+                    </div>
+                    <div class="radio-item">
+                        <input type="radio" name="question" id="q5" value="其他问题">
+                        <label for="q5">💬 其他问题</label>
+                    </div>
+                </div>
+                <span class="error-message" id="questionError">请选择咨询问题类型</span>
+            </div>
+
+            <div class="form-group">
+                <label>问题描述</label>
+                <textarea name="description" id="description" placeholder="请详细描述您遇到的问题或需求（选填）"></textarea>
+            </div>
+
+            <button type="submit" class="submit-btn" id="submitBtn">
+                <span class="spinner"></span>
+                <span class="btn-text">提交信息</span>
+            </button>
+        </form>
+    </div>
+
+    <div class="modal" id="successModal">
+        <div class="modal-content">
+            <div class="success-icon"></div>
+            <h2>提交成功！</h2>
+            <p>您的信息已收到，我们会尽快与您联系</p>
+            <button class="modal-btn" onclick="closeModal()">确定</button>
+        </div>
+    </div>
+
+    <script>
+        const validators = {
+            name: {
+                required: true,
+                validate: (value) => value.trim().length >= 2,
+                message: '请输入姓名（至少2个字符）'
+            },
+            phone: {
+                required: true,
+                validate: (value) => /^1[3-9]\d{9}$/.test(value),
+                message: '请输入正确的11位手机号码'
+            },
+            email: {
+                required: true,
+                validate: (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
+                message: '请输入正确的邮箱地址'
+            },
+            address: {
+                required: true,
+                validate: (value) => value.trim().length >= 5,
+                message: '请输入详细地址（至少5个字符）'
+            },
+            question: {
+                required: true,
+                validate: () => document.querySelector('input[name="question"]:checked') !== null,
+                message: '请选择咨询问题类型'
+            }
+        };
+
+        document.querySelectorAll('input, textarea').forEach(field => {
+            field.addEventListener('blur', () => validateField(field));
+            field.addEventListener('input', () => {
+                if (field.classList.contains('error')) {
+                    validateField(field);
+                }
+            });
+        });
+
+        document.querySelectorAll('input[name="question"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                document.querySelectorAll('.radio-item').forEach(item => {
+                    item.classList.remove('selected');
+                });
+                this.closest('.radio-item').classList.add('selected');
+                document.getElementById('questionError').classList.remove('show');
+            });
+        });
+
+        function validateField(field) {
+            const fieldName = field.name;
+            const validator = validators[fieldName];
+            if (!validator) return true;
+
+            let value = field.value;
+            if (fieldName === 'question') {
+                value = document.querySelector('input[name="question"]:checked')?.value || '';
+            }
+
+            const isValid = !validator.required || validator.validate(value);
+            const errorElement = document.getElementById(fieldName + 'Error');
+
+            if (isValid) {
+                field.classList.remove('error');
+                if (errorElement) errorElement.classList.remove('show');
+            } else {
+                field.classList.add('error');
+                if (errorElement) {
+                    errorElement.textContent = validator.message;
+                    errorElement.classList.add('show');
+                }
+            }
+            return isValid;
+        }
+
+        document.getElementById('infoForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            let isFormValid = true;
+            for (let fieldName in validators) {
+                const field = document.querySelector(`[name="${fieldName}"]`);
+                if (!validateField(field)) {
+                    isFormValid = false;
+                }
+            }
+
+            if (!isFormValid) {
+                const firstError = document.querySelector('.error');
+                if (firstError) {
+                    firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    firstError.focus();
+                }
+                return;
+            }
+
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.classList.add('loading');
+            submitBtn.disabled = true;
+
+            const formData = {
+                name: document.getElementById('name').value.trim(),
+                phone: document.getElementById('phone').value.trim(),
+                email: document.getElementById('email').value.trim(),
+                address: document.getElementById('address').value.trim(),
+                question: document.querySelector('input[name="question"]:checked').value,
+                description: document.getElementById('description').value.trim(),
+                submitTime: new Date().toLocaleString('zh-CN')
+            };
+
+            console.log('表单数据:', formData);
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            document.getElementById('successModal').classList.add('show');
+            submitBtn.classList.remove('loading');
+            submitBtn.disabled = false;
+        });
+
+        function closeModal() {
+            document.getElementById('successModal').classList.remove('show');
+            document.getElementById('infoForm').reset();
+            document.querySelectorAll('.radio-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            document.querySelectorAll('.error').forEach(el => el.classList.remove('error'));
+            document.querySelectorAll('.error-message').forEach(el => el.classList.remove('show'));
+        }
+
+        document.getElementById('successModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeModal();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+# ===== Dependencies =====
+node_modules/
+.venv/
+
+# ===== Build Outputs =====
+dist/
+.next/
+*.tsbuildinfo
+
+# ===== Environment & Secrets =====
+.env
+.env.local
+.env.*.local
+
+# ===== Runtime Data (auto-created on startup) =====
+*.db
+*.db.bak
+data/super-agent.db
+data/super-agent.db.bak
+data/sessions/
+data/logs/
+data/cache/
+data/backups/
+packages/*/data/
+packages/*/logs/
+services/*/data/gateway_state.json
+services/*/data/gateway_sessions.json
+services/*/gateway_state.json
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== OS & Editor =====
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+*~
+
+# ===== Python =====
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ===== Test & Coverage =====
+coverage/
+
+# ===== Media & Temp (test artifacts) =====
+*.mp3
+*.wav
+*.png
+*.xlsx
+.media/

@@ -1,0 +1,26 @@
+{
+  "name": "super-agent",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Modular AI Agent Platform with persistent memory, self-evolution, multi-agent collaboration, and IM gateway",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:api": "pnpm --filter @super-agent/api dev",
+    "dev:web": "pnpm --filter @super-agent/web dev",
+    "dev:gateway": "cd services/im-gateway && python server.py",
+    "build": "pnpm -r build",
+    "build:api": "pnpm --filter @super-agent/api build",
+    "build:web": "pnpm --filter @super-agent/web build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "clean": "pnpm -r clean"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "dependencies": {
+    "skillhub": "^0.2.11"
+  }
+}
