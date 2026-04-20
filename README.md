@@ -1,425 +1,460 @@
-# Super Loong — 模块化 AI Agent 平台
+<div align="center">
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-green)](https://nodejs.org/)
-[![Python](https://img.shields.io/badge/Python-%3E%3D3.10-blue)](https://www.python.org/)
-[![pnpm](https://img.shields.io/badge/pnpm-%3E%3D9.0.0-orange)](https://pnpm.io/)
-
-> 具备持久记忆、自我演化、多 Agent 协作和 IM 网关的通用 AI Agent 平台。
-
----
-
-## 目录
-
-- [功能亮点](#功能亮点)
-- [系统要求](#系统要求)
-- [一键安装](#一键安装)
-  - [Windows](#windows)
-  - [macOS](#macos)
-  - [Linux (Ubuntu/Debian)](#linux-ubuntudebian)
-- [环境配置](#环境配置)
-- [启动项目](#启动项目)
-- [项目结构](#项目结构)
-- [IM 平台接入（可选）](#im-平台接入可选)
-- [常用命令](#常用命令)
-- [常见问题](#常见问题)
-- [许可证](#许可证)
-
----
-
-## 功能亮点
-
-- **多模型支持** — OpenAI / Anthropic / Ollama，统一 LLM 接口
-- **三层记忆系统** — Core Memory + Recall + Archival，跨会话持久化
-- **自我演化引擎** — Agent 自动分析对话，提出并应用改进方案
-- **多 Agent 协作** — Supervisor 编排器，支持子 Agent 并行执行
-- **IM 全平台网关** — 飞书 / 企业微信 / 钉钉 / 微信 / Telegram / Discord / Slack
-- **安全沙箱** — Process / Docker / SSH 三级隔离执行代码
-- **技能热加载** — Markdown 定义技能，运行时动态加载
-- **MCP 工具集成** — Model Context Protocol 标准工具注册
-- **语音交互** — STT（语音转文字）+ TTS（文字转语音）
-- **Web 管理面板** — Next.js 全功能管理界面
-
----
-
-## 系统要求
-
-| 依赖 | 版本要求 | 用途 |
-|------|---------|------|
-| **Node.js** | >= 20.0.0 | API 服务 + Web 前端 |
-| **pnpm** | >= 9.0.0 | monorepo 包管理 |
-| **Python** | >= 3.10 | IM 网关服务 |
-| **Git** | 任意版本 | 版本控制 |
-
-> Python 和 IM 网关为**可选组件**。如果不需要 IM 平台接入，可以跳过 Python 安装，
-> 在 `.env` 中设置 `DISABLE_IM_GATEWAY=true` 即可。
-
----
-
-## 一键安装
-
-### Windows
-
-**前置条件安装：**
-
-```powershell
-# 1. 安装 Node.js 20+（如果已安装可跳过）
-#    推荐方式：从 https://nodejs.org/ 下载 LTS 版本安装包
-#    或使用 winget：
-winget install OpenJS.NodeJS.LTS
-
-# 2. 安装 pnpm
-npm install -g pnpm
-
-# 3. 安装 Python 3.10+（如需 IM 网关）
-#    推荐方式：从 https://www.python.org/ 下载安装包
-#    安装时勾选 "Add Python to PATH"
-#    或使用 winget：
-winget install Python.Python.3.12
+```
+  ███████╗██╗   ██╗██████╗ ███████╗██████╗     ██╗      ██████╗  ██████╗ ███╗   ██╗ ██████╗ 
+  ██╔════╝██║   ██║██╔══██╗██╔════╝██╔══██╗    ██║     ██╔═══██╗██╔═══██╗████╗  ██║██╔════╝ 
+  ███████╗██║   ██║██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║   ██║██╔██╗ ██║██║  ███╗
+  ╚════██║██║   ██║██╔═══╝ ██╔══╝  ██╔══██╗    ██║     ██║   ██║██║   ██║██║╚██╗██║██║   ██║
+  ███████║╚██████╔╝██║     ███████╗██║  ██║    ███████╗╚██████╔╝╚██████╔╝██║ ╚████║╚██████╔╝
+  ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═╝    ╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ 
 ```
 
-**项目安装：**
+### *An AI that remembers, evolves, and never stops thinking.*
 
-```powershell
-# 克隆仓库
-git clone https://github.com/Louis830903/Super-Loong.git
-cd Super-Loong
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-≥20-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Python](https://img.shields.io/badge/Python-≥3.10-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
+[![Fastify](https://img.shields.io/badge/Fastify-5-000000?style=for-the-badge&logo=fastify&logoColor=white)](https://fastify.dev/)
+[![pnpm](https://img.shields.io/badge/pnpm-≥9-F69220?style=for-the-badge&logo=pnpm&logoColor=white)](https://pnpm.io/)
 
-# 安装 Node.js 依赖（自动处理所有工作区包）
-pnpm install
+<br/>
 
-# 复制环境变量模板
-Copy-Item .env.example .env
+> **模块化 AI Agent 平台** — 三层持久记忆 · 自我演化引擎 · 多 Agent 协作 · 8 平台 IM 网关
+>
+> *零原生依赖数据库 · 零外部 Embedding · 开箱即用*
 
-# （可选）安装 IM 网关 Python 依赖
-cd services/im-gateway
-pip install -e ".[all]"
-cd ../..
-```
+<br/>
+
+[快速开始](#-快速开始) · [核心能力](#-核心能力) · [架构总览](#-架构总览) · [技能系统](#-技能系统) · [IM 网关](#-im-网关) · [API 参考](#-api-参考) · [贡献指南](#-贡献)
+
+</div>
 
 ---
 
-### macOS
+## 🙏 致敬 & 致谢
 
-**前置条件安装：**
+> *站在巨人的肩膀上。*
+
+Super Loong 的诞生深受两个杰出开源项目的启发，在此致以最高敬意：
+
+### [OpenClaw](https://github.com/AiClaw) 🐾
+
+OpenClaw 开创性地提出了 **Heartbeat 心跳系统** —— 让 Agent 不再是被动的"问答机器"，而是一个拥有内在节律、能够主动轮询和自省的"活"的存在。我们从 OpenClaw 借鉴了：
+
+- **Heartbeat 主动思考循环** — Agent 在无用户输入时仍保持"心跳"，持续反思与规划
+- **子代理工具限制策略** — 按嵌套深度递减的工具访问矩阵，防止递归失控
+- **7 段式子代理提示词架构** — 角色定义 → 行为规则 → 输出格式 → 禁止行为 → Spawn → 叶节点 → 上下文
+- **Tool Result Truncation** — 智能截断过长的工具输出以保护上下文窗口
+
+### [Hermes](https://github.com/letta-ai) 🪶
+
+Hermes 定义了 Agent "灵魂"的存储范式 —— `SOUL.md` / `MEMORY.md` / `USER.md` 三文件模式让 Agent 的人格、记忆和用户画像各归其位、清晰可控。我们从 Hermes 借鉴了：
+
+- **SOUL / MEMORY / USER 三文件人格范式** — 人格定义（人类编辑）、Agent 笔记（Agent 维护）、用户画像（对话驱动）
+- **Nudge 自省系统** — 定期触发 Agent 反思自身行为模式，驱动渐进式进化
+- **HRR 向量符号架构** — Holographic Reduced Representation，零外部依赖的确定性 Embedding
+- **MemSkill 进化闭环** — 从失败案例中自动提炼经验 → 生成技能 → 反馈优化
+- **System Prompt Snapshot 冻结机制** — 在运行时锁定系统提示词，防止注入篡改
+
+**Super Loong 是对这两个项目思想的融合与延伸** —— 我们将 OpenClaw 的"心跳生命力"与 Hermes 的"灵魂记忆"编织在一起，并在此基础上构建了多 Agent 协作、10 层提示工程、三级安全沙箱和 8 平台 IM 网关等全新能力。
+
+---
+
+## ✨ 核心能力
+
+<table>
+<tr>
+<td width="50%">
+
+### 🧠 三层持久记忆
+*灵感: Letta / Hermes*
+
+| 层级 | 用途 | 存储 |
+|------|------|------|
+| **Core Memory** | 常驻上下文 (persona / user / goals) | 内存 + 文件 |
+| **Recall Memory** | 对话历史全量索引 | SQLite FTS5 |
+| **Archival Memory** | 长期知识库，语义检索 | SQLite + HRR |
+
+Agent 工具：`remember` · `recall` · `forget` · `core_memory_read` · `core_memory_append` · `core_memory_replace`
+
+</td>
+<td width="50%">
+
+### 🔄 自我演化引擎
+*灵感: Hermes MemSkill*
+
+```
+失败交互 → CaseCollector 收集
+    ↓ (≥10 cases + 1h 冷却)
+NudgeTracker 触发自省
+    ↓
+LLM 分析模式 → 生成/优化技能
+    ↓
+EvolutionSnapshot 记录历史
+    ↓
+Agent 变得更强 🚀
+```
+
+双引擎驱动：**Nudge 自省** + **技能进化**，Session Flush 在上下文丢失前自动保存。
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+### 🤝 多 Agent 协作
+*灵感: CrewAI + AutoGen*
+
+**任务编排模式:**
+- `Sequential` — 流水线串行
+- `Hierarchical` — 主管分配 + 并行组
+- `GroupChat` — 动态发言轮转
+
+**发言者选择策略:**
+- Round-Robin 轮询
+- LLM 智能选择
+- 手动指定
+
+超时保护 · 结果聚合 · 错误恢复
+
+</td>
+<td width="50%">
+
+### 🏗️ 10 层提示工程
+
+```
+┌─────────────────────────┐
+│ L1  System Identity     │ ─┐
+│ L2  Soul (SOUL.md)      │  │
+│ L3  Personality Traits   │  ├─ 稳定层 (可缓存)
+│ L4  Tool Definitions     │  │
+│ L5  Behavioral Rules     │  │
+│ L6  Output Format        │ ─┘
+│ L7  Core Memory Blocks   │ ─┐
+│ L8  Active Skills        │  ├─ 动态层 (每轮注入)
+│ L9  Context Window       │  │
+│ L10 User Message         │ ─┘
+└─────────────────────────┘
+```
+
+L1-L6 Prefix Caching 优化，减少 70%+ Token 开销。
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+### 🛡️ 三级安全沙箱
+
+| 级别 | 实现 | 限制 |
+|------|------|------|
+| **Process** | `child_process` | 超时 + 内存限制 |
+| **Docker** | 容器隔离 | 128MB RAM, 无网络 |
+| **SSH** | 远程执行 | 独立主机 |
+
+自动探测可用沙箱级别，代码执行零信任。
+
+</td>
+<td width="50%">
+
+### 🔌 MCP 工具集成
+
+支持 [Model Context Protocol](https://modelcontextprotocol.io/) 三种传输：
+
+- **stdio** — 本地进程通信
+- **SSE** — Server-Sent Events 流式
+- **streamable-http** — HTTP 流式传输
+
+动态发现 · 热加载 · 工具权限控制 · Schema 验证
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+### 📡 8 平台 IM 网关
+
+```
+飞书 · 企业微信 · 钉钉 · 微信
+Telegram · Discord · Slack · Webhook
+```
+
+Python FastAPI 微服务架构，统一消息管线，支持富文本 / 语音 / 图片 / 卡片消息。
+
+</td>
+<td width="50%">
+
+### 🧩 更多能力
+
+- ⏰ **Cron 定时任务** — 自然语言描述 → cron 表达式
+- 🎙️ **语音 STT/TTS** — 多引擎语音输入输出
+- 🔀 **子代理 Spawn** — 深度限制 + 工具矩阵
+- 📊 **实体解析** — 别名管理 + 记忆关联
+- 🗜️ **上下文压缩** — LLM 结构化摘要器
+- 🤖 **OpenAI 兼容 API** — `/v1/chat/completions`
+- 💡 **Heartbeat 心跳** — Agent 主动轮询
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🏛️ 架构总览
+
+```
+                            ┌──────────────────────────────────────────┐
+                            │              Super Loong                  │
+                            └──────────────┬───────────────────────────┘
+                                           │
+                 ┌─────────────────────────┼─────────────────────────┐
+                 │                         │                         │
+        ┌────────▼────────┐    ┌───────────▼──────────┐    ┌────────▼────────┐
+        │  packages/web   │    │    packages/api       │    │ services/       │
+        │  Next.js 16     │◄──►│    Fastify 5          │◄──►│ im-gateway      │
+        │  React 19       │    │    REST + WebSocket    │    │ Python FastAPI  │
+        │  Tailwind 4     │    │    OpenAI Compatible   │    │ 8 IM Channels   │
+        └────────┬────────┘    └───────────┬──────────┘    └─────────────────┘
+                 │                         │
+                 │              ┌───────────▼──────────┐
+                 │              │    packages/core      │
+                 │              │                       │
+                 │              │  ┌─────────────────┐  │
+                 │              │  │  AgentRuntime    │  │
+                 │              │  │  ┌────────────┐  │  │
+                 │              │  │  │ PromptEngine│  │  │
+                 │              │  │  │ MemoryMgr   │  │  │
+                 │              │  │  │ LLMProvider  │  │  │
+                 │              │  │  │ ToolExecutor │  │  │
+                 │              │  │  └────────────┘  │  │
+                 │              │  └─────────────────┘  │
+                 │              │                       │
+                 │              │  EvolutionEngine      │
+                 │              │  CollabOrchestrator   │
+                 │              │  SecurityManager      │
+                 │              │  SkillLoader          │
+                 │              │  MCPRegistry          │
+                 │              │  CronScheduler        │
+                 │              └───────────────────────┘
+                 │                         │
+                 │              ┌───────────▼──────────┐
+                 │              │   sql.js (WASM)      │
+                 │              │   Zero native deps   │
+                 │              │   SQLite + FTS5       │
+                 └──────────────┴──────────────────────┘
+```
+
+### 技术栈
+
+| 层 | 技术 | 说明 |
+|---|---|---|
+| **前端** | Next.js 16 + React 19 + Tailwind CSS 4 | 13 个管理页面，实时 WebSocket |
+| **API** | Fastify 5 + TypeScript | 11 个路由模块，JWT 认证 |
+| **核心** | TypeScript + Zod + EventEmitter3 | Agent 运行时，记忆/演化/协作 |
+| **数据库** | sql.js (WASM SQLite) | 零原生依赖，FTS5 全文搜索 |
+| **Embedding** | HRR (自研) | 零外部 API 调用的确定性向量 |
+| **IM 网关** | Python 3.10+ + FastAPI | 统一消息管线，8 平台适配 |
+| **包管理** | pnpm Workspace | Monorepo 架构 |
+
+---
+
+## 🚀 快速开始
+
+### 环境要求
+
+- **Node.js** ≥ 20.0.0
+- **pnpm** ≥ 9.0.0
+- **Python** ≥ 3.10 (仅 IM 网关需要)
+
+### 1. 克隆 & 安装
 
 ```bash
-# 1. 安装 Homebrew（如果没有）
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# 2. 安装 Node.js 20+
-brew install node@20
-
-# 3. 安装 pnpm
-npm install -g pnpm
-
-# 4. 安装 Python 3.10+（如需 IM 网关）
-brew install python@3.12
-```
-
-**项目安装：**
-
-```bash
-# 克隆仓库
 git clone https://github.com/Louis830903/Super-Loong.git
 cd Super-Loong
 
 # 安装 Node.js 依赖
 pnpm install
+```
 
-# 复制环境变量模板
+### 2. 配置环境变量
+
+```bash
 cp .env.example .env
-
-# （可选）安装 IM 网关 Python 依赖
-cd services/im-gateway
-pip3 install -e ".[all]"
-cd ../..
 ```
 
----
+编辑 `.env` 填入你的 LLM 配置：
 
-### Linux (Ubuntu/Debian)
-
-**前置条件安装：**
-
-```bash
-# 1. 安装 Node.js 20+（通过 NodeSource）
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# 2. 安装 pnpm
-npm install -g pnpm
-
-# 3. 安装 Python 3.10+（如需 IM 网关）
-sudo apt-get install -y python3 python3-pip python3-venv
+```env
+LLM_PROVIDER=openai          # openai / anthropic / 或任何 OpenAI 兼容接口
+LLM_MODEL=gpt-4o             # 模型名称
+LLM_API_KEY=sk-xxx           # API Key
+LLM_BASE_URL=                # 自定义 API 地址 (可选)
+PORT=3001                    # API 服务端口
 ```
 
-**项目安装：**
+### 3. 启动
 
 ```bash
-# 克隆仓库
-git clone https://github.com/Louis830903/Super-Loong.git
-cd Super-Loong
-
-# 安装 Node.js 依赖
-pnpm install
-
-# 复制环境变量模板
-cp .env.example .env
-
-# （可选）安装 IM 网关 Python 依赖
-cd services/im-gateway
-pip3 install -e ".[all]"
-cd ../..
-```
-
----
-
-## 环境配置
-
-编辑项目根目录的 `.env` 文件，配置必要的环境变量：
-
-```bash
-# ========================
-# 必填项 — LLM 配置
-# ========================
-LLM_PROVIDER=openai          # 可选：openai / anthropic / ollama
-LLM_MODEL=gpt-4o-mini        # 使用的模型名称
-LLM_API_KEY=sk-your-key-here # 你的 API Key
-# LLM_BASE_URL=              # 自定义 API 地址（可选，用于代理或 Ollama）
-
-# ========================
-# 可选项 — 服务配置
-# ========================
-# PORT=3001                  # API 服务端口（默认 3001）
-# HOST=0.0.0.0               # 监听地址（默认 0.0.0.0）
-# LOG_LEVEL=info              # 日志级别：debug / info / warn / error
-# FRONTEND_URL=http://localhost:3000  # Web 前端地址（CORS 用）
-
-# ========================
-# 可选项 — 安全
-# ========================
-# JWT_SECRET=                 # JWT 签名密钥（生产环境必填）
-# AUTH_ENABLED=false          # 启用 API 认证
-
-# ========================
-# 可选项 — IM 网关
-# ========================
-# DISABLE_IM_GATEWAY=true     # 设为 true 禁用 IM 网关自动启动
-# IM_GATEWAY_URL=http://localhost:8642  # 网关地址
-```
-
-> **最小化启动**：只需配置 `LLM_PROVIDER`、`LLM_MODEL`、`LLM_API_KEY` 三项即可启动。
-
-### 使用 Ollama（本地模型，免费）
-
-如果你没有 OpenAI/Anthropic API Key，可以使用 [Ollama](https://ollama.com/) 运行本地模型：
-
-```bash
-# 1. 安装 Ollama（详见 https://ollama.com/download）
-# 2. 拉取模型
-ollama pull llama3.1
-
-# 3. 在 .env 中配置
-LLM_PROVIDER=ollama
-LLM_MODEL=llama3.1
-LLM_BASE_URL=http://localhost:11434/v1
-LLM_API_KEY=ollama  # Ollama 不需要真实 key，填任意值即可
-```
-
----
-
-## 启动项目
-
-### 开发模式（推荐）
-
-```bash
-# 一键启动所有服务（API + Web + Core watch）
+# 开发模式 (API + Web 同时启动)
 pnpm dev
+
+# 或分别启动
+pnpm --filter @super-agent/api dev      # API 服务 → http://localhost:3001
+pnpm --filter @super-agent/web dev      # Web 前端 → http://localhost:3000
 ```
 
-启动后访问：
-- **Web 管理面板**：http://localhost:3000
-- **API 服务**：http://localhost:3001
-- **IM 网关**：http://localhost:8642（如已启用）
-
-### 单独启动各服务
+### 4. (可选) 启动 IM 网关
 
 ```bash
-# 只启动 API 后端（端口 3001）
-pnpm dev:api
-
-# 只启动 Web 前端（端口 3000）
-pnpm dev:web
-
-# 只启动 IM 网关（需先安装 Python 依赖）
-pnpm dev:gateway
-# 或直接运行：
-cd services/im-gateway && python server.py
+cd services/im-gateway
+pip install -r requirements.txt   # 或 pip install -e .
+python server.py
 ```
 
-### 生产构建
-
-```bash
-# 构建所有包
-pnpm build
-
-# 启动生产服务
-NODE_ENV=production node packages/api/dist/index.js
-```
+访问 `http://localhost:3000` 即可开始使用 🎉
 
 ---
 
-## 项目结构
+## 🧩 技能系统
+
+Super Loong 的技能系统兼容多种格式，一个 `.md` 文件就是一个技能：
+
+### 支持格式
+
+| 格式 | 来源 | 说明 |
+|------|------|------|
+| **纯 Markdown** | OpenClaw 风格 | 直接写 Markdown，标题即技能名 |
+| **YAML Frontmatter** | Hermes 风格 | YAML 头部定义元数据 + Markdown 正文 |
+| **扩展格式** | Super Loong | 支持触发条件、依赖关系、版本管理 |
+
+### 示例技能
+
+```markdown
+---
+name: 天气查询专家
+trigger: 当用户询问天气相关问题时
+dependencies: [web_search]
+version: 1.0.0
+---
+
+# 天气查询专家
+
+## 行为规则
+1. 使用 web_search 工具搜索实时天气
+2. 返回格式化的天气信息，包含温度、湿度、风力
+3. 如果用户未指定城市，先询问所在城市
+
+## 输出格式
+- 使用 emoji 让天气信息更直观
+- 包含未来 3 天的简要预报
+```
+
+技能存放在 `data/skills/` 目录下，热加载生效，无需重启。
+
+---
+
+## 📡 IM 网关
+
+<table>
+<tr>
+<td align="center"><b>飞书</b><br/>Feishu</td>
+<td align="center"><b>企业微信</b><br/>WeCom</td>
+<td align="center"><b>钉钉</b><br/>DingTalk</td>
+<td align="center"><b>微信</b><br/>WeChat</td>
+</tr>
+<tr>
+<td align="center"><b>Telegram</b></td>
+<td align="center"><b>Discord</b></td>
+<td align="center"><b>Slack</b></td>
+<td align="center"><b>Webhook</b></td>
+</tr>
+</table>
+
+- 统一的消息管线：接收 → 去重 → 路由 → Agent 处理 → 响应
+- 支持富文本、语音、图片、卡片消息
+- 附件自动处理 (图片 OCR / 语音 STT)
+- 每个通道独立配置、独立生命周期
+- Web UI 可视化管理通道配置
+
+---
+
+## 📚 API 参考
+
+所有 API 基于 `http://localhost:3001`：
+
+| 模块 | 端点 | 说明 |
+|------|------|------|
+| **Chat** | `POST /api/chat` | 对话（支持流式） |
+| **OpenAI** | `POST /v1/chat/completions` | OpenAI 兼容接口 |
+| **Agents** | `/api/agents/*` | Agent CRUD + 配置 |
+| **Memory** | `/api/memory/*` | 记忆查询 / 搜索 / 管理 |
+| **Skills** | `/api/skills/*` | 技能加载 / 列表 / 管理 |
+| **Channels** | `/api/channels/*` | IM 通道配置 |
+| **MCP** | `/api/mcp/*` | MCP 工具管理 |
+| **Cron** | `/api/cron/*` | 定时任务管理 |
+| **Collaboration** | `/api/collaboration/*` | 多 Agent 任务 |
+| **Evolution** | `/api/evolution/*` | 演化记录查询 |
+| **Security** | `/api/security/*` | 沙箱配置 |
+| **Voice** | `/api/voice/*` | 语音 STT/TTS |
+
+---
+
+## 📁 项目结构
 
 ```
-Super-Loong/
+super-agent/
 ├── packages/
-│   ├── core/           # SDK 核心库 — Agent 运行时、记忆、LLM、工具
-│   ├── api/            # Fastify 5 HTTP API 服务
-│   ├── web/            # Next.js 16 Web 管理面板
-│   └── research/       # 研究评估工具（实验性）
+│   ├── core/           # 🧠 核心引擎 (Agent 运行时/记忆/演化/协作/安全)
+│   ├── api/            # ⚡ API 服务 (Fastify + WebSocket)
+│   ├── web/            # 🎨 Web 前端 (Next.js + React)
+│   └── research/       # 🔬 研究与实验
 ├── services/
-│   └── im-gateway/     # Python FastAPI IM 网关
-│       ├── channels/   # 平台适配器（飞书/企微/钉钉/微信等）
-│       ├── core/       # 网关核心（消息管线、路由、去重）
-│       └── scripts/    # WeClaw 微信桥接安装脚本
-├── data/               # 运行时数据目录（自动创建）
-│   ├── MEMORY.md       # Agent 笔记（自动维护）
-│   ├── SOUL.md         # Agent 人设（人工编辑）
-│   └── USER.md         # 用户档案（自动维护）
+│   └── im-gateway/     # 📡 IM 网关 (Python FastAPI)
+├── data/
+│   ├── SOUL.md         # 👤 Agent 人格定义 (人类编辑)
+│   ├── MEMORY.md       # 📝 Agent 笔记 (Agent 维护)
+│   ├── USER.md         # 🧑 用户画像 (对话驱动)
+│   └── skills/         # 🧩 技能目录
 ├── .env.example        # 环境变量模板
-├── package.json        # monorepo 根配置
-├── pnpm-workspace.yaml # 工作区定义
-└── LICENSE             # MIT 开源协议
-```
-
-### 数据存储说明
-
-应用数据默认存储在 `~/.super-agent/` 目录下（用户主目录），包含：
-
-| 文件/目录 | 说明 | 自动创建 |
-|----------|------|---------|
-| `super-agent.db` | SQLite 主数据库 | 是 |
-| `sessions/` | 会话 JSONL 转录 | 是 |
-| `skills/` | 技能热加载目录 | 是 |
-| `cache/` | 临时缓存 | 是 |
-| `backups/` | 数据库备份 | 是 |
-
-> 可通过环境变量 `SA_HOME` 自定义数据存储路径。
-
----
-
-## IM 平台接入（可选）
-
-Super Loong 支持 8 个 IM 平台的双向消息互通。接入前需先安装 Python 依赖。
-
-### 支持的平台
-
-| 平台 | 协议 | 安装命令 |
-|------|------|---------|
-| 飞书 (Feishu) | WebSocket / Webhook | `pip install -e ".[feishu]"` |
-| 企业微信 (WeCom) | WebSocket | `pip install -e ".[wecom]"` |
-| 钉钉 (DingTalk) | Stream | `pip install -e ".[dingtalk]"` |
-| 微信 (WeChat) | WeClaw 桥接 | `pip install -e ".[weixin]"` |
-| Telegram | Webhook | `pip install -e ".[telegram]"` |
-| Discord | Gateway | `pip install -e ".[discord]"` |
-| Slack | Socket Mode | `pip install -e ".[slack]"` |
-| 全部安装 | — | `pip install -e ".[all]"` |
-
-### 飞书接入示例
-
-1. 在 [飞书开放平台](https://open.feishu.cn/) 创建应用，获取 `App ID` 和 `App Secret`
-2. 编辑 `services/im-gateway/.env`：
-
-```bash
-FEISHU_APP_ID=cli_your_app_id
-FEISHU_APP_SECRET=your_app_secret
-FEISHU_MODE=websocket
-```
-
-3. 在 Web 管理面板 → 通道管理 → 添加飞书通道，或通过 API 配置
-
-### 微信接入
-
-微信接入需要 WeClaw 桥接工具：
-
-```bash
-# Windows
-.\services\im-gateway\scripts\setup-weclaw.ps1
-
-# macOS / Linux
-bash services/im-gateway/scripts/setup-weclaw.sh
+├── pnpm-workspace.yaml # Monorepo 配置
+└── package.json        # 工作区根配置
 ```
 
 ---
 
-## 常用命令
+## 🤝 贡献
 
-| 命令 | 说明 |
-|------|------|
-| `pnpm install` | 安装所有依赖 |
-| `pnpm dev` | 一键启动开发模式（所有服务并行） |
-| `pnpm dev:api` | 只启动 API 服务 |
-| `pnpm dev:web` | 只启动 Web 前端 |
-| `pnpm dev:gateway` | 只启动 IM 网关 |
-| `pnpm build` | 构建所有包 |
-| `pnpm clean` | 清理所有构建产物 |
-| `pnpm test` | 运行测试 |
-| `pnpm lint` | 代码检查 |
-| `pnpm typecheck` | TypeScript 类型检查 |
+欢迎一切形式的贡献！无论是 Bug 报告、功能建议还是代码 PR。
 
----
-
-## 常见问题
-
-### Q: `pnpm install` 报错 better-sqlite3 编译失败？
-
-**A:** 本项目使用 `sql.js`（WASM 版 SQLite），不依赖原生 `better-sqlite3`。如果报错，可以忽略或在 `.npmrc` 中添加：
-```
-ignore-scripts=true
-```
-
-### Q: 启动时提示 "LLM_API_KEY not configured"？
-
-**A:** 编辑 `.env` 文件，填入你的 LLM API Key。支持 OpenAI、Anthropic 或本地 Ollama。
-
-### Q: Python 网关启动失败？
-
-**A:** 确认：
-1. Python 版本 >= 3.10：`python --version`
-2. 已安装依赖：`cd services/im-gateway && pip install -e ".[all]"`
-3. 或设置 `DISABLE_IM_GATEWAY=true` 跳过网关
-
-### Q: Web 前端打开空白？
-
-**A:** 确认 API 服务已启动（http://localhost:3001），Web 前端通过代理连接 API。建议使用 `pnpm dev` 同时启动所有服务。
-
-### Q: 数据存储在哪里？
-
-**A:** 默认存储在用户主目录 `~/.super-agent/`。可通过环境变量 `SA_HOME` 自定义路径。首次启动时自动创建所有必要的目录和数据库。
-
-### Q: 如何使用自定义/代理 API 地址？
-
-**A:** 在 `.env` 中设置 `LLM_BASE_URL`：
 ```bash
-LLM_BASE_URL=https://your-proxy.example.com/v1
-```
+# Fork & Clone
+git clone https://github.com/<your-username>/Super-Loong.git
 
-### Q: 如何在服务器上部署？
+# 创建分支
+git checkout -b feat/amazing-feature
 
-**A:** 推荐使用 PM2 或 Docker：
-```bash
-# PM2 方式
-pnpm build
-pm2 start packages/api/dist/index.js --name super-agent-api
+# 提交
+git commit -m "feat: add amazing feature"
 
-# 前端可单独部署到 Vercel/Netlify
-cd packages/web && pnpm build
+# 推送 & PR
+git push origin feat/amazing-feature
 ```
 
 ---
 
-## 许可证
+## 📄 License
 
-[MIT](LICENSE) © 2026 Louis830903
+[MIT](LICENSE) © Louis830903
+
+---
+
+<div align="center">
+
+**Super Loong** — *Remember Everything. Evolve Forever.*
+
+*Built with passion, inspired by [OpenClaw](https://github.com/AiClaw) & [Hermes](https://github.com/letta-ai)*
+
+</div>
