@@ -2,39 +2,29 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { apiFetch } from "@/lib/utils";
-import { Shield, Key, Plus, Trash2, Eye, EyeOff, FileText, RefreshCw } from "lucide-react";
+import { Shield, Key, Plus, Trash2, Eye, EyeOff, FileText, RefreshCw, AlertTriangle, CheckCircle2, XCircle, Clock, Pencil, Save, Loader2 } from "lucide-react";
 
-interface Credential {
-  name: string;
-  createdAt: string;
-}
-
-interface AuditEntry {
-  id: string;
-  action: string;
-  resource: string;
-  result: string;
-  timestamp: string;
-  details?: string;
-}
-
-interface SecurityPolicy {
-  defaultSandbox: string;
-  defaultPermission: string;
-  maxConcurrentSandboxes: number;
-}
+import type { Credential, AuditEntry, SecurityPolicy, ApprovalItem } from "@/types/api-types";
 
 export default function SecurityPage() {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [policies, setPolicies] = useState<SecurityPolicy[]>([]);
-  const [selectedPolicyIdx, setSelectedPolicyIdx] = useState(0);
-  const policy = policies[selectedPolicyIdx] ?? null;
   const [loading, setLoading] = useState(true);
   const [showAddCred, setShowAddCred] = useState(false);
   const [credForm, setCredForm] = useState({ name: "", value: "" });
   const [showValues, setShowValues] = useState<Record<string, boolean>>({});
-  const [tab, setTab] = useState<"credentials" | "audit" | "policy">("credentials");
+  const [tab, setTab] = useState<"credentials" | "audit" | "policy" | "approvals">("credentials");
+
+  // ── 待审批状态 ──
+  const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
+  const [approvalsLoading, setApprovalsLoading] = useState(false);
+
+  // ── 策略编辑状态 ──
+  const [editingPolicyIdx, setEditingPolicyIdx] = useState<number | null>(null);
+  const [policyForm, setPolicyForm] = useState<SecurityPolicy>({ id: "", name: "", defaultSandbox: "process", defaultPermission: "ask", maxConcurrentSandboxes: 5 });
+  const [showCreatePolicy, setShowCreatePolicy] = useState(false);
+  const [policySaving, setPolicySaving] = useState(false);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -45,11 +35,80 @@ export default function SecurityPage() {
     ]).then(([c, a, p]) => {
       setCredentials(c.credentials ?? []);
       setAuditLog(a.entries ?? []);
-      if (p && p.length > 0) setPolicies(p);
+      if (Array.isArray(p)) setPolicies(p);
+      else if (p && typeof p === "object") setPolicies([p as unknown as SecurityPolicy]);
     }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // ── 审批队列 Fetch ──
+  const fetchApprovals = useCallback(async () => {
+    setApprovalsLoading(true);
+    try {
+      const data = await apiFetch<{ approvals: ApprovalItem[] }>("/api/security/approvals/pending");
+      setApprovals(data.approvals ?? []);
+    } catch { /* ignore */ }
+    setApprovalsLoading(false);
+  }, []);
+
+  // 待审批 Tab 活跃时每 5 秒轮询
+  useEffect(() => {
+    if (tab === "approvals") {
+      fetchApprovals();
+      const timer = setInterval(fetchApprovals, 5000);
+      return () => clearInterval(timer);
+    }
+  }, [tab, fetchApprovals]);
+
+  const handleResolve = async (id: string, approved: boolean, scope: string = "once") => {
+    try {
+      await apiFetch(`/api/security/approvals/${id}/resolve`, {
+        method: "POST",
+        body: JSON.stringify({ approved, scope }),
+      });
+      fetchApprovals();
+    } catch { /* apiFetch 内部已 showToast */ }
+  };
+
+  // ── 策略 CRUD ──
+  // 后端使用 PUT /api/security/policies/:id 进行创建/更新（upsert 语义）
+  const handleCreatePolicy = async () => {
+    setPolicySaving(true);
+    try {
+      const id = policyForm.id || `policy-${Date.now()}`;
+      const name = policyForm.name || `策略-${id}`;
+      await apiFetch(`/api/security/policies/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ ...policyForm, name }),
+      });
+      setShowCreatePolicy(false);
+      setPolicyForm({ id: "", name: "", defaultSandbox: "process", defaultPermission: "ask", maxConcurrentSandboxes: 5 });
+      fetchData();
+    } catch { /* apiFetch 内部已 showToast */ }
+    setPolicySaving(false);
+  };
+
+  const handleUpdatePolicy = async (policy: SecurityPolicy) => {
+    setPolicySaving(true);
+    try {
+      await apiFetch(`/api/security/policies/${policy.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ ...policyForm, name: policyForm.name || policy.name }),
+      });
+      setEditingPolicyIdx(null);
+      fetchData();
+    } catch { /* apiFetch 内部已 showToast */ }
+    setPolicySaving(false);
+  };
+
+  const handleDeletePolicy = async (policy: SecurityPolicy) => {
+    if (!confirm(`确定删除策略 "${policy.name}"？`)) return;
+    try {
+      await apiFetch(`/api/security/policies/${policy.id}`, { method: "DELETE" });
+      fetchData();
+    } catch { /* apiFetch 内部已 showToast */ }
+  };
 
   const handleAddCred = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,10 +127,11 @@ export default function SecurityPage() {
     fetchData();
   };
 
-  const tabs = [
-    { id: "credentials" as const, label: "凭证管理", icon: Key },
-    { id: "audit" as const, label: "审计日志", icon: FileText },
-    { id: "policy" as const, label: "安全策略", icon: Shield },
+  const tabs: Array<{ id: "credentials" | "audit" | "policy" | "approvals"; label: string; icon: React.ElementType; badge?: number }> = [
+    { id: "credentials", label: "凭证管理", icon: Key },
+    { id: "audit", label: "审计日志", icon: FileText },
+    { id: "policy", label: "安全策略", icon: Shield },
+    { id: "approvals", label: "待审批", icon: AlertTriangle, badge: approvals.length },
   ];
 
   return (
@@ -92,6 +152,11 @@ export default function SecurityPage() {
             }`}
           >
             <t.icon className="h-4 w-4" /> {t.label}
+            {t.badge !== undefined && t.badge > 0 && (
+              <span className="ml-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 text-xs font-bold text-white">
+                {t.badge}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -192,46 +257,189 @@ export default function SecurityPage() {
             </div>
           )}
         </div>
-      ) : (
+      ) : tab === "policy" ? (
         <div className="space-y-4">
-          {/* Policy selector when multiple policies exist */}
-          {policies.length > 1 && (
-            <div className="flex items-center gap-3">
-              <label className="text-sm text-zinc-400">选择策略:</label>
-              <select
-                value={selectedPolicyIdx}
-                onChange={(e) => setSelectedPolicyIdx(Number(e.target.value))}
-                className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-              >
-                {policies.map((p, i) => (
-                  <option key={p.defaultSandbox + i} value={i}>{p.defaultSandbox} — {p.defaultPermission}</option>
-                ))}
-              </select>
+          <div className="flex justify-end">
+            <button onClick={() => { setShowCreatePolicy(true); setPolicyForm({ id: "", name: "", defaultSandbox: "process", defaultPermission: "ask", maxConcurrentSandboxes: 5 }); }} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700">
+              <Plus className="h-4 w-4" /> 创建策略
+            </button>
+          </div>
+
+          {policies.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-zinc-700 p-8 text-center">
+              <Shield className="mx-auto h-10 w-10 text-zinc-600" />
+              <p className="mt-3 text-zinc-400">暂无安全策略</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {policies.map((p, i) => (
+                <div key={p.id || `policy-${i}`} className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
+                  {editingPolicyIdx === i ? (
+                    <div className="space-y-4">
+                      <h3 className="font-semibold text-white flex items-center gap-2">
+                        <Shield className="h-5 w-5 text-blue-400" /> 编辑策略
+                      </h3>
+                      <div className="grid gap-4 sm:grid-cols-3">
+                        <div>
+                          <label className="block text-sm text-zinc-400 mb-1">沙箱级别</label>
+                          <select value={policyForm.defaultSandbox} onChange={(e) => setPolicyForm({ ...policyForm, defaultSandbox: e.target.value })} className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+                            <option value="none">无沙箱</option>
+                            <option value="process">进程隔离</option>
+                            <option value="docker">Docker 容器</option>
+                            <option value="ssh">SSH 远程</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-zinc-400 mb-1">默认权限</label>
+                          <select value={policyForm.defaultPermission} onChange={(e) => setPolicyForm({ ...policyForm, defaultPermission: e.target.value })} className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+                            <option value="allow">允许</option>
+                            <option value="deny">拒绝</option>
+                            <option value="ask">询问</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-zinc-400 mb-1">最大并发沙箱</label>
+                          <input type="number" value={policyForm.maxConcurrentSandboxes} onChange={(e) => setPolicyForm({ ...policyForm, maxConcurrentSandboxes: Number(e.target.value) })} className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white focus:border-blue-500 focus:outline-none" />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => handleUpdatePolicy(p)} disabled={policySaving} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                          {policySaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} 保存
+                        </button>
+                        <button onClick={() => setEditingPolicyIdx(null)} className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800">取消</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h3 className="font-semibold text-white flex items-center gap-2">
+                          <Shield className="h-5 w-5 text-blue-400" /> 沙箱配置
+                        </h3>
+                        <div className="mt-3 grid gap-4 sm:grid-cols-3">
+                          <div><p className="text-sm text-zinc-400">沙箱级别</p><p className="text-white">{p.defaultSandbox}</p></div>
+                          <div><p className="text-sm text-zinc-400">默认权限</p><p className="text-white">{p.defaultPermission}</p></div>
+                          <div><p className="text-sm text-zinc-400">最大并发</p><p className="text-white">{p.maxConcurrentSandboxes}</p></div>
+                        </div>
+                      </div>
+                      <div className="flex gap-1">
+                        <button onClick={() => { setEditingPolicyIdx(i); setPolicyForm(p); }} className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white">
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button onClick={() => handleDeletePolicy(p)} className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-red-400">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
-            <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
-              <Shield className="h-5 w-5 text-blue-400" /> 沙箱配置
-            </h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">沙箱级别</label>
-                <select className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white focus:border-blue-500 focus:outline-none" value={policy?.defaultSandbox ?? "process"} disabled>
-                  <option value="none">无沙箱</option>
-                  <option value="process">进程隔离</option>
-                  <option value="docker">Docker 容器</option>
-                  <option value="ssh">SSH 远程</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-zinc-400 mb-1">最大并发沙箱</label>
-                <input type="number" className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white focus:border-blue-500 focus:outline-none" value={policy?.maxConcurrentSandboxes ?? 5} disabled />
+
+          {/* 创建策略模态 */}
+          {showCreatePolicy && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowCreatePolicy(false)}>
+              <div className="w-full max-w-lg rounded-xl border border-zinc-800 bg-zinc-950 p-6" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-lg font-bold text-white mb-4">创建安全策略</h3>
+                <div className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-sm text-zinc-400 mb-1">沙箱级别</label>
+                      <select value={policyForm.defaultSandbox} onChange={(e) => setPolicyForm({ ...policyForm, defaultSandbox: e.target.value })} className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white focus:outline-none">
+                        <option value="none">无沙箱</option>
+                        <option value="process">进程隔离</option>
+                        <option value="docker">Docker 容器</option>
+                        <option value="ssh">SSH 远程</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-zinc-400 mb-1">默认权限</label>
+                      <select value={policyForm.defaultPermission} onChange={(e) => setPolicyForm({ ...policyForm, defaultPermission: e.target.value })} className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white focus:outline-none">
+                        <option value="allow">允许</option>
+                        <option value="deny">拒绝</option>
+                        <option value="ask">询问</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-zinc-400 mb-1">最大并发沙箱</label>
+                    <input type="number" value={policyForm.maxConcurrentSandboxes} onChange={(e) => setPolicyForm({ ...policyForm, maxConcurrentSandboxes: Number(e.target.value) })} className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white focus:outline-none" />
+                  </div>
+                  <div className="flex justify-end gap-3">
+                    <button onClick={() => setShowCreatePolicy(false)} className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-900">取消</button>
+                    <button onClick={handleCreatePolicy} disabled={policySaving} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                      {policySaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} 创建
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-          <p className="text-sm text-zinc-500">安全策略修改需通过 API 或配置文件设置</p>
+          )}
         </div>
-      )}
+      ) : tab === "approvals" ? (
+        <div className="space-y-3">
+          <div className="flex justify-end">
+            <button onClick={fetchApprovals} className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800">
+              <RefreshCw className="h-4 w-4" /> 刷新
+            </button>
+          </div>
+          {approvalsLoading && approvals.length === 0 ? (
+            <div className="py-12 text-center text-zinc-500">加载中...</div>
+          ) : approvals.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-zinc-700 p-8 text-center">
+              <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" />
+              <p className="mt-3 text-zinc-400">无待审批的操作</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {approvals.map((item) => (
+                <div key={item.id} className="rounded-xl border border-amber-800/30 bg-amber-900/10 p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+                        <span className="text-sm font-medium text-amber-300">
+                          {item.guardResult?.level === "critical" ? "危险操作" : "需要审批"}
+                        </span>
+                        <span className="text-xs text-zinc-500 flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {new Date(item.createdAt).toLocaleString("zh-CN")}
+                        </span>
+                      </div>
+                      <p className="font-mono text-sm text-white bg-zinc-900 rounded px-3 py-2 break-all">
+                        {item.command}
+                      </p>
+                      {item.guardResult?.reason && (
+                        <p className="text-xs text-zinc-500 mt-1">原因: {item.guardResult.reason}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        onClick={() => handleResolve(item.id, true, "once")}
+                        className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                      >
+                        <CheckCircle2 className="h-4 w-4" /> 批准
+                      </button>
+                      <button
+                        onClick={() => handleResolve(item.id, true, "session")}
+                        className="flex items-center gap-1.5 rounded-lg border border-emerald-700 px-3 py-2 text-sm text-emerald-400 hover:bg-emerald-900/30"
+                      >
+                        会话内允许
+                      </button>
+                      <button
+                        onClick={() => handleResolve(item.id, false)}
+                        className="flex items-center gap-1.5 rounded-lg border border-red-700 px-3 py-2 text-sm text-red-400 hover:bg-red-900/30"
+                      >
+                        <XCircle className="h-4 w-4" /> 拒绝
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/utils";
 import {
   Settings, Save, Key, Globe, CheckCircle2, XCircle, ChevronDown, ChevronUp,
   Zap, ExternalLink, Loader2, RefreshCw, Wrench, Search, Database, Shield, Info,
+  ToggleLeft, ToggleRight, Terminal, Trash2,
 } from "lucide-react";
 
 interface ServiceKeyInfo {
@@ -49,6 +50,15 @@ interface ProviderInfo {
   models: ModelDef[];
 }
 
+interface FlagInfo {
+  key: string;
+  label: string;
+  description: string;
+  group: string;
+  parent?: string;
+  enabled: boolean;
+}
+
 export default function SettingsPage() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -67,6 +77,10 @@ export default function SettingsPage() {
   const [svcSaving, setSvcSaving] = useState<Record<string, boolean>>({});
   const [svcResults, setSvcResults] = useState<Record<string, { success: boolean; message: string }>>({});
   const [detecting, setDetecting] = useState(false);
+
+  // ── 能力模块 Feature Flag 状态 ──
+  const [flags, setFlags] = useState<FlagInfo[]>([]);
+  const [flagSaving, setFlagSaving] = useState(false);
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -96,6 +110,28 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => { fetchServices(); }, [fetchServices]);
+
+  // ── Feature Flag Fetch ──
+  const fetchFlags = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ flags: FlagInfo[] }>("/api/settings/flags");
+      setFlags(data.flags);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchFlags(); }, [fetchFlags]);
+
+  const handleFlagToggle = async (key: string, enabled: boolean) => {
+    setFlagSaving(true);
+    try {
+      const data = await apiFetch<{ flags: FlagInfo[] }>("/api/settings/flags", {
+        method: "PUT",
+        body: JSON.stringify({ flags: { [key]: enabled } }),
+      });
+      setFlags(data.flags);
+    } catch { /* ignore */ }
+    setFlagSaving(false);
+  };
 
   const handleServiceSave = async (serviceId: string) => {
     setSvcSaving((s) => ({ ...s, [serviceId]: true }));
@@ -199,6 +235,22 @@ export default function SettingsPage() {
     }
   };
 
+  // 清除已保存的 API Key
+  const handleClearKey = async (providerId: string) => {
+    if (!confirm("确定清除已保存的 API Key？清除后需重新配置才能使用该 Provider。")) return;
+    setSaving((s) => ({ ...s, [providerId]: true }));
+    try {
+      await apiFetch(`/api/models/providers/${providerId}/key`, { method: "DELETE" });
+      await fetchProviders();
+      setTestResults((r) => ({ ...r, [providerId]: { success: true, message: "API Key 已清除" } }));
+      setTimeout(() => setTestResults((r) => { const n = { ...r }; delete n[providerId]; return n; }), 2000);
+    } catch (err: any) {
+      setTestResults((r) => ({ ...r, [providerId]: { success: false, message: err.message || "清除失败" } }));
+    } finally {
+      setSaving((s) => ({ ...s, [providerId]: false }));
+    }
+  };
+
   const formatCtx = (n: number) => {
     if (n >= 1000000) return `${(n / 1000000).toFixed(0)}M`;
     return `${(n / 1000).toFixed(0)}K`;
@@ -227,6 +279,22 @@ export default function SettingsPage() {
           <RefreshCw className="h-4 w-4" /> 刷新
         </button>
       </div>
+
+      {/* 首次引导横幅：无任何已配置的 Provider 时显示 */}
+      {configuredProviders === 0 && (
+        <div className="rounded-xl border border-blue-500/20 bg-gradient-to-r from-blue-500/10 via-blue-500/5 to-transparent px-5 py-4">
+          <p className="text-sm font-medium text-blue-400 flex items-center gap-2">
+            <Zap className="h-4 w-4" /> 快速开始
+          </p>
+          <p className="mt-1.5 text-sm text-zinc-300 leading-relaxed">
+            选择下方任意 Provider，填入 API Key 并保存，即可开始对话。
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            推荐：<strong className="text-zinc-300">DeepSeek</strong>（性价比高）或
+            <strong className="text-zinc-300">千问</strong>（同时启用向量检索增强）
+          </p>
+        </div>
+      )}
 
       {/* 持久化状态总览 */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-4">
@@ -299,6 +367,12 @@ export default function SettingsPage() {
                         <span className="text-zinc-600"> · Key: {provider.maskedKey}</span>
                       )}
                     </p>
+                    {/* 千问 provider 特殊提示：API Key 同时驱动向量检索引擎 */}
+                    {provider.id === "qwen" && (
+                      <p className="mt-0.5 flex items-center gap-1 text-[11px] text-blue-400/80">
+                        <Zap className="h-3 w-3" /> 设置千问 API 可同时启用高级向量检索增强能力
+                      </p>
+                    )}
                   </div>
                 </div>
                 {isExpanded ? <ChevronUp className="h-5 w-5 text-zinc-400" /> : <ChevronDown className="h-5 w-5 text-zinc-400" />}
@@ -313,6 +387,19 @@ export default function SettingsPage() {
                       className="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300">
                       <ExternalLink className="h-3.5 w-3.5" /> 获取 API Key →
                     </a>
+                  )}
+
+                  {/* 千问 provider 专属：向量检索增强能力说明 */}
+                  {provider.id === "qwen" && (
+                    <div className="rounded-lg border border-blue-800/30 bg-blue-900/10 px-4 py-3">
+                      <p className="text-xs font-medium text-blue-400 mb-1 flex items-center gap-1">
+                        <Zap className="h-3.5 w-3.5" /> 高级向量检索增强
+                      </p>
+                      <p className="text-[11px] text-zinc-400 leading-relaxed">
+                        配置千问 API Key 后，记忆系统将使用通义千问 text-embedding-v4 模型（2048 维语义向量）进行高质量语义检索，
+                        显著提升记忆搜索的准确性和召回率。未配置时将降级为本地哈希向量（质量较低）。保存后立即生效，无需重启。
+                      </p>
+                    </div>
                   )}
 
                   {/* 持久化详情（已配置时显示） */}
@@ -455,6 +542,16 @@ export default function SettingsPage() {
                       {testing[provider.id] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
                       测试连接
                     </button>
+                    {provider.keyStatus === "configured" && (
+                      <button
+                        onClick={() => handleClearKey(provider.id)}
+                        disabled={saving[provider.id]}
+                        className="flex items-center gap-2 rounded-lg border border-red-700/50 px-4 py-2 text-sm text-red-400 hover:bg-red-900/20 disabled:opacity-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        清除 Key
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -629,6 +726,56 @@ export default function SettingsPage() {
               </div>
             );
           })}
+        </div>
+      </div>
+
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-xl font-bold text-white flex items-center gap-2">
+              <Terminal className="h-5 w-5 text-orange-400" /> 能力模块
+            </h2>
+            <p className="mt-1 text-sm text-zinc-400">启用/禁用系统操作能力（Feature Flag，仅当前进程生效）</p>
+          </div>
+          <button onClick={fetchFlags} className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800">
+            <RefreshCw className="h-4 w-4" /> 刷新
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          {flags.map((flag) => {
+            const isChild = !!flag.parent;
+            const parentOff = isChild && !flags.find((f) => f.key === flag.parent)?.enabled;
+            return (
+              <div
+                key={flag.key}
+                className={`flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/50 px-5 py-4 ${isChild ? "ml-6" : ""} ${parentOff ? "opacity-40" : ""}`}
+              >
+                <div>
+                  <p className="font-medium text-white">{flag.label}</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">{flag.description}</p>
+                </div>
+                <button
+                  onClick={() => handleFlagToggle(flag.key, !flag.enabled)}
+                  disabled={flagSaving || parentOff}
+                  className="shrink-0 disabled:opacity-50"
+                  title={parentOff ? "父开关已关闭" : flag.enabled ? "点击禁用" : "点击启用"}
+                >
+                  {flag.enabled ? (
+                    <ToggleRight className="h-7 w-7 text-emerald-400" />
+                  ) : (
+                    <ToggleLeft className="h-7 w-7 text-zinc-600" />
+                  )}
+                </button>
+              </div>
+            );
+          })}
+          {flags.length === 0 && (
+            <div className="rounded-xl border border-dashed border-zinc-700 p-8 text-center">
+              <Terminal className="mx-auto h-10 w-10 text-zinc-600" />
+              <p className="mt-3 text-zinc-400">无法加载能力模块配置</p>
+            </div>
+          )}
         </div>
       </div>
 

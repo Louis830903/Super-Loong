@@ -17,6 +17,13 @@ import { v4 as uuid } from "uuid";
 import pino from "pino";
 import { buildSubagentSystemPrompt, filterToolsForDepth } from "./subagent-prompt.js";
 import type { SubagentPromptOptions } from "./subagent-prompt.js";
+import {
+  saveSubagentRun,
+  updateSubagentRunStatus,
+  findOrphanSubagentRuns,
+  archiveSubagentRun,
+  markSubagentRunsCancelled,
+} from "../persistence/sqlite.js";
 
 const logger = pino({ name: "subagent-manager" });
 
@@ -63,8 +70,7 @@ export interface SubagentRecord {
   childIds: string[];
   /** 超时计时器句柄 */
   timeoutHandle?: ReturnType<typeof setTimeout>;
-  /** 归档计时器句柄 */
-  archiveHandle?: ReturnType<typeof setTimeout>;
+  // G-4: archiveHandle 已移除 — 改为 cleanupExpired() 惰性清理
 }
 
 // ─── Spawn 请求 ─────────────────────────────────────────────
@@ -84,6 +90,8 @@ export interface SpawnRequest {
   parentAgentName?: string;
   /** 所有可用工具名（将按深度过滤） */
   availableTools?: string[];
+  /** I-1: 调用方可覆盖最大深度（默认使用全局 config.maxSpawnDepth） */
+  maxDepth?: number;
 }
 
 // ─── 执行回调 ───────────────────────────────────────────────
@@ -99,6 +107,36 @@ export type SubagentExecuteFn = (
   sessionId: string,
 ) => Promise<string>;
 
+// ─── I-5: 子代理生命周期 Hook 接口 ─────────────────────────────
+
+/**
+ * I-5: 子代理生命周期 Hook（学 OpenClaw subagent-registry-lifecycle 的 spawning/delivery/ended hooks）。
+ * 允许外部插件参与 spawn/complete/kill 过程（如日志审计、通知、资源预分配）。
+ */
+export interface SubagentLifecycleHook {
+  name: string;
+  /** spawn 前调用，可修改 spawn 选项或返回 "reject" 拒绝 spawn */
+  onSpawning?(record: SubagentRecord, request: SpawnRequest): Promise<void | "reject">;
+  /** 子代理完成/失败/被杀时调用 */
+  onEnded?(record: SubagentRecord, result: { status: string; output?: string; error?: string }): Promise<void>;
+}
+
+/**
+ * I-5/M6: 为 Hook 执行添加超时保护，防止某个 hook 实现耗时过长阻塞核心流程。
+ */
+const withHookTimeout = <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`[HookTimeout] ${label} exceeded ${timeoutMs}ms`)), timeoutMs);
+    }),
+  ]).finally(() => { if (timer) clearTimeout(timer); });
+};
+
+/** I-5: 每个 hook 的最大执行时间（毫秒） */
+const HOOK_TIMEOUT_MS = 5_000;
+
 // ─── SubagentManager 类 ────────────────────────────────────
 
 export class SubagentManager {
@@ -110,6 +148,8 @@ export class SubagentManager {
   private sessionIndex = new Map<string, string>();
   /** 执行回调（由 API 层注入） */
   private executeFn?: SubagentExecuteFn;
+  /** I-5: 已注册的生命周期 Hook 列表 */
+  private hooks: SubagentLifecycleHook[] = [];
 
   constructor(config?: Partial<SpawnConfig>) {
     this.config = { ...DEFAULT_SPAWN_CONFIG, ...config };
@@ -122,6 +162,18 @@ export class SubagentManager {
     this.executeFn = fn;
   }
 
+  /** I-5: 注册生命周期 Hook */
+  registerHook(hook: SubagentLifecycleHook): void {
+    this.hooks.push(hook);
+    logger.info({ hookName: hook.name }, "I-5: Lifecycle hook registered");
+  }
+
+  /** I-5: 移除生命周期 Hook */
+  removeHook(name: string): void {
+    this.hooks = this.hooks.filter((h) => h.name !== name);
+    logger.info({ hookName: name }, "I-5: Lifecycle hook removed");
+  }
+
   // ─── 核心：Spawn ──────────────────────────────────────────
 
   /**
@@ -129,6 +181,9 @@ export class SubagentManager {
    * 对标 OpenClaw subagent-spawn.ts 的策略检查 + 会话创建 + 注册跟踪。
    */
   async spawn(request: SpawnRequest): Promise<SubagentRecord> {
+    // G-4: 惰性清理 — 每次 spawn 时顺带清理过期的记录
+    this.cleanupExpired();
+
     // 1. 策略检查
     this.validateSpawnPolicy(request.parentSessionId);
 
@@ -136,16 +191,21 @@ export class SubagentManager {
     const parentDepth = this.getDepth(request.parentSessionId);
     const childDepth = parentDepth + 1;
 
-    if (childDepth > this.config.maxSpawnDepth) {
+    // I-1: 调用方可覆盖最大深度（约束 1-5 范围），否则使用全局配置
+    const effectiveMaxDepth = request.maxDepth
+      ? Math.max(1, Math.min(5, request.maxDepth))
+      : this.config.maxSpawnDepth;
+
+    if (childDepth > effectiveMaxDepth) {
       throw new Error(
-        `[SubagentManager] Max spawn depth exceeded: ${childDepth} > ${this.config.maxSpawnDepth}`
+        `[SubagentManager] Max spawn depth exceeded: ${childDepth} > ${effectiveMaxDepth}`
       );
     }
 
     // 3. 创建子代理记录
     const subagentId = uuid();
     const sessionId = `sub-${uuid()}`;
-    const canSpawn = childDepth < this.config.maxSpawnDepth;
+    const canSpawn = childDepth < effectiveMaxDepth;
 
     // 4. 过滤工具列表
     const allowedTools = request.availableTools
@@ -159,7 +219,7 @@ export class SubagentManager {
       task: request.task,
       label: request.label,
       childDepth,
-      maxSpawnDepth: this.config.maxSpawnDepth,
+      maxSpawnDepth: effectiveMaxDepth,
       canSpawn,
       parentChannel: request.parentChannel,
       parentAgentName: request.parentAgentName,
@@ -200,6 +260,46 @@ export class SubagentManager {
       { subagentId, sessionId, depth: childDepth, task: request.task.slice(0, 80) },
       "Sub-agent spawned"
     );
+
+    // I-2/P1: 异步写入 DB（fire-and-forget，不阻塞 spawn 返回）
+    try {
+      saveSubagentRun({
+        id: subagentId,
+        sessionId,
+        parentSessionId: request.parentSessionId,
+        task: request.task.slice(0, 500),
+        label: request.label,
+        depth: childDepth,
+        status: "running",
+        createdAt: record.createdAt.toISOString(),
+      });
+    } catch (err) {
+      logger.warn({ subagentId, error: err }, "I-2: Failed to persist subagent run to DB (non-fatal)");
+    }
+
+    // I-5: 触发 onSpawning hooks（M6: 每个 hook 有 5s 超时保护）
+    for (const hook of this.hooks) {
+      if (hook.onSpawning) {
+        try {
+          const hookResult = await withHookTimeout(
+            hook.onSpawning(record, request),
+            HOOK_TIMEOUT_MS,
+            `Hook "${hook.name}" onSpawning`,
+          );
+          if (hookResult === "reject") {
+            // Hook 拒绝 spawn → 清理已注册的记录
+            this.registry.delete(subagentId);
+            this.sessionIndex.delete(sessionId);
+            const parentSet = this.parentIndex.get(request.parentSessionId);
+            if (parentSet) parentSet.delete(subagentId);
+            throw new Error(`Spawn rejected by lifecycle hook: ${hook.name}`);
+          }
+        } catch (err: any) {
+          if (err.message?.includes("rejected by lifecycle hook")) throw err;
+          logger.warn({ hookName: hook.name, error: err.message }, "I-5: onSpawning hook failed (non-fatal, continuing)");
+        }
+      }
+    }
 
     // 7. 设置超时
     const timeout = request.timeout ?? this.config.defaultTimeout;
@@ -256,12 +356,33 @@ export class SubagentManager {
       "Sub-agent completed"
     );
 
-    // 设置自动归档
-    if (this.config.archiveAfterMs > 0) {
-      record.archiveHandle = setTimeout(() => {
-        this.archive(subagentId);
-      }, this.config.archiveAfterMs);
+    // I-2: 同步更新 DB 状态
+    try {
+      updateSubagentRunStatus(
+        subagentId,
+        status,
+        record.completedAt.toISOString(),
+        result,
+        error,
+      );
+    } catch (err) {
+      logger.warn({ subagentId, error: err }, "I-2: Failed to update subagent run status in DB (non-fatal)");
     }
+
+    // I-5: 触发 onEnded hooks（M6: 每个 hook 有 5s 超时保护，异步不阻塞）
+    for (const hook of this.hooks) {
+      if (hook.onEnded) {
+        withHookTimeout(
+          hook.onEnded(record, { status, output: result, error }),
+          HOOK_TIMEOUT_MS,
+          `Hook "${hook.name}" onEnded`,
+        ).catch((err) => {
+          logger.warn({ hookName: hook.name, error: err.message }, "I-5: onEnded hook failed (non-fatal)");
+        });
+      }
+    }
+
+    // G-4: 移除 archiveHandle setTimeout — 改为 spawn() 入口的 cleanupExpired() 惰性清理
   }
 
   /** 超时处理 */
@@ -289,7 +410,39 @@ export class SubagentManager {
       if (parentSet.size === 0) this.parentIndex.delete(record.parentSessionId);
     }
 
+    // I-2/M3: 同步清理 DB 记录，防止内存和 DB 状态不一致
+    try {
+      archiveSubagentRun(subagentId);
+    } catch (err) {
+      logger.warn({ subagentId, error: err }, "I-2/M3: Failed to archive subagent run in DB");
+    }
+
     logger.debug({ subagentId }, "Sub-agent archived");
+  }
+
+  // ─── G-4: 惰性清理 ──────────────────────────────────────────
+
+  /**
+   * G-4: 惰性清理过期记录（替代 archiveHandle setTimeout）。
+   * 遍历 registry，对已完成且超过 archiveAfterMs 的记录调用 archive()。
+   * 在 spawn() 入口处调用，每次创建新子代理时顺带清理过期的。
+   * M3 预留：当 I-2 DB 持久化实施后，archive() 需同步清理 DB 记录。
+   */
+  cleanupExpired(): number {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [id, record] of this.registry) {
+      if (record.status !== "running" && record.completedAt) {
+        if (now - record.completedAt.getTime() > this.config.archiveAfterMs) {
+          this.archive(id);
+          cleaned++;
+        }
+      }
+    }
+    if (cleaned > 0) {
+      logger.info({ cleaned }, "Expired sub-agent records cleaned up");
+    }
+    return cleaned;
   }
 
   // ─── 终止 ─────────────────────────────────────────────────
@@ -308,6 +461,12 @@ export class SubagentManager {
       if (record.timeoutHandle) {
         clearTimeout(record.timeoutHandle);
         record.timeoutHandle = undefined;
+      }
+      // I-2: 同步更新 DB 状态
+      try {
+        updateSubagentRunStatus(subagentId, "killed", record.completedAt.toISOString());
+      } catch (err) {
+        logger.warn({ subagentId, error: err }, "I-2: Failed to update killed status in DB");
       }
       logger.info({ subagentId }, "Sub-agent killed");
     }
@@ -343,6 +502,49 @@ export class SubagentManager {
 
   // ─── 查询 ─────────────────────────────────────────────────
 
+  /**
+   * E-2/R3: 注册虚拟根记录。
+   * Crew 编排开始前注册一个 depth=0 的虚拟 session 作为子代理的 parent，
+   * 使 getDepth / validateSpawnPolicy / announce 回退等链路能正确追溯。
+   */
+  registerVirtualRoot(sessionId: string, label?: string): void {
+    if (this.sessionIndex.has(sessionId)) {
+      logger.debug({ sessionId }, "Virtual root already registered, skipping");
+      return;
+    }
+
+    const record: SubagentRecord = {
+      id: sessionId,
+      sessionId,
+      parentSessionId: "",  // 顶层无父
+      task: label ?? "Virtual root for crew execution",
+      label: label ?? "crew-root",
+      depth: 0,
+      status: "running",
+      createdAt: new Date(),
+      childIds: [],
+    };
+
+    this.registry.set(record.id, record);
+    this.sessionIndex.set(record.sessionId, record.id);
+    logger.info({ sessionId }, "Virtual root registered");
+  }
+
+  /**
+   * E-2/R3: 标记虚拟根为已完成。
+   * Crew 执行结束后调用，防止 orphan recovery 误判。
+   */
+  completeVirtualRoot(sessionId: string): void {
+    const id = this.sessionIndex.get(sessionId);
+    if (!id) return;
+    const record = this.registry.get(id);
+    if (record && record.status === "running") {
+      record.status = "success";
+      record.completedAt = new Date();
+      logger.info({ sessionId }, "Virtual root marked completed");
+    }
+  }
+
   /** 列出某父代理的所有子代理 */
   list(parentSessionId: string): SubagentRecord[] {
     const childSet = this.parentIndex.get(parentSessionId);
@@ -364,12 +566,34 @@ export class SubagentManager {
     return subId ? this.registry.get(subId) : undefined;
   }
 
-  /** 获取当前 session 的嵌套深度（非子代理返回 0） */
+  /**
+   * 获取当前 session 的嵌套深度（非子代理返回 0）。
+   * I-1: 增加 visited set 防循环，沿 parentSessionId 链向上追溯。
+   */
   getDepth(sessionId: string): number {
     const subId = this.sessionIndex.get(sessionId);
     if (!subId) return 0;
     const record = this.registry.get(subId);
-    return record?.depth ?? 0;
+    if (!record) return 0;
+
+    // I-1: 沿 parentSessionId 链追溯验证深度，防止循环引用
+    const visited = new Set<string>();
+    let depth = 0;
+    let current = sessionId;
+    while (current) {
+      if (visited.has(current)) {
+        logger.warn({ sessionId, visited: [...visited] }, "I-1: Circular parentSessionId chain detected");
+        break;
+      }
+      visited.add(current);
+      const sid = this.sessionIndex.get(current);
+      if (!sid) break;
+      const rec = this.registry.get(sid);
+      if (!rec?.parentSessionId) break;
+      current = rec.parentSessionId;
+      depth++;
+    }
+    return depth;
   }
 
   /** 获取当前活跃子代理总数 */
@@ -384,6 +608,48 @@ export class SubagentManager {
   /** 获取配置（只读） */
   getConfig(): Readonly<SpawnConfig> {
     return { ...this.config };
+  }
+
+  // ─── I-2: 孤儿回收 ──────────────────────────────────────────
+
+  /**
+   * I-2: 回收孤儿子代理。
+   * 查询 DB 中超过 30 分钟仍为 running 的记录，标记为 orphan_recovered。
+   * 在 createAppContext() 初始化 SubagentManager 后立即调用。
+   */
+  reconcileOrphans(thresholdMs = 30 * 60 * 1000): number {
+    try {
+      const orphans = findOrphanSubagentRuns(thresholdMs);
+      for (const orphan of orphans) {
+        const id = orphan.id as string;
+        updateSubagentRunStatus(id, "orphan_recovered", new Date().toISOString());
+        logger.warn({ subagentId: id, task: (orphan.task as string)?.slice(0, 80) }, "I-2: Recovered orphan subagent run");
+      }
+      if (orphans.length > 0) {
+        logger.info({ count: orphans.length }, "I-2: Orphan subagent runs recovered");
+      }
+      return orphans.length;
+    } catch (err) {
+      logger.warn({ error: err }, "I-2: reconcileOrphans failed (non-fatal)");
+      return 0;
+    }
+  }
+
+  /**
+   * I-2/R4: 将某父 session 下所有 running 子代理在 DB 中标记为 killed。
+   * 配合 E-3 abort 使用，防止 reconcileOrphans 误将已取消任务标记为孤儿。
+   */
+  markAllCancelled(parentSessionId: string): number {
+    try {
+      const count = markSubagentRunsCancelled(parentSessionId);
+      if (count > 0) {
+        logger.info({ parentSessionId, count }, "I-2/R4: Marked running subagent runs as cancelled in DB");
+      }
+      return count;
+    } catch (err) {
+      logger.warn({ parentSessionId, error: err }, "I-2/R4: markAllCancelled failed (non-fatal)");
+      return 0;
+    }
   }
 
   // ─── 策略检查 ─────────────────────────────────────────────
@@ -411,7 +677,7 @@ export class SubagentManager {
   destroy(): void {
     for (const record of this.registry.values()) {
       if (record.timeoutHandle) clearTimeout(record.timeoutHandle);
-      if (record.archiveHandle) clearTimeout(record.archiveHandle);
+      // G-4: archiveHandle 已移除，不再需要清理
     }
     this.registry.clear();
     this.parentIndex.clear();

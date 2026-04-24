@@ -276,6 +276,21 @@ export interface ToolResult {
 
 // ─── Memory Types ─────────────────────────────────────────────
 
+/**
+ * T1: 业务优先级枚举（参考 hello-agents NoteTool 分类）
+ * - blocker:    阻塞问题（最高优先级，检索时强加权）
+ * - action:     行动项（待办、下一步动作）
+ * - task_state: 任务状态（进行中状态、阶段标记）
+ * - conclusion: 已得出的结论
+ * - normal:     普通记忆（默认值，不加权）
+ */
+export type MemoryPriority =
+  | "blocker"
+  | "action"
+  | "task_state"
+  | "conclusion"
+  | "normal";
+
 export interface MemoryEntry {
   id: string;
   agentId: string;
@@ -292,6 +307,10 @@ export interface MemoryEntry {
   retrievalCount?: number; // 检索次数
   // F-2: 嵌入类型标记（区分 HRR 相位向量 / Qwen 语义向量 / Simple hash 向量）
   embeddingType?: "hrr" | "qwen" | "simple";
+  // ✨ T1: 业务优先级（默认 normal，检索时按 PRIORITY_BOOST 加权）
+  priority?: MemoryPriority;
+  // ✨ T1: 与查询的相关性评分（与 trustScore 解耦，0-1，目前为预留字段）
+  relevanceScore?: number;
 }
 
 export interface MemorySearchResult {

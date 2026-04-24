@@ -35,6 +35,10 @@ export class BrowserSessionManager {
     this.providerFactory = factory;
     // 每 60 秒检查不活跃会话
     this.cleanupTimer = setInterval(() => this.cleanupInactive(), 60_000);
+    // [v3 Task 2-6] 不阻止 Node 进程退出
+    if (this.cleanupTimer && typeof this.cleanupTimer === "object" && "unref" in this.cleanupTimer) {
+      this.cleanupTimer.unref();
+    }
   }
 
   /**

@@ -14,7 +14,6 @@ def register_all_channels(registry: ChannelRegistry) -> None:
     _safe_register(registry, "channels.dingtalk.plugin", "create_plugin")
     _safe_register(registry, "channels.wecom.plugin", "create_plugin")
     _safe_register(registry, "channels.feishu.plugin", "create_plugin")
-    _safe_register(registry, "channels.weixin.plugin", "create_plugin")
 
 
 def _safe_register(registry: ChannelRegistry, module_path: str, factory_fn: str) -> None:

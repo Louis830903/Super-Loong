@@ -15,12 +15,20 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// 是否为 dev 模式（通过 --dev 参数或 NODE_ENV=development 判断）
+const IS_DEV = process.argv.includes("--dev") || process.env.NODE_ENV === "development";
+
 const MONITOR_PORT = 3002;
 const LOG_DIR = join(__dirname, "logs");
 const MAX_BUFFER = 2000;
 const API_ENTRY = join(__dirname, "dist", "index.js");
+// 独立监控窗口开关（环境变量 MONITOR_WINDOW=false 可禁用）
+const MONITOR_WINDOW_ENABLED = process.env.MONITOR_WINDOW !== "false";
+const MONITOR_PKG_DIR = join(__dirname, "..", "monitor");
 
 const logBuffer = [];
+const traceBuffer = [];  // 单独存储 Trace Span 事件
+const MAX_TRACE_BUFFER = 500;
 const sseClients = new Set();
 
 if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
@@ -29,10 +37,16 @@ const logFile = createWriteStream(join(LOG_DIR, `api-${ts}.log`), { flags: "a" }
 
 function broadcast(line) {
   const parsed = tryParseJson(line);
-  const entry = { raw: line, parsed, ts: Date.now() };
+  const isSpan = parsed && parsed.extra && parsed.extra._type === "span";
+  const entry = { raw: line, parsed, ts: Date.now(), isSpan };
   logBuffer.push(entry);
   if (logBuffer.length > MAX_BUFFER) logBuffer.shift();
   logFile.write(line + "\n");
+  // Span 事件也存入单独的 traceBuffer
+  if (isSpan) {
+    traceBuffer.push(entry);
+    if (traceBuffer.length > MAX_TRACE_BUFFER) traceBuffer.shift();
+  }
   const data = JSON.stringify(entry);
   for (const res of sseClients) {
     res.write(`data: ${data}\n\n`);
@@ -42,6 +56,17 @@ function broadcast(line) {
 function tryParseJson(line) {
   try {
     const obj = JSON.parse(line);
+    // 识别 Trace Span 格式
+    if (obj._type === "span") {
+      return {
+        level: obj.status === "error" ? "ERROR" : "TRACE",
+        time: obj.endTime ? new Date(obj.endTime).toLocaleTimeString() : new Date().toLocaleTimeString(),
+        name: obj.operation || "span",
+        msg: `[${obj.operation}] ${obj.duration || 0}ms (${obj.status}) traceId=${obj.traceId?.slice(0, 8)}`,
+        err: obj.status === "error" ? (obj.attributes?.error || "") : "",
+        extra: obj,
+      };
+    }
     return {
       level: levelName(obj.level),
       time: obj.time ? new Date(obj.time).toLocaleTimeString() : "",
@@ -66,11 +91,14 @@ function levelName(n) {
 }
 
 // ── Spawn API ───────────────────────────────────────────
-console.log(`[monitor] Starting API: node ${API_ENTRY}`);
-const child = spawn("node", [API_ENTRY], {
+const apiCmd = IS_DEV ? "npx" : "node";
+const apiArgs = IS_DEV ? ["tsx", "watch", "src/index.ts"] : [API_ENTRY];
+console.log(`[monitor] Starting API (${IS_DEV ? "dev" : "prod"}): ${apiCmd} ${apiArgs.join(" ")}`);
+const child = spawn(apiCmd, apiArgs, {
   cwd: __dirname,
   env: { ...process.env },
   stdio: ["ignore", "pipe", "pipe"],
+  shell: process.platform === "win32",
 });
 
 function handleOutput(stream) {
@@ -119,13 +147,56 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // Trace 事件查询端点（供监控窗口使用）
+  if (req.url === "/api/traces") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(traceBuffer));
+    return;
+  }
+
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
   res.end(DASHBOARD_HTML);
 });
 
 server.listen(MONITOR_PORT, () => {
   console.log(`[monitor] Dashboard ready at http://localhost:${MONITOR_PORT}`);
+  // API 进程启动后自动拉起 Electron 监控窗口
+  if (MONITOR_WINDOW_ENABLED) {
+    launchElectronWindow();
+  }
 });
+
+// ── 启动 Electron 独立监控窗口 ──────────────────────
+
+function launchElectronWindow() {
+  // 检查 electron 是否可用
+  const electronBin = join(MONITOR_PKG_DIR, "node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron");
+  const electronFallback = "npx";
+
+  const cmd = existsSync(electronBin) ? electronBin : electronFallback;
+  const args = cmd === electronFallback
+    ? ["--yes", "electron", MONITOR_PKG_DIR]
+    : [MONITOR_PKG_DIR];
+
+  try {
+    const monitor = spawn(cmd, args, {
+      cwd: MONITOR_PKG_DIR,
+      env: {
+        ...process.env,
+        MONITOR_PORT: String(MONITOR_PORT),
+        API_PORT: String(process.env.PORT || 3001),
+      },
+      stdio: "ignore",
+      detached: true,
+      shell: process.platform === "win32",
+    });
+    monitor.unref(); // 主进程退出不影响窗口
+    console.log(`[monitor] Electron window launched (pid=${monitor.pid || 'detached'})`);
+  } catch (err) {
+    console.log(`[monitor] Failed to launch Electron window: ${err.message}`);
+    console.log(`[monitor] You can manually start it: cd packages/monitor && npx electron .`);
+  }
+}
 
 process.on("SIGINT", () => { child.kill(); server.close(); logFile.end(); process.exit(0); });
 process.on("SIGTERM", () => { child.kill(); server.close(); logFile.end(); process.exit(0); });
@@ -155,7 +226,8 @@ body{font-family:'Cascadia Code','Consolas','SF Mono',monospace;background:#0d11
 .log-line.FATAL,.log-line.ERROR{border-left-color:#da3633;background:#da363312}
 .log-line.WARN{border-left-color:#d29922;background:#d2992208}
 .log-line.INFO{border-left-color:#238636}
-.log-line.DEBUG{border-left-color:#8b949e}
+.log-line.TRACE{border-left-color:#58a6ff;background:#58a6ff12}
+.log-level.TRACE{color:#58a6ff}
 .log-time{color:#8b949e;min-width:72px;flex-shrink:0}
 .log-level{min-width:48px;font-weight:600;flex-shrink:0}
 .log-level.ERROR,.log-level.FATAL{color:#f85149}
@@ -178,6 +250,7 @@ body{font-family:'Cascadia Code','Consolas','SF Mono',monospace;background:#0d11
   <button class="filter-btn active" data-level="ERROR">ERROR</button>
   <button class="filter-btn active" data-level="WARN">WARN</button>
   <button class="filter-btn active" data-level="INFO">INFO</button>
+  <button class="filter-btn active" data-level="TRACE">TRACE</button>
   <button class="filter-btn" data-level="DEBUG">DEBUG</button>
   <input id="search" type="text" placeholder="Search logs...">
   <span class="stats" id="stats">0 lines</span>
@@ -190,7 +263,7 @@ body{font-family:'Cascadia Code','Consolas','SF Mono',monospace;background:#0d11
 </div>
 <script>
 const logsEl=document.getElementById('logs'),statsEl=document.getElementById('stats'),searchEl=document.getElementById('search'),lastUpdateEl=document.getElementById('last-update');
-let lineCount=0,autoScroll=true,activeFilters=new Set(['ERROR','WARN','INFO','FATAL','LOG','all']);
+let lineCount=0,autoScroll=true,activeFilters=new Set(['ERROR','WARN','INFO','TRACE','FATAL','LOG','all']);
 logsEl.addEventListener('mouseenter',()=>autoScroll=false);
 logsEl.addEventListener('mouseleave',()=>{autoScroll=true;scrollBottom()});
 function scrollBottom(){if(autoScroll)logsEl.scrollTop=logsEl.scrollHeight}
@@ -224,7 +297,7 @@ document.querySelectorAll('.filter-btn').forEach(btn=>{
     if(level==='all'){
       const allActive=btn.classList.contains('active');
       document.querySelectorAll('.filter-btn').forEach(b=>b.classList.toggle('active',!allActive));
-      if(!allActive)activeFilters=new Set(['ERROR','WARN','INFO','DEBUG','FATAL','LOG','all']);
+      if(!allActive)activeFilters=new Set(['ERROR','WARN','INFO','DEBUG','TRACE','FATAL','LOG','all']);
       else activeFilters.clear();
     }else{
       btn.classList.toggle('active');

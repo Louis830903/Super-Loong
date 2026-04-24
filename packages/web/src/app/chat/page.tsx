@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, memo } from "react";
+import { useEffect, useRef, useState, useCallback, memo, useMemo } from "react";
 import { useAgents } from "@/hooks/useAgents";
 import { apiFetch, API_BASE } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ import {
   Settings2, Plus, MessageSquare, Search, Pencil, Check,
   PanelLeftClose, PanelLeftOpen,
   CheckCircle2, XCircle, ChevronRight, Wrench,
+  Volume2, VolumeX, ChevronDown,
 } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────
@@ -23,6 +24,7 @@ interface Conversation {
   messageCount: number;
   lastMessagePreview: string | null;
   lastMessageRole: string | null;
+  modelOverride?: string | null;
 }
 
 interface Attachment {
@@ -148,6 +150,140 @@ const ToolCallCard = memo(({ tc }: { tc: ToolCallEntry }) => {
 });
 ToolCallCard.displayName = "ToolCallCard";
 
+/**
+ * P1-5: 可搜索的 Agent 选择器 Combobox
+ * - 支持按名称/部门搜索过滤
+ * - 自建 Agent 置顶，内置按部门分组
+ * - 点击外部自动关闭
+ */
+import type { AgentInfo } from "@/hooks/useAgents";
+function AgentCombobox({ agents, selectedAgent, onSelect }: {
+  agents: AgentInfo[];
+  selectedAgent: string;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const comboRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (comboRef.current && !comboRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  // 搜索过滤
+  const filtered = useMemo(() => {
+    if (!query) return agents;
+    const q = query.toLowerCase();
+    return agents.filter(a =>
+      a.name.toLowerCase().includes(q) ||
+      a.departmentLabel?.toLowerCase().includes(q) ||
+      a.department?.toLowerCase().includes(q)
+    );
+  }, [agents, query]);
+
+  // 分组：自建置顶 + 内置按部门
+  const groups = useMemo(() => {
+    const userAgents = filtered.filter(a => !a.isBuiltin);
+    const builtinAgents = filtered.filter(a => a.isBuiltin);
+    const deptMap = new Map<string, AgentInfo[]>();
+    for (const a of builtinAgents) {
+      const dept = a.department || "other";
+      if (!deptMap.has(dept)) deptMap.set(dept, []);
+      deptMap.get(dept)!.push(a);
+    }
+    return { userAgents, deptGroups: Array.from(deptMap.entries()) };
+  }, [filtered]);
+
+  const selectedName = agents.find(a => a.id === selectedAgent)?.name || "选择 Agent";
+
+  return (
+    <div ref={comboRef} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-sm text-white text-left flex items-center justify-between hover:border-zinc-700 focus:border-blue-500 focus:outline-none"
+      >
+        <span className="truncate">{selectedName}</span>
+        <ChevronDown className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0" />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-lg border border-zinc-800 bg-zinc-950 shadow-xl max-h-80 flex flex-col">
+          {/* 搜索框 */}
+          <div className="p-2 border-b border-zinc-800/50">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="搜索 Agent..."
+                className="w-full rounded border border-zinc-800 bg-zinc-900 pl-7 pr-2 py-1 text-xs text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {/* 列表区域 */}
+          <div className="overflow-y-auto flex-1">
+            {filtered.length === 0 ? (
+              <div className="p-3 text-xs text-zinc-500 text-center">无匹配结果</div>
+            ) : (
+              <>
+                {/* 自建 Agent */}
+                {groups.userAgents.length > 0 && (
+                  <div>
+                    <div className="px-2 py-1 text-xs font-medium text-zinc-500 uppercase tracking-wider">我的 Agent</div>
+                    {groups.userAgents.map(a => (
+                      <button
+                        key={a.id}
+                        onClick={() => { onSelect(a.id); setOpen(false); setQuery(""); }}
+                        className={cn(
+                          "w-full px-2 py-1.5 text-left text-xs hover:bg-zinc-800/50 flex items-center gap-2",
+                          selectedAgent === a.id && "bg-blue-600/10 text-blue-400"
+                        )}
+                      >
+                        <Bot className="h-3.5 w-3.5 flex-shrink-0 text-zinc-400" />
+                        <span className="truncate">{a.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {/* 内置按部门 */}
+                {groups.deptGroups.map(([dept, deptAgents]) => (
+                  <div key={dept}>
+                    <div className="px-2 py-1 text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                      {deptAgents[0]?.departmentLabel || dept} ({deptAgents.length})
+                    </div>
+                    {deptAgents.map(a => (
+                      <button
+                        key={a.id}
+                        onClick={() => { onSelect(a.id); setOpen(false); setQuery(""); }}
+                        className={cn(
+                          "w-full px-2 py-1.5 text-left text-xs hover:bg-zinc-800/50 flex items-center gap-2",
+                          selectedAgent === a.id && "bg-blue-600/10 text-blue-400"
+                        )}
+                      >
+                        <Bot className="h-3.5 w-3.5 flex-shrink-0 text-zinc-400" />
+                        <span className="truncate">{a.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ChatPage() {
   // ─── State ───────────────────────────────────────────────
   const { agents } = useAgents();
@@ -164,6 +300,16 @@ export default function ChatPage() {
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [searchResults, setSearchResults] = useState<Conversation[] | null>(null);
+  // TTS 状态
+  const [playingIdx, setPlayingIdx] = useState<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // 模型切换
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [modelCatalog, setModelCatalog] = useState<Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>>([]); 
+  // P2: 当前对话的 modelOverride（用于 UI 显示）
+  const [convModelOverride, setConvModelOverride] = useState<string | null>(null);
+  const modelPickerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -175,7 +321,9 @@ export default function ChatPage() {
     if (savedAgent && agents.some((a) => a.id === savedAgent)) {
       setSelectedAgent(savedAgent);
     } else {
-      setSelectedAgent(agents[0].id);
+      // P2-7: 优先选择自建 Agent，其次 fallback 到第一个
+      const userAgents = agents.filter(a => !a.isBuiltin);
+      setSelectedAgent(userAgents.length > 0 ? userAgents[0].id : agents[0].id);
     }
   }, [agents, selectedAgent]);
 
@@ -202,6 +350,9 @@ export default function ChatPage() {
       loadConversations(selectedAgent);
       setActiveConvId(null);
       setMessages([]);
+      // 切换 Agent 时重置模型覆盖状态
+      setConvModelOverride(null);
+      setShowModelPicker(false);
     }
   }, [selectedAgent, loadConversations]);
 
@@ -223,7 +374,10 @@ export default function ChatPage() {
   const selectConversation = useCallback((convId: string) => {
     setActiveConvId(convId);
     loadMessages(convId);
-  }, [loadMessages]);
+    // P2: 切换对话时读取该对话的 modelOverride
+    const conv = conversations.find((c) => c.id === convId);
+    setConvModelOverride(conv?.modelOverride ?? null);
+  }, [loadMessages, conversations]);
 
   // Auto-select the most recent conversation on load (or restore last active)
   useEffect(() => {
@@ -482,10 +636,9 @@ export default function ChatPage() {
       };
 
       try {
-        // SSE 流式请求直连 API 后端，绕过 Next.js rewrite 代理
-        // 避免代理层超时截断长时间运行的 LLM 流式响应
-        const streamBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-        const res = await fetch(`${streamBase}/api/chat/stream`, {
+        // SSE 流式请求走 Next.js proxy（proxyTimeout 已设为 5 分钟）
+        // 保留直连 fallback 以防代理超时：process.env.NEXT_PUBLIC_API_URL
+        const res = await fetch(`/api/chat/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -552,6 +705,13 @@ export default function ChatPage() {
                   if (parsed.conversationId && !activeConvId) {
                     setActiveConvId(parsed.conversationId);
                     loadConversations(selectedAgent);
+                    // P0: 新建对话后，如果有待持久化的 modelOverride，立即写入
+                    if (convModelOverride) {
+                      apiFetch(`/api/conversations/${parsed.conversationId}`, {
+                        method: "PATCH",
+                        body: JSON.stringify({ modelOverride: convModelOverride }),
+                      }).catch(() => {});
+                    }
                   }
                   if (parsed.type === "content" && parsed.content) {
                     assistantContent += parsed.content;
@@ -656,13 +816,101 @@ export default function ChatPage() {
     return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
   };
 
-  // Filter conversations by search
-  const filteredConversations = searchQuery
-    ? conversations.filter((c) =>
-        (c.title ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (c.lastMessagePreview ?? "").toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : conversations;
+  // 对话搜索: 输入时先本地过滤，Enter 触发 API 全文搜索
+  const handleConvSearch = useCallback(async () => {
+    if (!searchQuery.trim()) { setSearchResults(null); return; }
+    try {
+      const data = await apiFetch<{ results: Array<{ conversationId: string; snippet: string }> }>(
+        `/api/conversations/search?q=${encodeURIComponent(searchQuery)}`
+      );
+      // 将搜索结果映射为对话列表
+      const matchedIds = new Set((data.results ?? []).map((r) => r.conversationId));
+      setSearchResults(conversations.filter((c) => matchedIds.has(c.id)));
+    } catch { setSearchResults(null); }
+  }, [searchQuery, conversations]);
+
+  const filteredConversations = searchResults
+    ? searchResults
+    : searchQuery
+      ? conversations.filter((c) =>
+          (c.title ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (c.lastMessagePreview ?? "").toLowerCase().includes(searchQuery.toLowerCase())
+        )
+      : conversations;
+
+  // 模型目录获取
+  useEffect(() => {
+    apiFetch<{ providers: Array<{ id: string; name: string; isEnabled: boolean; models: Array<{ id: string; name: string }> }> }>("/api/models/providers")
+      .then((data) => setModelCatalog((data.providers ?? []).filter((p) => p.isEnabled || p.models.length > 0)))
+      .catch(() => {});
+  }, []);
+
+  // P3: 点击 model picker 外部时自动关闭
+  useEffect(() => {
+    if (!showModelPicker) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
+        setShowModelPicker(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showModelPicker]);
+
+  // TTS 语音合成
+  const handleTTS = useCallback(async (text: string, msgIdx: number) => {
+    // 如果正在播放同一条，停止
+    if (playingIdx === msgIdx) {
+      audioRef.current?.pause();
+      setPlayingIdx(null);
+      return;
+    }
+    setPlayingIdx(msgIdx);
+    try {
+      // TTS 返回二进制 blob，不能用 apiFetch（它假定 JSON），但需要手动附加认证头
+      const token = typeof window !== "undefined" ? localStorage.getItem("super-agent.auth-token") : null;
+      const res = await fetch(`${API_BASE}/api/voice/synthesize`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ text: text.slice(0, 2000) }),
+      });
+      if (!res.ok) throw new Error("TTS 合成失败");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => { setPlayingIdx(null); URL.revokeObjectURL(url); };
+      audio.play();
+    } catch {
+      setPlayingIdx(null);
+    }
+  }, [playingIdx]);
+
+  // 模型切换 — 修复 P0/P1/P2
+  const handleModelSwitch = useCallback(async (providerId: string, modelId: string) => {
+    // P1: 使用 "providerId:modelId" 格式，让后端能查找到 provider 的 API Key
+    const overrideValue = `${providerId}:${modelId}`;
+
+    if (!activeConvId) {
+      // P0: 无活跃对话时，将 override 暂存到本地状态
+      // 发送第一条消息创建对话后再持久化
+      setConvModelOverride(overrideValue);
+      setShowModelPicker(false);
+      return;
+    }
+    try {
+      await apiFetch(`/api/conversations/${activeConvId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ modelOverride: overrideValue }),
+      });
+      // P2: 更新本地 UI 状态
+      setConvModelOverride(overrideValue);
+      setShowModelPicker(false);
+    } catch { /* ignore */ }
+  }, [activeConvId]);
 
   return (
     <div className="flex h-[calc(100vh-4rem)]" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
@@ -692,17 +940,13 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* Agent selector */}
+        {/* P1-5: Agent 选择器 — 可搜索 Combobox，支持按名称/部门搜索 */}
         <div className="px-3 py-2 border-b border-zinc-800/50">
-          <select
-            value={selectedAgent}
-            onChange={(e) => { setSelectedAgent(e.target.value); }}
-            className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
-          >
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
+          <AgentCombobox
+            agents={agents}
+            selectedAgent={selectedAgent}
+            onSelect={(id) => setSelectedAgent(id)}
+          />
         </div>
 
         {/* Search */}
@@ -713,7 +957,8 @@ export default function ChatPage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索对话..."
+              placeholder="搜索对话... (Enter 搜索)"
+              onKeyDown={(e) => { if (e.key === "Enter") handleConvSearch(); }}
               className="w-full rounded-lg border border-zinc-800 bg-zinc-900 pl-8 pr-3 py-1.5 text-sm text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
             />
           </div>
@@ -804,14 +1049,27 @@ export default function ChatPage() {
                 ? (conversations.find((c) => c.id === activeConvId)?.title || "新对话")
                 : "对话"}
             </h1>
-            <div className="mt-0.5 flex items-center gap-2">
+            <div className="mt-0.5 flex items-center gap-2 relative" ref={modelPickerRef}>
               {(() => {
                 const agent = agents.find((a) => a.id === selectedAgent);
-                if (agent?.model) {
+                // P2: 优先显示当前对话的 modelOverride，其次显示 Agent 默认模型
+                const displayModel = convModelOverride
+                  ? convModelOverride.split(":").pop() // 从 "providerId:modelId" 取 modelId 部分
+                  : agent?.model;
+                const isOverridden = !!convModelOverride;
+                if (displayModel) {
                   return (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-xs text-blue-400 border border-blue-500/20">
-                      {agent.model}
-                    </span>
+                    <button
+                      onClick={() => setShowModelPicker(!showModelPicker)}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs border hover:opacity-80 ${
+                        isOverridden
+                          ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
+                          : "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                      }`}
+                    >
+                      {isOverridden && <span className="text-[10px] opacity-60">●</span>}
+                      {displayModel} <ChevronDown className="h-3 w-3" />
+                    </button>
                   );
                 }
                 return (
@@ -820,6 +1078,50 @@ export default function ChatPage() {
                   </a>
                 );
               })()}
+              {showModelPicker && modelCatalog.length > 0 && (
+                <div className="absolute top-8 left-0 z-50 w-72 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl max-h-72 overflow-y-auto">
+                  {/* 清除 override 按钮 */}
+                  {convModelOverride && (
+                    <button
+                      onClick={() => {
+                        // 清除当前对话的模型覆盖，回到 Agent 默认
+                        if (activeConvId) {
+                          apiFetch(`/api/conversations/${activeConvId}`, {
+                            method: "PATCH",
+                            body: JSON.stringify({ modelOverride: null }),
+                          }).catch(() => {});
+                        }
+                        setConvModelOverride(null);
+                        setShowModelPicker(false);
+                      }}
+                      className="w-full px-3 py-2 text-left text-xs text-amber-400 hover:bg-zinc-800 border-b border-zinc-800"
+                    >
+                      ← 恢复 Agent 默认模型
+                    </button>
+                  )}
+                  {modelCatalog.map((provider) => (
+                    <div key={provider.id}>
+                      <p className="px-3 py-1.5 text-xs font-semibold text-zinc-500 uppercase">{provider.name}</p>
+                      {provider.models.slice(0, 8).map((m) => {
+                        // 高亮当前已选中的模型
+                        const isActive = convModelOverride === `${provider.id}:${m.id}`;
+                        return (
+                          <button
+                            key={m.id}
+                            onClick={() => handleModelSwitch(provider.id, m.id)}
+                            className={`w-full px-3 py-1.5 text-left text-sm hover:bg-zinc-800 ${
+                              isActive ? "text-purple-400 bg-purple-500/10" : "text-zinc-300"
+                            }`}
+                          >
+                            {isActive && <span className="mr-1">✓</span>}
+                            {m.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             </div>
           </div>
@@ -838,17 +1140,57 @@ export default function ChatPage() {
 
         {/* Messages */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto py-6 px-6 space-y-4">
-          {messages.length === 0 && (
-            <div className="flex h-full items-center justify-center">
-              <div className="text-center">
-                <Bot className="mx-auto h-12 w-12 text-zinc-600" />
-                <p className="mt-4 text-lg text-zinc-500">
-                  {activeConvId ? "开始对话吧" : "选择或新建一个对话"}
-                </p>
-                <p className="mt-2 text-sm text-zinc-600">支持文字、图片、文件、语音输入</p>
+          {messages.length === 0 && (() => {
+            const agent = agents.find((a) => a.id === selectedAgent);
+            // 未配置模型时显示首次引导卡片
+            if (!agent?.model) {
+              return (
+                <div className="flex h-full items-center justify-center">
+                  <div className="max-w-md w-full rounded-2xl border border-blue-500/20 bg-gradient-to-b from-blue-500/10 to-transparent p-8 text-center">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-600/20 mb-4">
+                      <Bot className="h-7 w-7 text-blue-400" />
+                    </div>
+                    <h2 className="text-xl font-semibold text-white">欢迎使用 Super Agent</h2>
+                    <p className="mt-3 text-sm text-zinc-400 leading-relaxed">
+                      只需两步即可开始：
+                    </p>
+                    <ol className="mt-3 text-sm text-zinc-300 text-left space-y-2 pl-4">
+                      <li className="flex items-start gap-2">
+                        <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-blue-600/30 text-xs text-blue-400 font-medium">1</span>
+                        <span>前往<strong className="text-blue-400">设置页面</strong></span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-blue-600/30 text-xs text-blue-400 font-medium">2</span>
+                        <span>选择 Provider → 填入 API Key → 保存</span>
+                      </li>
+                    </ol>
+                    <a
+                      href="/settings"
+                      className="mt-5 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+                    >
+                      <Settings2 className="h-4 w-4" /> 前往设置
+                    </a>
+                    <p className="mt-4 text-xs text-zinc-500">
+                      支持 Kimi / 智谱GLM / 千问 / DeepSeek / MiniMax / 自定义
+                    </p>
+                    <p className="text-xs text-zinc-600">配置后无需重启，立即可用</p>
+                  </div>
+                </div>
+              );
+            }
+            // 已配置模型时显示默认占位符
+            return (
+              <div className="flex h-full items-center justify-center">
+                <div className="text-center">
+                  <Bot className="mx-auto h-12 w-12 text-zinc-600" />
+                  <p className="mt-4 text-lg text-zinc-500">
+                    {activeConvId ? "开始对话吧" : "选择或新建一个对话"}
+                  </p>
+                  <p className="mt-2 text-sm text-zinc-600">支持文字、图片、文件、语音输入</p>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
           {messages.map((msg, i) => (
             <div key={i} className={cn("flex gap-3", msg.role === "user" ? "justify-end" : "")}>
               {msg.role === "assistant" && (
@@ -874,6 +1216,16 @@ export default function ChatPage() {
                   </div>
                 )}
                 <p className="whitespace-pre-wrap">{msg.content}</p>
+                {msg.role === "assistant" && msg.content && (
+                  <button
+                    onClick={() => handleTTS(msg.content, i)}
+                    className="mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50"
+                    title={playingIdx === i ? "停止播放" : "朗读"}
+                  >
+                    {playingIdx === i ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                    {playingIdx === i ? "停止" : "朗读"}
+                  </button>
+                )}
                 {msg.toolCalls && msg.toolCalls.length > 0 && (
                   <div className="mt-2">
                     {msg.toolCalls.map((tc) => (

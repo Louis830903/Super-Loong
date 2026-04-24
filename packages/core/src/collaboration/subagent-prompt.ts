@@ -91,6 +91,7 @@ export const buildSubagentSystemPrompt = (opts: SubagentPromptOptions): string =
   sections.push(`## Role
 You are a sub-agent spawned by ${parentLabel} (session: ${opts.parentSessionId}).
 ${opts.label ? `Label: **${opts.label}**` : ""}
+Current depth: **${opts.childDepth}/${opts.maxSpawnDepth}** (${opts.childDepth >= opts.maxSpawnDepth ? "leaf node — cannot spawn further" : `can spawn up to depth ${opts.maxSpawnDepth}`})
 
 Your assigned task:
 > ${opts.task}

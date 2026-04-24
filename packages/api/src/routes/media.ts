@@ -1,9 +1,11 @@
 /**
  * Media routes — 媒体上传、查询和下载端点
  *
- * POST /api/media/upload   — 上传媒体文件 (base64 方式)，返回 mediaId + 元信息
- * GET  /api/media/:id      — 查询已保存的媒体信息
+ * GET  /api/media             — 列出所有媒体文件
+ * POST /api/media/upload      — 上传媒体文件 (base64 方式)，返回 mediaId + 元信息
+ * GET  /api/media/:id          — 查询已保存的媒体信息
  * GET  /api/media/:id/download — 下载媒体文件
+ * DELETE /api/media/:id        — 删除媒体文件
  */
 
 import type { FastifyInstance } from "fastify";
@@ -19,11 +21,59 @@ import {
   assertSizeAllowed,
   assertMimeAllowed,
   MEDIA_MAX_BYTES,
+  resolveHome,
 } from "@super-agent/core";
 
 export async function mediaRoutes(app: FastifyInstance) {
   // 确保媒体存储目录存在
   await initMediaStore();
+
+  // ─── 解析媒体存储根目录 ───
+  const mediaRoot = path.join(resolveHome(), "media");
+
+  /**
+   * GET /api/media
+   * 列出所有媒体文件（扫描 inbound + outbound 目录）
+   */
+  app.get("/api/media", async (_request, reply) => {
+    const items: Array<{
+      id: string;
+      filename: string;
+      mimeType: string;
+      size: number;
+      createdAt: string;
+      path: string;
+    }> = [];
+
+    for (const subdir of ["inbound", "outbound"]) {
+      const dir = path.join(mediaRoot, subdir);
+      try {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isFile()) continue;
+          const filePath = path.join(dir, entry.name);
+          try {
+            const stat = await fs.stat(filePath);
+            // UUID 是文件名去掉扩展名的部分
+            const id = path.basename(entry.name, path.extname(entry.name));
+            const contentType = await detectMime({ filePath });
+            items.push({
+              id,
+              filename: entry.name,
+              mimeType: contentType,
+              size: stat.size,
+              createdAt: stat.mtime.toISOString(),
+              path: filePath,
+            });
+          } catch { /* 文件可能已被清理，忽略 */ }
+        }
+      } catch { /* 目录不存在，忽略 */ }
+    }
+
+    // 按创建时间倒序
+    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return reply.send({ items });
+  });
 
   /**
    * POST /api/media/upload
@@ -155,6 +205,28 @@ export async function mediaRoutes(app: FastifyInstance) {
         .send(data);
     } catch {
       return reply.status(404).send({ error: "媒体文件已被清理" });
+    }
+  });
+
+  /**
+   * DELETE /api/media/:id
+   * 删除媒体文件
+   */
+  app.delete<{
+    Params: { id: string };
+  }>("/api/media/:id", async (request, reply) => {
+    const { id } = request.params;
+    const media = await getMediaById(id);
+
+    if (!media) {
+      return reply.status(404).send({ error: "媒体文件不存在" });
+    }
+
+    try {
+      await fs.unlink(media.path);
+      return reply.send({ deleted: true, id });
+    } catch {
+      return reply.status(500).send({ error: "删除失败" });
     }
   });
 }

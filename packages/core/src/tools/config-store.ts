@@ -4,7 +4,7 @@
  * 复用 ProviderStore 的 AES-256-CBC 加密模式，存储阿里云语音、火山方舟 Seedream、
  * 浏览器自动化等外部服务的凭据和配置。
  *
- * 优先级链路：ConfigStore → 环境变量 → 默认值
+ * 优先级链路：ConfigStore (设置页面) → 环境变量 (首次播种) → 默认值
  */
 
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
@@ -171,14 +171,17 @@ export class ConfigStore {
     logger.info("ConfigStore initialized (service_configs table ready)");
   }
 
-  /** 将环境变量同步到数据库（环境变量优先级最高） */
+  /** 将环境变量播种到数据库（仅首次：DB 中无记录时写入，不覆盖设置页面的修改） */
   syncFromEnv(): void {
     for (const service of SERVICE_CATALOG) {
       for (const keyDef of service.keys) {
         const envValue = process.env[keyDef.envKey];
         if (envValue) {
-          this.set(service.id, keyDef.key, envValue, keyDef.secret);
-          logger.info({ service: service.id, key: keyDef.key }, `Synced from env: ${keyDef.envKey}`);
+          // 仅首次播种：DB 中已有该配置则跳过
+          if (!this._hasRecord(service.id, keyDef.key)) {
+            this.set(service.id, keyDef.key, envValue, keyDef.secret);
+            logger.info({ service: service.id, key: keyDef.key }, `Seeded from env: ${keyDef.envKey}`);
+          }
         }
       }
     }
@@ -299,6 +302,16 @@ export class ConfigStore {
   }
 
   // ── 内部辅助 ──
+
+  /** 检查 DB 中是否存在指定配置记录（不受默认值影响） */
+  private _hasRecord(serviceId: string, key: string): boolean {
+    const db = getDatabase();
+    const rows = db.exec(
+      "SELECT 1 FROM service_configs WHERE service_id = ? AND config_key = ?",
+      [serviceId, key]
+    );
+    return rows.length > 0 && rows[0].values.length > 0;
+  }
 
   private isSecretKey(serviceId: string, key: string): boolean {
     const keyDef = this.findKeyDef(serviceId, key);

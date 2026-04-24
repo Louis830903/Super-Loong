@@ -66,7 +66,6 @@ const platformColors: Record<string, string> = {
   dingtalk: "text-sky-400",
   wecom: "text-blue-400",
   feishu: "text-indigo-400",
-  weixin: "text-green-400",
 };
 
 const healthLevelMeta: Record<string, { label: string; color: string; bg: string }> = {
@@ -354,22 +353,22 @@ export default function ChannelsPage() {
                 <div className="flex gap-1 mt-2 flex-wrap">
                   {ch.has_qr_login && (
                     <span
-                      className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded flex items-center gap-0.5 cursor-pointer hover:bg-zinc-700 hover:text-blue-400 transition-colors"
+                      className="text-xs bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded flex items-center gap-0.5 cursor-pointer hover:bg-zinc-700 hover:text-blue-400 transition-colors"
                       onClick={(e) => { e.stopPropagation(); openConnectDialog(ch.id); }}
                     >
                       <QrCode className="h-2.5 w-2.5" /> QR
                     </span>
                   )}
                   {ch.has_doctor && (
-                    <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                    <span className="text-xs bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded flex items-center gap-0.5">
                       <Wrench className="h-2.5 w-2.5" /> 诊断
                     </span>
                   )}
                   {ch.capabilities.media && (
-                    <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">媒体</span>
+                    <span className="text-xs bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">媒体</span>
                   )}
                   {ch.capabilities.block_streaming && (
-                    <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">流式</span>
+                    <span className="text-xs bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">流式</span>
                   )}
                 </div>
               </div>

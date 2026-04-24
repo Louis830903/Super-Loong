@@ -116,15 +116,22 @@ export class ProviderStore {
     logger.info("ProviderStore initialized (llm_providers table ready)");
   }
 
-  /** Sync environment variables into the database (env takes priority). */
+  /**
+   * 将环境变量播种到数据库（仅首次：DB 中已有 API Key 则跳过）。
+   * 设计意图：env 作为一次性引导，设置页面为唯一真相源。
+   */
   syncFromEnv(): void {
     const catalog = getModelCatalog();
     for (const provider of catalog) {
       if (provider.id === "custom") continue;
       const envKey = process.env[provider.envKey];
       if (envKey) {
-        this.upsert(provider.id, { apiKey: envKey });
-        logger.info({ provider: provider.id }, `Synced API key from env: ${provider.envKey}`);
+        // 仅首次播种：DB 中已有 API Key 则跳过，避免覆盖设置页面的修改
+        const existing = this.get(provider.id);
+        if (!existing?.apiKey) {
+          this.upsert(provider.id, { apiKey: envKey });
+          logger.info({ provider: provider.id }, `Seeded API key from env: ${provider.envKey}`);
+        }
       }
     }
     // Also support legacy LLM_API_KEY + LLM_BASE_URL
@@ -132,24 +139,27 @@ export class ProviderStore {
       const baseUrl = process.env.LLM_BASE_URL;
       const matchedProvider = catalog.find((p) => p.baseUrl && baseUrl.startsWith(p.baseUrl.replace(/\/v\d.*/, "")));
       if (matchedProvider) {
-        // Only seed selectedModel from env if no model is already configured in DB.
-        // This prevents env vars from overriding user's UI selections on every restart.
         const existing = this.get(matchedProvider.id);
-        this.upsert(matchedProvider.id, {
-          apiKey: process.env.LLM_API_KEY,
-          baseUrl: process.env.LLM_BASE_URL !== matchedProvider.baseUrl ? process.env.LLM_BASE_URL : undefined,
-          selectedModel: existing?.selectedModel || process.env.LLM_MODEL,
-        });
-        logger.info({ provider: matchedProvider.id }, "Synced legacy LLM_* env vars");
+        // 仅首次播种：DB 中已有 API Key 则跳过
+        if (!existing?.apiKey) {
+          this.upsert(matchedProvider.id, {
+            apiKey: process.env.LLM_API_KEY,
+            baseUrl: process.env.LLM_BASE_URL !== matchedProvider.baseUrl ? process.env.LLM_BASE_URL : undefined,
+            selectedModel: existing?.selectedModel || process.env.LLM_MODEL,
+          });
+          logger.info({ provider: matchedProvider.id }, "Seeded legacy LLM_* env vars");
+        }
       } else {
-        // Custom provider
         const existing = this.get("custom");
-        this.upsert("custom", {
-          apiKey: process.env.LLM_API_KEY,
-          baseUrl: process.env.LLM_BASE_URL,
-          selectedModel: existing?.selectedModel || process.env.LLM_MODEL,
-        });
-        logger.info("Synced legacy LLM_* env vars as custom provider");
+        // 仅首次播种：DB 中已有 API Key 则跳过
+        if (!existing?.apiKey) {
+          this.upsert("custom", {
+            apiKey: process.env.LLM_API_KEY,
+            baseUrl: process.env.LLM_BASE_URL,
+            selectedModel: existing?.selectedModel || process.env.LLM_MODEL,
+          });
+          logger.info("Seeded legacy LLM_* env vars as custom provider");
+        }
       }
     }
   }

@@ -596,7 +596,7 @@ function MarketplaceTab({ onInstalled }: { onInstalled: () => void }) {
                         {entry.displayName}
                       </h3>
                       {entry.isOfficial && (
-                        <span className="flex-shrink-0 rounded bg-green-900/30 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800/50">
+                        <span className="flex-shrink-0 rounded bg-green-900/30 px-1.5 py-0.5 text-xs font-medium text-green-400 border border-green-800/50">
                           <Shield className="mr-0.5 inline h-3 w-3" />
                           认证
                         </span>
@@ -666,7 +666,7 @@ function MarketplaceTab({ onInstalled }: { onInstalled: () => void }) {
                     {(entry.envVars ?? []).map((v) => (
                       <span
                         key={v.name}
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-mono ${
+                        className={`rounded px-1.5 py-0.5 text-xs font-mono ${
                           v.isRequired
                             ? "bg-amber-900/20 text-amber-400 border border-amber-800/40"
                             : "bg-zinc-800 text-zinc-500"

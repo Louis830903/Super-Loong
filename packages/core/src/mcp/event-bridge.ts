@@ -92,6 +92,10 @@ export class EventBridge {
 
     // 启动后台清理
     this.cleanupTimer = setInterval(() => this.cleanup(), cleanupInterval);
+    // [v3 Task 2-6] 不阻止 Node 进程退出
+    if (this.cleanupTimer && typeof this.cleanupTimer === "object" && "unref" in this.cleanupTimer) {
+      this.cleanupTimer.unref();
+    }
   }
 
   /**

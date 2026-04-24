@@ -48,3 +48,33 @@ export {
   DockerEnvironment,
   type ExecutionEnvironment,
 } from "./environments.js";
+
+// ───── T4: 评估基准适配器 ─────
+
+// Dataset Loader 基础类型
+export {
+  type BenchmarkDataset,
+  type BenchmarkTask,
+  type BenchmarkExpected,
+  type DatasetLoadOptions,
+  type DatasetLoader,
+  readFromCache,
+  writeToCache,
+  sampleTasks,
+} from "./datasets/loader.js";
+
+// BFCL Loader
+export { BFCLLoader } from "./datasets/bfcl-loader.js";
+
+// GAIA Loader
+export { GAIALoader, type DifficultyBreakdown } from "./datasets/gaia-loader.js";
+
+// ToolBench Loader
+export { ToolBenchLoader } from "./datasets/toolbench-loader.js";
+
+// ToolCallJudge
+export {
+  ToolCallJudge,
+  type ActualToolCall,
+  type ExpectedToolCall,
+} from "./judges/tool-call-judge.js";

@@ -1,0 +1,15 @@
+{
+  "name": "@super-agent/monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Super Agent - Independent Monitor Window (Electron)",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "dependencies": {
+    "electron": "^30.0.0"
+  },
+  "devDependencies": {}
+}

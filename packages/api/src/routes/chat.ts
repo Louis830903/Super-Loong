@@ -402,10 +402,15 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     return { results, total: results.length };
   });
 
-  // ─── Legacy Session Endpoints ─────────────────────────────
+  // ─── Legacy Session Endpoints (DEPRECATED — 下一版本移除) ───
+  // 请使用 /api/conversations 替代
 
   // List sessions for an agent
-  app.get<{ Querystring: { agentId?: string } }>("/api/sessions", async (request) => {
+  app.get<{ Querystring: { agentId?: string } }>("/api/sessions", async (request, reply) => {
+    reply.header("Deprecation", "true");
+    reply.header("Sunset", "v0.3.0");
+    reply.header("Link", '</api/conversations>; rel="successor-version"');
+    app.log.warn("[DEPRECATED] GET /api/sessions → 请迁移到 GET /api/conversations");
     const { agentId } = request.query;
     if (!agentId) {
       return { sessions: [] };
@@ -421,6 +426,9 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get<{ Params: { id: string }; Querystring: { agentId: string } }>(
     "/api/sessions/:id",
     async (request, reply) => {
+      reply.header("Deprecation", "true");
+      reply.header("Sunset", "v0.3.0");
+      app.log.warn(`[DEPRECATED] GET /api/sessions/${request.params.id} → 请迁移到 GET /api/conversations/:id`);
       const agent = ctx.agentManager.getAgent(request.query.agentId);
       if (!agent) {
         return reply.status(404).send({ error: "Agent not found" });
@@ -437,6 +445,9 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
   app.delete<{ Params: { id: string }; Querystring: { agentId: string } }>(
     "/api/sessions/:id",
     async (request, reply) => {
+      reply.header("Deprecation", "true");
+      reply.header("Sunset", "v0.3.0");
+      app.log.warn(`[DEPRECATED] DELETE /api/sessions/${request.params.id} → 请迁移到 DELETE /api/conversations/:id`);
       const agent = ctx.agentManager.getAgent(request.query.agentId);
       if (!agent) {
         return reply.status(404).send({ error: "Agent not found" });
@@ -451,10 +462,13 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
 
   // ─── FTS5 Cross-Session Search ─────────────────────────
 
-  /** Full-text search across sessions */
+  /** Full-text search across sessions (DEPRECATED) */
   app.get<{
     Querystring: { q: string; agentId?: string; limit?: string };
   }>("/api/sessions/search", async (request, reply) => {
+    reply.header("Deprecation", "true");
+    reply.header("Sunset", "v0.3.0");
+    app.log.warn("[DEPRECATED] GET /api/sessions/search → 请迁移到 GET /api/conversations/search");
     const { q, agentId, limit } = request.query;
     if (!q) {
       return reply.status(400).send({ error: "q parameter is required" });

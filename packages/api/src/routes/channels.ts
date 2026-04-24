@@ -11,6 +11,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { ChannelConfigSchema, saveChannel, loadChannels, deleteChannel as deleteChannelDB } from "@super-agent/core";
+import { z } from "zod";
 import type { AppContext } from "../context.js";
 
 // B-18: 从 SQLite 加载已持久化的 channel 配置
@@ -215,11 +216,45 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
   );
 
   app.post<{ Params: { platform: string } }>("/api/gateway/restart/:platform", async (request, reply) => {
-    // 重启 = 断开 + 重连
-    app.log.info({ action: "gateway_restart", platform: request.params.platform }, "Proxy: restart channel");
-    await proxyPOST(`/api/gateway/channels/${request.params.platform}/disconnect`, {}, reply);
-    // TODO: 需要从持久化配置重新连接
-    return { status: "restarted", platform: request.params.platform };
+    const { platform } = request.params;
+    app.log.info({ action: "gateway_restart", platform }, "Restarting channel");
+
+    // 1. 断开现有连接（直接 fetch，不通过 proxyPOST 避免 reply 竞争）
+    try {
+      await fetch(`${IM_GATEWAY_URL}/api/gateway/channels/${platform}/disconnect`, {
+        method: "POST",
+        headers: gatewayHeaders(),
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (err: any) {
+      app.log.warn({ platform, error: err.message }, "Disconnect failed during restart, continuing");
+    }
+
+    // 2. 从持久化 Map 获取连接配置（B-18 已实现 SQLite 持久化 + 启动时 loadFromDB）
+    const channelConfig = channels.get(platform);
+    if (!channelConfig?.config || Object.keys(channelConfig.config).length === 0) {
+      return reply.status(400).send({
+        error: `No saved configuration for platform "${platform}". Cannot restart without config.`,
+      });
+    }
+
+    // 3. 使用持久化配置重新连接
+    try {
+      const connectRes = await fetch(`${IM_GATEWAY_URL}/api/gateway/channels/${platform}/connect`, {
+        method: "POST",
+        headers: gatewayHeaders(),
+        body: JSON.stringify({ credentials: channelConfig.config }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const connectData: any = await connectRes.json();
+      return reply.send({ status: "restarted", platform, connection: connectData });
+    } catch (err: any) {
+      app.log.error({ platform, error: err.message }, "Reconnect failed during restart");
+      return reply.status(502).send({
+        error: `Restart failed: disconnect OK but reconnect failed — ${err.message}`,
+      });
+    }
   });
 
   // Health/system info
@@ -271,4 +306,44 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
       })),
     };
   });
+
+  // ─── Task 4.1: 路由绑定管理（MessageRouter 渠道 → Agent 映射）─────────
+
+  const BindingSchema = z.object({
+    channelId: z.string().min(1),
+    agentId: z.string().min(1),
+    chatId: z.string().optional(),
+  });
+
+  // 列出所有路由绑定
+  app.get("/api/router/bindings", async () => {
+    return { bindings: ctx.router.listBindings() };
+  });
+
+  // 添加路由绑定
+  app.post("/api/router/bindings", async (req, reply) => {
+    const parsed = BindingSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+    }
+    // 验证 Agent 存在
+    const agent = ctx.agentManager.getAgent(parsed.data.agentId);
+    if (!agent) {
+      return reply.status(404).send({ error: `Agent not found: ${parsed.data.agentId}` });
+    }
+    ctx.router.addBinding(parsed.data);
+    return reply.status(201).send({ success: true, binding: parsed.data });
+  });
+
+  // 删除路由绑定
+  app.delete("/api/router/bindings", async (req, reply) => {
+    const body = (req.body ?? {}) as { channelId?: string; agentId?: string };
+    if (!body.channelId || !body.agentId) {
+      return reply.status(400).send({ error: "需要提供 channelId 和 agentId" });
+    }
+    ctx.router.removeBinding(body.channelId, body.agentId);
+    return reply.send({ success: true });
+  });
+
+  app.log.info("Route binding management endpoints registered (Task 4.1)");
 }

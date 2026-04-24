@@ -14,6 +14,7 @@
 
 import pino from "pino";
 import type { SubagentRecord } from "./subagent-spawn.js";
+import type { IAgentRegistry } from "./agent-registry.js";
 
 const logger = pino({ name: "subagent-announce" });
 
@@ -91,6 +92,20 @@ export const formatAnnounceMessage = (payload: AnnouncePayload): string => {
   return lines.join("\n");
 };
 
+// ─── F-5/v2.1: 错误分类 — 借鉴 OpenClaw transient/permanent error 模式 ───
+
+/** 永久错误不值得重试或回退 */
+function isPermanentError(err: unknown): boolean {
+  const msg = (err as Error)?.message ?? "";
+  const permanentPatterns = [
+    /session.*not found/i,       // 目标会话不存在
+    /agent.*not found/i,         // 目标 Agent 已销毁
+    /permission denied/i,        // 权限不足
+    /invalid.*session/i,         // 会话 ID 格式错误
+  ];
+  return permanentPatterns.some((p) => p.test(msg));
+}
+
 // ─── 通报路由器 ─────────────────────────────────────────────
 
 /**
@@ -102,10 +117,17 @@ export class SubagentAnnouncer {
   private injectFn?: InjectMessageFn;
   /** parentSessionId → 回调监听器（可选，用于通知编排器） */
   private listeners = new Map<string, Array<(payload: AnnouncePayload) => void>>();
+  /** A2A: Agent 注册表（可选，本地匹配失败时查注册表） */
+  private registry?: IAgentRegistry;
 
   /** 注入消息投递回调 */
   setInjectFn(fn: InjectMessageFn): void {
     this.injectFn = fn;
+  }
+
+  /** A2A: 注入 Agent 注册表（启用后本地匹配失败时可查注册表发现远端 Agent） */
+  setRegistry(registry: IAgentRegistry): void {
+    this.registry = registry;
   }
 
   /**
@@ -129,9 +151,10 @@ export class SubagentAnnouncer {
   }
 
   /**
-   * 投递子代理完成通报。
+   * F-5: 投递子代理完成通报（多层递归回退 + v2.1 错误分类）。
    *
    * 对标 OpenClaw subagent-announce-delivery.ts 的推送式通报 + 递归回退。
+   * 最多向上回退 maxFallbackDepth 层，遇到永久错误立即停止。
    *
    * @param record 子代理记录
    * @param getParent 获取父子代理记录的函数（用于递归回退）
@@ -158,49 +181,58 @@ export class SubagentAnnouncer {
       return false;
     }
 
-    const message = formatAnnounceMessage(payload);
-
+    let message = formatAnnounceMessage(payload);
+    let targetSessionId = record.parentSessionId;
     // 深度1子代理 → 主会话：作为 user 消息注入（触发父代理响应）
     // 深度2+ → 上级子代理：作为 system 消息注入（不触发自动响应）
-    const role = record.depth === 1 ? "user" : "system";
+    let role: "user" | "system" = record.depth === 1 ? "user" : "system";
 
-    try {
-      const delivered = await this.injectFn(record.parentSessionId, message, role);
+    // F-5: 多层递归回退（最多 3 层）
+    const maxFallbackDepth = 3;
+    let fallbackDepth = 0;
 
-      if (delivered) {
-        logger.info(
-          { subagentId: record.id, parentSessionId: record.parentSessionId },
-          "Announce delivered to parent"
-        );
-        return true;
-      }
+    while (fallbackDepth <= maxFallbackDepth) {
+      try {
+        const delivered = await this.injectFn(targetSessionId, message, role);
 
-      // 3. 投递失败，递归回退到更上层
-      if (getParent) {
-        const parentRecord = getParent(record.parentSessionId);
-        if (parentRecord && parentRecord.parentSessionId) {
+        if (delivered) {
           logger.info(
-            { subagentId: record.id, fallbackTo: parentRecord.parentSessionId },
-            "Parent session unreachable, falling back to grandparent"
+            { subagentId: record.id, targetSessionId, fallbackDepth },
+            fallbackDepth === 0 ? "Announce delivered to parent" : `Announce delivered via fallback (depth ${fallbackDepth})`
           );
-          // 修改 payload 的目标，追加回退说明
-          const fallbackMsg = `[Fallback from ${record.parentSessionId}]\n${message}`;
-          return await this.injectFn(parentRecord.parentSessionId, fallbackMsg, "system");
+          return true;
         }
+      } catch (err: any) {
+        // v2.1: 区分 permanent/transient 错误
+        if (isPermanentError(err)) {
+          logger.error(
+            { subagentId: record.id, targetSessionId, error: err.message },
+            "Permanent error, stopping fallback"
+          );
+          return false;
+        }
+        logger.warn(
+          { subagentId: record.id, targetSessionId, error: err.message, fallbackDepth },
+          "Transient error, attempting fallback"
+        );
       }
 
-      logger.warn(
-        { subagentId: record.id },
-        "Announce delivery failed and no fallback available"
-      );
-      return false;
-    } catch (err: any) {
-      logger.error(
-        { subagentId: record.id, error: err.message },
-        "Announce delivery error"
-      );
-      return false;
+      // 向上回退一层
+      if (!getParent) break;
+      const parentRecord = getParent(targetSessionId);
+      if (!parentRecord?.parentSessionId) break;
+
+      targetSessionId = parentRecord.parentSessionId;
+      message = `[Fallback depth ${fallbackDepth + 1}]\n${message}`;
+      role = "system"; // 回退投递始终使用 system 角色
+      fallbackDepth++;
     }
+
+    logger.warn(
+      { subagentId: record.id, fallbackDepth },
+      "Announce delivery failed after all fallback attempts"
+    );
+    return false;
   }
 
   /** 从子代理记录构建通报载荷 */

@@ -14,8 +14,9 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import dotenv from "dotenv";
 import path from "node:path";
+import crypto from "node:crypto";
 import { createAppContext } from "./context.js";
-import { closeDatabase, loadAllAgentConfigs, saveAgentConfig } from "@super-agent/core";
+import { closeDatabase, loadAllAgentConfigs, saveAgentConfig, setTracingEnabled, ensureBuiltinAgents, HeartbeatRunner, DEFAULT_HEARTBEAT_CONFIG } from "@super-agent/core";
 import { getProviderById, getModelById, getModelCatalog } from "@super-agent/core";
 
 import { registerMiddleware } from "./middleware/index.js";
@@ -36,12 +37,22 @@ import { modelRoutes } from "./routes/models.js";
 import { serviceRoutes } from "./routes/services.js";
 import { fileRoutes } from "./routes/files.js";
 import { mediaRoutes } from "./routes/media.js";
+import { settingsRoutes } from "./routes/settings.js";
+import { knowledgeGraphRoutes } from "./routes/knowledge-graph.js";
+import { a2aAdminRoutes } from "./routes/a2a-admin.js";
+import { registerTracesRoutes } from "./routes/traces.js";
 import { GatewayLauncher } from "./gateway-launcher.js";
+import { registerWellKnownRoute, a2aPlugin } from "./a2a/server.js";
 
 // Load .env from monorepo root (two levels up from packages/api/)
 dotenv.config({ path: path.resolve(process.cwd(), "../../.env") });
 // Also load local .env if exists (overrides root)
 dotenv.config();
+
+// 同步追踪状态：dotenv 加载后的环境变量可能和模块加载时不同
+if (process.env.ENABLE_TRACING === "true") {
+  setTracingEnabled(true);
+}
 
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -105,6 +116,116 @@ async function main() {
   ctx.skillLoader.loadAll();
   ctx.skillLoader.startWatching();
 
+  // ─── A2A 协议端点（条件性启用）───────────────────────────
+  if (process.env.ENABLE_A2A === "true" && ctx.a2aTaskStore) {
+    // Task 3.2: AgentCard 动态化 — 从 AgentManager 获取实际信息，而非硬编码
+    const buildDynamicCard = (extended?: boolean) => {
+      const defaultAgentId = ctx.router.getDefaultAgentId();
+      const defaultRuntime = defaultAgentId ? ctx.agentManager.getAgent(defaultAgentId) : undefined;
+      const agentName = (defaultRuntime as any)?.config?.name || "Super Agent";
+      const agentDesc = (defaultRuntime as any)?.config?.description || "AI Agent Platform with multi-agent collaboration";
+      // 从 skillLoader 获取实际已加载的技能列表（非空数组）
+      const skills = (ctx.skillLoader?.listSkills() || []).map((s: any) => ({
+        id: s.id || s.name, name: s.name, description: s.description || "", tags: s.tags || [],
+      }));
+      const baseCard = {
+        name: agentName,
+        description: agentDesc,
+        version: "0.1.0",
+        protocolVersion: "0.3.0",
+        url: `http://${HOST}:${PORT}`,
+        capabilities: { streaming: true, pushNotifications: !!ctx.a2aPushDispatcher },
+        skills,
+        defaultInputModes: ["text"],
+        defaultOutputModes: ["text"],
+      };
+      // 扩展 Card：带 auth 时返回 securitySchemes
+      if (extended) {
+        return { ...baseCard, securitySchemes: { bearer: { type: "http" as const, scheme: "bearer" } } };
+      }
+      return baseCard;
+    };
+
+    // well-known 必须在根级注册（绕过 plugin prefix）
+    await registerWellKnownRoute(app, buildDynamicCard);
+
+    // A2A JSON-RPC + SSE 端点
+    await app.register(a2aPlugin, {
+      getAgentCard: buildDynamicCard,
+      taskStore: ctx.a2aTaskStore,
+      registry: ctx.a2aRegistry,
+      pushDispatcher: ctx.a2aPushDispatcher,
+      onSendMessage: async (req) => {
+        // A2A 入方处理：远端 Agent 通过 JSON-RPC 发来的消息，委托当前默认 Agent 处理
+        const textParts = req.message.parts
+          .filter((p: any) => p.type === "text")
+          .map((p: any) => p.text)
+          .join("\n");
+
+        if (!textParts.trim()) {
+          return {
+            type: "message",
+            message: { role: "agent", parts: [{ type: "text", text: "Empty message received." }] },
+          };
+        }
+
+        // 通过 router 获取默认 Agent 的已有 Runtime 实例（避免重复创建）
+        const defaultAgentId = ctx.router.getDefaultAgentId();
+        const runtime = defaultAgentId ? ctx.agentManager.getAgent(defaultAgentId) : undefined;
+        if (!runtime) {
+          throw new Error("No default agent configured for A2A message handling");
+        }
+
+        // 构建隔离会话 ID（A2A 请求不复用用户会话）
+        const sessionId = `a2a-${crypto.randomUUID()}`;
+
+        // 调用已有 Runtime 的 chat() 方法
+        // chat() 返回 { sessionId, response, toolCalls, attachments }
+        const result = await runtime.chat(textParts, sessionId);
+
+        // 包装为 A2A Message 格式返回
+        return {
+          type: "message",
+          message: {
+            role: "agent",
+            parts: [{ type: "text", text: result.response || "" }],
+          },
+        };
+      },
+      // Task 3.1: A2A 流式消息回调 — 委托 chatStream() 实现 SSE
+      onStreamMessage: async (req, write) => {
+        const textParts = req.message.parts
+          .filter((p: any) => p.type === "text")
+          .map((p: any) => p.text)
+          .join("\n");
+
+        const defaultAgentId = ctx.router.getDefaultAgentId();
+        const runtime = defaultAgentId ? ctx.agentManager.getAgent(defaultAgentId) : undefined;
+        if (!runtime) {
+          write(JSON.stringify({ type: "error", error: "No default agent configured" }));
+          return;
+        }
+
+        const sessionId = `a2a-stream-${crypto.randomUUID()}`;
+
+        // 逐 chunk 输出 SSE 帧（server.ts 会自动追加 done 帧并关闭连接）
+        for await (const chunk of runtime.chatStream(textParts, sessionId)) {
+          if (chunk.type === "content") {
+            write(JSON.stringify({
+              type: "status",
+              taskId: sessionId,
+              state: "working",
+              message: { role: "agent", parts: [{ type: "text", text: (chunk as any).text || "" }] },
+            }));
+          } else if (chunk.type === "error") {
+            write(JSON.stringify({ type: "error", error: (chunk as any).message || "Stream error" }));
+          }
+        }
+      },
+    });
+    app.log.info("A2A 协议端点已启用: POST /a2a + POST /a2a/stream + GET /.well-known/agent-card.json");
+  }
+
   // Register routes
   await agentRoutes(app, ctx);
   await chatRoutes(app, ctx);
@@ -121,7 +242,11 @@ async function main() {
   await serviceRoutes(app, ctx);
   await fileRoutes(app);
   await mediaRoutes(app);
+  await settingsRoutes(app, ctx);
+  await knowledgeGraphRoutes(app, ctx);
+  await a2aAdminRoutes(app, ctx);
   await authRoutes(app);
+  await registerTracesRoutes(app);
 
   // WebSocket real-time event streaming
   await registerWebSocket(app, ctx);
@@ -129,29 +254,47 @@ async function main() {
   // ─── Restore or create the default agent ───────────────────
   // Build LLM config from ProviderStore (or env fallback)
   const activeProvider = ctx.providerStore.getActiveProvider();
+
+  // 首次启动引导：根据 Provider 配置状态输出不同级别的引导信息
+  const uiPort = process.env.PORT ? Number(process.env.PORT) - 1000 : 3000;
+  if (!activeProvider) {
+    app.log.info(
+      "\n============================================================\n" +
+      "  ✅ 系统已就绪！请在浏览器完成最后一步配置：\n" +
+      `  👉 http://localhost:${uiPort}/settings\n` +
+      "\n" +
+      "  操作：选择 Provider → 填入 API Key → 保存\n" +
+      "  支持：Kimi / 智谱GLM / 千问 / DeepSeek / MiniMax / 自定义\n" +
+      "  配置后无需重启，立即可用\n" +
+      "============================================================"
+    );
+  } else {
+    app.log.info(
+      `已加载 Provider: ${activeProvider.id}, 模型: ${activeProvider.selectedModel || "默认"}`
+    );
+  }
+
   const llmConfig = (() => {
-    if (activeProvider) {
-      const providerDef = getProviderById(activeProvider.id);
-      const modelId = activeProvider.selectedModel || providerDef?.models[0]?.id || "gpt-4o-mini";
-      const modelDef = getModelById(activeProvider.id, modelId);
-      return {
-        type: "openai" as const,
-        model: modelId,
-        apiKey: activeProvider.apiKey,
-        baseUrl: activeProvider.baseUrl || providerDef?.baseUrl || "",
-        providerId: activeProvider.id,
-        supportsReasoning: modelDef?.supportsReasoning ?? false,
-        ...(modelDef?.fixedTemperature !== undefined ? { temperature: modelDef.fixedTemperature } : {}),
-      };
-    }
-    // Fallback to legacy env vars
-    return {
+    // P3-1：启动阶段优先走统一钩子，钩子内部已将配置同步到 orchestrator。
+    // 然后将相同配置用于恢复历史 Agent（saved agent 无 llmProvider 时的 fallback）。
+    const applied = ctx.applyActiveProvider();
+    if (applied) return applied;
+
+    // 无 active provider：降级到 env 兜底，此时调用方直接同步一次以避免 orchestrator
+    // 在首次使用 autoAssign 时因无配置而报错。env fallback 逻辑仅启动入口感知。
+    const envConfig = {
       type: (process.env.LLM_PROVIDER as "openai" | "anthropic" | "ollama") ?? "openai",
       model: process.env.LLM_MODEL ?? "gpt-4o-mini",
       apiKey: process.env.LLM_API_KEY,
       baseUrl: process.env.LLM_BASE_URL,
     };
+    ctx.collaborationOrchestrator.setGlobalLlmConfig(envConfig);
+    return envConfig;
   })();
+
+  // 说明：P3-1 后启动时的 setGlobalLlmConfig 主要由 ctx.applyActiveProvider() 完成；
+  // env fallback 分支会在上面闭包内补一次 setGlobalLlmConfig。后续 Provider 切换均走统一钩子，
+  // 避免路由层直接耦合 Orchestrator 内部 API。
 
   // Step 1: Restore persisted agents from SQLite
   const savedAgents = loadAllAgentConfigs();
@@ -228,6 +371,48 @@ async function main() {
       ctx.agentManager.updateAgent(firstAgent.id, { llmProvider: llmConfig });
       saveAgentConfig(firstAgent.id, { ...firstAgent.config, llmProvider: llmConfig });
       app.log.info({ agentId: firstAgent.id, model: llmConfig.model }, "Fixed agent with empty LLM config");
+    }
+  }
+
+  // ─── Step 3: 在默认路由已确定之后，注册内置专家 Agent ────────
+  // ⚠️ v3 审查关键时序：必须在 setDefaultAgent() 之后调用
+  // 否则 211 个内置 Agent 会抢占默认路由目标
+  const { created: builtinCreated, updated: builtinUpdated, skipped: builtinSkipped } = ensureBuiltinAgents(ctx.agentManager, llmConfig as unknown as Record<string, unknown>);
+  // P2-3: 始终输出摘要日志，不仅限于 created > 0
+  app.log.info({ created: builtinCreated, updated: builtinUpdated, skipped: builtinSkipped }, "Builtin expert agents check");
+
+  // ─── Step 4: HeartbeatRunner 接入全局调度 ───────────────
+  // 为默认 Agent 构造 HeartbeatRunner（如果心跳配置启用）
+  const hbDefaultAgentId = ctx.router.getDefaultAgentId();
+  const hbDefaultRuntime = hbDefaultAgentId ? ctx.agentManager.getAgent(hbDefaultAgentId) : undefined;
+  if (hbDefaultRuntime) {
+    const hbCfg = ctx.configStore.getAll("heartbeat");
+    const hbEnabled = hbCfg.enabled === "true";
+    if (hbEnabled) {
+      const runner = new HeartbeatRunner(
+        {
+          ...DEFAULT_HEARTBEAT_CONFIG,
+          enabled: true,
+          every: hbCfg.every || DEFAULT_HEARTBEAT_CONFIG.every,
+          model: hbCfg.model || undefined,
+          target: (hbCfg.target as "none" | "last" | string) || DEFAULT_HEARTBEAT_CONFIG.target,
+        },
+        ctx.cronScheduler,
+      );
+      // 注入执行回调：调用默认 Agent 的 chat 方法
+      runner.setExecuteFn(async (msg, _ctxMd, isolated, _model) => {
+        const sid = isolated ? `hb-${Date.now()}` : undefined;
+        const result = await hbDefaultRuntime.chat(msg, sid);
+        return result.response;
+      });
+      // 注入投递回调（记录日志，后续可扩展为实际渠道投递）
+      runner.setDeliverFn(async (target, content) => {
+        app.log.info({ target, contentLen: content.length }, "Heartbeat alert delivered");
+      });
+      // 存储到 Runtime 实例上（通过动态属性，避免修改 Runtime 类 API）
+      (hbDefaultRuntime as any).heartbeatRunner = runner;
+      runner.start();
+      app.log.info({ agentId: hbDefaultAgentId }, "HeartbeatRunner constructed and started");
     }
   }
 

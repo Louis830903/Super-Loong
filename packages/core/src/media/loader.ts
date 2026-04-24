@@ -9,7 +9,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Attachment, MediaDescriptor, MediaKind } from "../types/index.js";
 import { MEDIA_MAX_BYTES } from "./constants.js";
-import { detectMime, kindFromMime, inferFilename } from "./mime.js";
+import { detectMime, kindFromMime, inferFilename, mimeToExt } from "./mime.js";
 import { assertPathAllowed, assertSizeAllowed, assertNotInternalUrl, assertMimeAllowed } from "./security.js";
 import { saveMediaBuffer, type SavedMedia } from "./store.js";
 import { stripMediaPrefix } from "./parse.js";
@@ -210,7 +210,7 @@ async function loadFromBase64(
 
   assertMimeAllowed(contentType);
 
-  const filename = declaredFilename ?? `media_${Date.now()}${inferExtFromMime(contentType)}`;
+  const filename = declaredFilename ?? `media_${Date.now()}${mimeToExt(contentType)}`;
   const kind = kindFromMime(contentType);
 
   return { localPath: "", buffer, contentType, kind, filename, size: buffer.length };
@@ -225,19 +225,4 @@ function isBase64(str: string): boolean {
   // 纯 Base64: 长度大于 100 且只包含合法字符
   if (str.length > 100 && /^[A-Za-z0-9+/\n\r]+=*$/.test(str.trim())) return true;
   return false;
-}
-
-/** 从 MIME 推断扩展名 */
-function inferExtFromMime(mime: string): string {
-  const map: Record<string, string> = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-    "application/pdf": ".pdf",
-    "audio/mpeg": ".mp3",
-    "audio/wav": ".wav",
-    "video/mp4": ".mp4",
-  };
-  return map[mime] ?? "";
 }

@@ -52,6 +52,9 @@ import { kindFromMime } from "../media/mime.js";
 import type { AgentManager } from "./manager.js";
 import type { HeartbeatConfig } from "../cron/heartbeat.js";
 import { HeartbeatRunner, DEFAULT_HEARTBEAT_CONFIG } from "../cron/heartbeat.js";
+import { ReflectionEngine } from "./reflection.js";
+import type { ReflectionConfig, ReflectionResult } from "./reflection.js";
+import { mapReflectionCategoryToFailureCategory } from "../evolution/engine.js";
 import {
   truncateToolResult,
   calculateMaxSingleResultChars,
@@ -77,6 +80,8 @@ export interface AgentRuntimeOptions {
   manager?: AgentManager;
   /** Phase 1: 心跳配置（学 OpenClaw Heartbeat System） */
   heartbeatConfig?: Partial<HeartbeatConfig>;
+  /** T2: ReflectionEngine 配置（工具失败自愈） */
+  reflectionConfig?: Partial<ReflectionConfig>;
   onStream?: (chunk: string) => void;
   onToolCall?: (name: string, args: unknown) => void;
   onToolResult?: (name: string, result: ToolResult) => void;
@@ -102,6 +107,8 @@ export class AgentRuntime {
   private manager?: AgentManager;
   // Phase 1: 心跳引擎（学 OpenClaw Heartbeat System）
   private heartbeatRunner?: HeartbeatRunner;
+  // T2: 会话内即时反思引擎（工具失败自愈）
+  private reflection: ReflectionEngine;
 
   constructor(options: AgentRuntimeOptions) {
     this.id = options.config.id;
@@ -164,6 +171,9 @@ export class AgentRuntime {
         this.tools.set(tool.name, tool);
       }
     }
+
+    // T2: 初始化反思引擎（默认启用，可通过 options.reflectionConfig 或环境变量关闭）
+    this.reflection = new ReflectionEngine(options.reflectionConfig);
 
     // Phase 1: 初始化心跳引擎（学 OpenClaw HeartbeatRunner）
     // 心跳执行回调由上层 API 通过 setExecuteFn/setDeliverFn 注入
@@ -446,6 +456,9 @@ export class AgentRuntime {
     this._status = "running";
     this._lastActivity = new Date();
 
+    // T2: 每个 user turn 开始时重置反思深度计数，跨 turn 的单工具连续失败计数不清
+    this.reflection.resetTurnCounters(session.id);
+
     // P0-A11: 快照消息数量，用于错误时回滚
     const msgCountBeforeChat = session.messages.length;
 
@@ -557,6 +570,9 @@ export class AgentRuntime {
               toolCall.function.arguments,
               session
             );
+
+            // T2: 工具成功/失败钩子 — 成功时清零连续失败计数；失败时触发反思并注入引导消息
+            await this.handleToolReflection(session, toolName, toolCall.function.arguments, result);
 
             options?.onToolResult?.(toolName, result);
 
@@ -670,6 +686,9 @@ export class AgentRuntime {
 
     this._status = "running";
     this._lastActivity = new Date();
+
+    // T2: 每个 user turn 开始时重置反思深度计数
+    this.reflection.resetTurnCounters(session.id);
 
     // Create a per-request LLM provider if override is specified (avoids global mutation)
     const llm = opts?.llmOverride
@@ -828,6 +847,9 @@ export class AgentRuntime {
               toolCall.function.arguments,
               session
             );
+
+            // T2: 工具成功/失败钩子
+            await this.handleToolReflection(session, toolName, toolCall.function.arguments, result);
 
             yield {
               type: "tool_result",
@@ -1007,19 +1029,44 @@ export class AgentRuntime {
       });
     }
 
-    // Task 4: 动态裁剪 — 工具数超过上限时，优先保留核心工具
-    // 学 OpenClaw tool pruning: MCP 外部工具优先裁剪
-    const MAX_TOOL_DEFS = 40;
+    // Task 4+6.1: 三级裁剪 — core(不裁) > sysops(次优先裁) > mcp_(最先裁)
+    // 扩展原有二级裁剪，新增 sysops 前缀识别层
+    const MAX_TOOL_DEFS = 60;
     if (defs.length > MAX_TOOL_DEFS) {
-      const core = defs.filter((d) => !d.function.name.startsWith("mcp_"));
+      // 三级分类
+      const isSysops = (d: LLMToolDef) => {
+        const n = d.function.name;
+        return n === "terminal" || n === "process_poll" || n === "process_kill" || n === "computer_use"
+          || n.startsWith("docker_") || n.startsWith("service_") || n.startsWith("net_")
+          || n.startsWith("sys_") || n.startsWith("deploy_") || n.startsWith("mouse_")
+          || n.startsWith("keyboard_") || n.startsWith("window_") || n.startsWith("screen_")
+          || n.startsWith("app_") || n.startsWith("pkg_") || n.startsWith("test_")
+          || n.startsWith("build_") || n.startsWith("lint_") || n.startsWith("env_");
+      };
+      const core = defs.filter((d) => !isSysops(d) && !d.function.name.startsWith("mcp_"));
+      const sysops = defs.filter((d) => isSysops(d));
       const external = defs.filter((d) => d.function.name.startsWith("mcp_"));
-      const remaining = MAX_TOOL_DEFS - core.length;
-      const pruned = remaining > 0
-        ? [...core, ...external.slice(0, remaining)]
-        : core.slice(0, MAX_TOOL_DEFS);
+
+      // 裁剪优先级: 先裁 mcp_ → 再裁 sysops → core 永不裁
+      let pruned: LLMToolDef[];
+      let budget = MAX_TOOL_DEFS - core.length;
+      if (budget <= 0) {
+        pruned = core.slice(0, MAX_TOOL_DEFS);
+      } else {
+        const keptSysops = sysops.slice(0, Math.min(sysops.length, budget));
+        budget -= keptSysops.length;
+        const keptExternal = budget > 0 ? external.slice(0, budget) : [];
+        pruned = [...core, ...keptSysops, ...keptExternal];
+      }
+
       logger.warn(
-        { original: defs.length, pruned: pruned.length, droppedExternal: external.length - Math.max(0, remaining) },
-        "Dynamic tool pruning: too many tools, truncated to limit",
+        {
+          original: defs.length, pruned: pruned.length,
+          core: core.length, sysops: sysops.length, external: external.length,
+          droppedSysops: sysops.length - pruned.filter(d => isSysops(d)).length,
+          droppedExternal: external.length - pruned.filter(d => d.function.name.startsWith("mcp_")).length,
+        },
+        "Dynamic tool pruning: three-tier truncation applied",
       );
       return pruned;
     }
@@ -1384,7 +1431,118 @@ export class AgentRuntime {
    * 记录交互到进化引擎（学 Hermes run_agent.py:7660-7676）。
    * 安全包裹：进化引擎故障不影响正常对话。
    */
-  private recordEvolutionInteraction(data: {
+  /**
+   * T2: 处理工具执行后的反思钩子。
+   *
+   * 行为：
+   *   - 成功：清零该工具的连续失败计数
+   *   - 失败：触发反思；若获得有效建议，将 system 消息注入下一轮对话作为弱引导；
+   *     同时将反思结果写入 session.metadata.reflections 供 T2.4 Evolution 联动使用
+   *
+   * 容错：任何异常都不会向上抛，保证主对话循环不被反思问题中断。
+   */
+  private async handleToolReflection(
+    session: Session,
+    toolName: string,
+    argsString: string,
+    result: ToolResult,
+  ): Promise<void> {
+    try {
+      if (result.success) {
+        // 成功时清零该工具的连续失败计数
+        this.reflection.noteToolSuccess(session.id, toolName);
+        return;
+      }
+
+      // 失败分支：尝试解析参数以供反思使用（解析失败并不阻止流程，直接用原始字符串）
+      let parsedArgs: unknown = argsString;
+      try {
+        parsedArgs = JSON.parse(argsString);
+      } catch {
+        /* 参数 JSON 补成失败时保留原始字符串 */
+      }
+      const errorText = result.error ?? result.output ?? "(unknown error)";
+
+      const reflection = await this.reflection.reflect(
+        session.id,
+        toolName,
+        parsedArgs,
+        errorText,
+        this.llm,
+        { recentSteps: this.summarizeRecentSteps(session) },
+      );
+
+      if (!reflection) return;
+
+      // 1) 软引导：注入 system 消息，LLM 可选择采纳或忽略
+      session.messages.push({
+        role: "system",
+        content: `[Reflection] ${reflection.suggestion}`,
+      });
+
+      // 2) 写入 session.metadata.reflections 供 T2.4 Evolution 联动（metadata.source="reflection" 去重）
+      this.appendReflectionRecord(session, toolName, reflection);
+
+      logger.info(
+        {
+          agentId: this.id,
+          sessionId: session.id,
+          tool: toolName,
+          category: reflection.category,
+          strategy: reflection.strategy,
+          shouldRetry: reflection.shouldRetry,
+        },
+        "Reflection injected after tool failure",
+      );
+    } catch (err) {
+      // 反思钩子任何异常都不能影响主对话
+      logger.warn(
+        { agentId: this.id, tool: toolName, err: err instanceof Error ? err.message : String(err) },
+        "handleToolReflection error (non-fatal)",
+      );
+    }
+  }
+
+  /**
+   * 摘要近 3 步动作（tool_call / assistant），供反思 Prompt 参考。
+   * 格式："step1 → step2 → step3"
+   */
+  private summarizeRecentSteps(session: Session): string {
+    const steps: string[] = [];
+    for (let i = session.messages.length - 1; i >= 0 && steps.length < 3; i--) {
+      const m = session.messages[i];
+      if (m.role === "assistant" && m.toolCalls?.length) {
+        steps.unshift(m.toolCalls.map((t) => t.function.name).join(","));
+      } else if (m.role === "tool") {
+        const content = typeof m.content === "string" ? m.content : "";
+        steps.unshift(`tool:${content.slice(0, 60).replace(/\s+/g, " ")}`);
+      }
+    }
+    return steps.join(" → ");
+  }
+
+  /** 将单条反思记录追写到 session.metadata.reflections */
+  private appendReflectionRecord(
+    session: Session,
+    toolName: string,
+    reflection: ReflectionResult,
+  ): void {
+    const metaAny = session.metadata as Record<string, unknown>;
+    const list = Array.isArray(metaAny.reflections)
+      ? (metaAny.reflections as Array<Record<string, unknown>>)
+      : [];
+    list.push({
+      toolName,
+      category: reflection.category,
+      strategy: reflection.strategy,
+      suggestion: reflection.suggestion,
+      shouldRetry: reflection.shouldRetry,
+      timestamp: new Date().toISOString(),
+    });
+    metaAny.reflections = list;
+  }
+
+private recordEvolutionInteraction(data: {
     sessionId: string;
     userMessage: string;
     agentResponse: string;
@@ -1395,6 +1553,37 @@ export class AgentRuntime {
     const evolution = this.manager?.evolution;
     if (!evolution) return;
     try {
+      // T2.4：若本 turn 内有在线反思记录，取最近一条用于映射 failureCategory 和标识 source
+      const session = this.sessions.get(data.sessionId);
+      const reflections = session
+        ? (session.metadata as Record<string, unknown>).reflections
+        : undefined;
+      const lastReflection =
+        Array.isArray(reflections) && reflections.length > 0
+          ? (reflections[reflections.length - 1] as Record<string, unknown>)
+          : null;
+
+      const failureCategory =
+        !data.success && lastReflection && typeof lastReflection.category === "string"
+          ? mapReflectionCategoryToFailureCategory(
+              lastReflection.category as
+                | "param_error"
+                | "wrong_tool"
+                | "external_error"
+                | "logic_error"
+                | "ambiguous",
+            )
+          : undefined;
+
+      const metadata: Record<string, unknown> | undefined = lastReflection
+        ? {
+            source: "reflection",
+            reflectionCount: Array.isArray(reflections) ? reflections.length : 0,
+            lastReflectionStrategy: lastReflection.strategy,
+            lastReflectionCategory: lastReflection.category,
+          }
+        : undefined;
+
       evolution.recordInteraction({
         agentId: this.id,
         sessionId: data.sessionId,
@@ -1403,6 +1592,8 @@ export class AgentRuntime {
         toolCalls: data.toolCalls,
         success: data.success,
         failureReason: data.failureReason,
+        failureCategory,
+        metadata,
       });
     } catch { /* 进化记录不应阻塞主流程 */ }
   }

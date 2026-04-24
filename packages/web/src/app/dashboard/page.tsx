@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { apiFetch } from "@/lib/utils";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { TracesPanel } from "./traces-panel";
 import {
   Bot,
   MessageSquare,
@@ -13,6 +15,8 @@ import {
   Shield,
   Users,
   Brain,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 
 interface HealthData {
@@ -53,17 +57,42 @@ export default function DashboardPage() {
   const [health, setHealth] = useState<HealthData | null>(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  // 提取为可复用的 fetchHealth，供 WS 事件触发刷新
+  const fetchHealth = useCallback(() => {
     apiFetch<HealthData>("/api/system/health")
       .then(setHealth)
       .catch((e) => setError(e.message));
   }, []);
 
+  // 初始加载
+  useEffect(() => { fetchHealth(); }, [fetchHealth]);
+
+  // WebSocket 实时订阅: Agent 和 Session 事件
+  const { lastEvent, connected } = useWebSocket({
+    topics: ["agent:*", "session:*"],
+  });
+
+  // 收到新事件时延迟 1 秒刷新 health 数据（debounce 防止高频事件涁没 API）
+  useEffect(() => {
+    if (!lastEvent) return;
+    const timer = setTimeout(fetchHealth, 1000);
+    return () => clearTimeout(timer);
+  }, [lastEvent, fetchHealth]);
+
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white">仪表盘</h1>
-        <p className="mt-1 text-zinc-400">系统运行状态总览</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">仪表盘</h1>
+          <p className="mt-1 text-zinc-400">系统运行状态总览</p>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">
+          {connected ? (
+            <><Wifi className="h-4 w-4 text-emerald-400" /><span className="text-sm text-emerald-400">实时连接</span></>
+          ) : (
+            <><WifiOff className="h-4 w-4 text-zinc-500" /><span className="text-sm text-zinc-500">离线</span></>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -161,6 +190,13 @@ export default function DashboardPage() {
             title="安全管理"
             desc="凭证保管和审计日志"
           />
+        </div>
+      </div>
+      {/* Traces — 全链路追踪面板 */}
+      <div>
+        <h2 className="mb-4 text-lg font-semibold text-white">全链路追踪</h2>
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 h-[400px]">
+          <TracesPanel />
         </div>
       </div>
     </div>

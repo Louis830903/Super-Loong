@@ -24,6 +24,10 @@ import { MemoryProviderOrchestrator } from "./provider.js";
 import * as hrr from "./hrr.js";
 import { extractEntities, extractEntitiesWithAliases } from "./entity-resolver.js";
 import type { SQLiteBackend } from "../persistence/sqlite.js";
+import { KnowledgeGraph } from "./knowledge-graph.js";
+import pino from "pino";
+
+const logger = pino({ name: "memory-manager" });
 
 // ─── Memory Backend Interface ────────────────────────────────
 
@@ -33,7 +37,7 @@ export interface MemoryBackend {
   /** Get a memory by ID */
   get(id: string): Promise<MemoryEntry | null>;
   /** Update an existing memory */
-  update(id: string, updates: Partial<Pick<MemoryEntry, "content" | "metadata" | "embedding" | "trustScore" | "helpfulCount" | "retrievalCount">>): Promise<void>;
+  update(id: string, updates: Partial<Pick<MemoryEntry, "content" | "metadata" | "embedding" | "trustScore" | "helpfulCount" | "retrievalCount" | "priority" | "relevanceScore">>): Promise<void>;
   /** Delete a memory by ID */
   delete(id: string): Promise<boolean>;
   /** List memories with filters */
@@ -58,12 +62,17 @@ export interface MemoryFilter {
 export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
   readonly dimensions: number;
+  /** ISSUE-3: 向量类型标识，用于检索时选择相似度算法（消除 instanceof 硬耦合） */
+  readonly embeddingType: "hrr" | "qwen" | "simple";
+  /** 可选：结构化编码（仅 HRR 等支持代数操作的 provider 实现） */
+  embedFact?(content: string, entities: string[]): Promise<number[]>;
 }
 
 // ─── Simple Built-in Embedding (TF-IDF-like for zero deps) ──
 
 class SimpleEmbedding implements EmbeddingProvider {
   readonly dimensions: number;
+  readonly embeddingType = "simple" as const;
 
   constructor(dims = 128) {
     this.dimensions = dims;
@@ -104,6 +113,7 @@ class SimpleEmbedding implements EmbeddingProvider {
  */
 export class HRRProvider implements EmbeddingProvider {
   readonly dimensions: number;
+  readonly embeddingType = "hrr" as const;
   private dim: number;
 
   constructor(dim: number = hrr.DEFAULT_DIM) {
@@ -138,6 +148,7 @@ export interface QwenEmbeddingConfig {
 
 export class QwenEmbedding implements EmbeddingProvider {
   readonly dimensions: number;
+  readonly embeddingType = "qwen" as const;
   private apiKey: string;
   private model: string;
   private baseUrl: string;
@@ -153,6 +164,14 @@ export class QwenEmbedding implements EmbeddingProvider {
     this.model = config.model ?? "text-embedding-v4";
     this.dimensions = config.dimensions ?? 2048;
     this.baseUrl = config.baseUrl ?? "https://dashscope.aliyuncs.com/compatible-mode/v1";
+  }
+
+  /** 运行时更新 API Key（设置页面保存千问 API Key 后热生效，无需重启） */
+  updateApiKey(newKey: string): void {
+    this.apiKey = newKey;
+    // 重置熔断器，让新 Key 有机会立即尝试
+    this._consecutiveFailures = 0;
+    this._breakerOpenUntil = 0;
   }
 
   /** D-2: 检查熔断器是否开启，冷却期过后自动重置 */
@@ -325,7 +344,7 @@ export class InMemoryBackend implements MemoryBackend {
     return this.entries.get(id) ?? null;
   }
 
-  async update(id: string, updates: Partial<Pick<MemoryEntry, "content" | "metadata" | "embedding" | "trustScore" | "helpfulCount" | "retrievalCount">>): Promise<void> {
+  async update(id: string, updates: Partial<Pick<MemoryEntry, "content" | "metadata" | "embedding" | "trustScore" | "helpfulCount" | "retrievalCount" | "priority" | "relevanceScore">>): Promise<void> {
     const entry = this.entries.get(id);
     if (!entry) throw new Error(`Memory ${id} not found`);
     if (updates.content !== undefined) entry.content = updates.content;
@@ -334,6 +353,9 @@ export class InMemoryBackend implements MemoryBackend {
     if (updates.trustScore !== undefined) entry.trustScore = updates.trustScore;
     if (updates.helpfulCount !== undefined) entry.helpfulCount = updates.helpfulCount;
     if (updates.retrievalCount !== undefined) entry.retrievalCount = updates.retrievalCount;
+    // ✨ T1: priority / relevanceScore 同步更新
+    if (updates.priority !== undefined) entry.priority = updates.priority;
+    if (updates.relevanceScore !== undefined) entry.relevanceScore = updates.relevanceScore;
     entry.updatedAt = new Date();
   }
 
@@ -391,6 +413,30 @@ export class InMemoryBackend implements MemoryBackend {
 
 // ─── Memory Manager ──────────────────────────────────────────
 
+/** P1-3: 搜索通道权重配置（三通道归一化权重） */
+export interface SearchWeights {
+  text?: number;
+  embedding?: number;
+  jaccard?: number;
+}
+
+/**
+ * ✨ T1: 业务优先级 → 检索加权乘数（学 hello-agents 优先级路由思路）。
+ * 设计原则：
+ * - blocker (1.5)：阻塞性事实（用户硬性约束、安全限制），必须优先冒泡
+ * - action  (1.3)：待办/动作项，需要尽快被注意
+ * - task_state (1.15)：任务进行中状态
+ * - conclusion (1.1)：阶段性结论
+ * - normal (1.0)：默认值，等价旧行为，确保老数据兼容
+ */
+export const PRIORITY_BOOST: Record<NonNullable<MemoryEntry["priority"]>, number> = {
+  blocker: 1.5,
+  action: 1.3,
+  task_state: 1.15,
+  conclusion: 1.1,
+  normal: 1.0,
+};
+
 export interface MemoryManagerConfig {
   backend?: MemoryBackend;
   embedder?: EmbeddingProvider;
@@ -400,6 +446,20 @@ export interface MemoryManagerConfig {
   coreBlocks?: CoreMemoryBlock[];
   /** Default core memory blocks for new agents */
   defaultCoreBlocks?: CoreMemoryBlock[];
+  /** P1-3: 自定义搜索通道权重（默认 text=0.35, embedding=0.45, jaccard=0.20） */
+  searchWeights?: SearchWeights;
+  /** ✨ T6: 知识图谱实例（启用后 add() 自动抽取关系写入三元组） */
+  kg?: KnowledgeGraph;
+}
+
+/**
+ * ✨ T6.4: 搜索选项（控制图扩展等高级特性）
+ */
+export interface MemorySearchOptions {
+  /** 启用知识图谱图扩展（默认 false，避免影响现有性能） */
+  enableGraphExpansion?: boolean;
+  /** 图扩展深度（默认 2） */
+  graphDepth?: number;
 }
 
 export class MemoryManager {
@@ -411,11 +471,30 @@ export class MemoryManager {
   private _frozenCoreXml = new Map<string, string>();
   // D-1: Provider 编排器（学 Hermes MemoryManager 编排模式）
   private _orchestrator = new MemoryProviderOrchestrator();
+  // P1-3: 搜索通道权重（text + embedding + jaccard，已归一化）
+  private _searchWeights: Required<SearchWeights>;
+  /** ✨ T6: 可选知识图谱（启用后记忆写入时自动抽取关系） */
+  private kg: KnowledgeGraph | null;
 
   constructor(config: MemoryManagerConfig = {}) {
     this.backend = config.backend ?? new InMemoryBackend();
     // F-2: 默认使用 HRR 向量符号架构（零外部依赖，确定性编码）
     this.embedder = config.embedder ?? new HRRProvider();
+    // ✨ T6: 知识图谱实例（缺省时不启用关系抽取）
+    this.kg = config.kg ?? null;
+
+    // P1-3: 从 config 读取搜索权重，默认值 = 原硬编码值
+    // ISSUE-4 修复：自动归一化，确保权重和为 1.0
+    const rawW = config.searchWeights ?? {};
+    const t = rawW.text ?? 0.35;
+    const e = rawW.embedding ?? 0.45;
+    const j = rawW.jaccard ?? 0.20;
+    const sum = t + e + j;
+    this._searchWeights = {
+      text: t / sum,
+      embedding: e / sum,
+      jaccard: j / sum,
+    };
 
     // Register default core blocks template
     if (config.defaultCoreBlocks) {
@@ -661,11 +740,20 @@ export class MemoryManager {
     if (!scan.safe) {
       throw new Error(`Memory write blocked: ${scan.findings.join(", ")}`);
     }
-    const embedding = await this.embedder.embed(input.content);
-    // F-2: 检测当前 embedder 类型以设置 embeddingType 标记
-    const embeddingType: MemoryEntry["embeddingType"] =
-      this.embedder instanceof HRRProvider ? "hrr" :
-      this.embedder instanceof QwenEmbedding ? "qwen" : "simple";
+
+    // P0-3: 实体提取（同时用于 HRR 结构化编码 + T6 关系抽取）
+    const entities = extractEntities(input.content);
+
+    let embedding: number[];
+    if (this.embedder.embedFact != null && entities.length > 0) {
+      // 有实体时用 embedFact：内容 + 实体角色绑定，支持 probe/unbind 代数查询
+      embedding = await this.embedder.embedFact(input.content, entities);
+    } else {
+      embedding = await this.embedder.embed(input.content);
+    }
+
+    // ISSUE-3: 直接使用接口声明的 embeddingType，消除 instanceof 硬耦合
+    const embeddingType: MemoryEntry["embeddingType"] = this.embedder.embeddingType;
     const entry: MemoryEntry = {
       id: `mem_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`,
       agentId: input.agentId,
@@ -681,8 +769,21 @@ export class MemoryManager {
       trustScore: 0.5,
       helpfulCount: 0,
       retrievalCount: 0,
+      // ✨ T1: 业务优先级默认 normal，调用方可显式传 blocker/action/…
+      priority: input.priority ?? "normal",
+      relevanceScore: input.relevanceScore ?? 0.5,
     };
     await this.backend.add(entry);
+
+    // ✨ T6.3: 关系抽取 → 写入知识图谱（非阻塞，失败仅日志警告不影响主路径）
+    if (this.kg && entities.length >= 2) {
+      try {
+        this.kg.addRelationsFromText(entry.id, input.content, entities);
+      } catch (err) {
+        logger.warn({ err, memoryId: entry.id }, "T6: relation extraction failed, skipping");
+      }
+    }
+
     return entry;
   }
 
@@ -703,35 +804,47 @@ export class MemoryManager {
   }
 
   /**
+   * 运行时更新 embedder 的 API Key（设置页面保存千问 Key 后热生效）。
+   * 仅当 embedder 为 QwenEmbedding 时有效，其余类型静默忽略。
+   */
+  updateEmbedderApiKey(apiKey: string): void {
+    if ("updateApiKey" in this.embedder && typeof (this.embedder as any).updateApiKey === "function") {
+      (this.embedder as any).updateApiKey(apiKey);
+    }
+  }
+
+  /**
    * Semantic search across memories (hybrid: text + embedding cosine similarity).
    * P2-05: Uses backend.list() for candidate retrieval, then manager-side reranking.
    * The backend.search() is available for text-only pre-filtering if needed.
    * P1-04: Limits candidate set to avoid loading all entries into memory.
    * C-2: 3阶段管线：text+emb+jaccard + 信任加权 + 时间衰减（学 Hermes retrieval.py）
    */
-  async search(query: string, filters: MemoryFilter, topK = 10): Promise<MemorySearchResult[]> {
+  async search(query: string, filters: MemoryFilter, topK = 10, options?: MemorySearchOptions): Promise<MemorySearchResult[]> {
     const queryEmb = await this.embedder.embed(query);
 
-    // First: use backend text search to get a pre-filtered candidate set (up to topK * 20)
+    // P0-1: 用 backend.search() 获取文本候选集（已升级为 FTS5 优先）
     const textCandidates = await this.backend.search(query, filters, topK * 20);
-    // Also get recent entries in case text search misses semantic matches
-    // B-11: 限制 list() 返回数量，避免加载全部数据到内存
-    const recentEntries = await this.backend.list(filters);
-    // Merge candidates, deduplicate by id, cap at reasonable size
+
+    // P0-2: 仅当文本候选不足时，才补充 list()（避免每次都全表遍历）
     const candidateMap = new Map<string, MemoryEntry>();
     for (const c of textCandidates) candidateMap.set(c.entry.id, c.entry);
-    // Add recent entries up to a reasonable limit (avoid OOM)
-    const MAX_CANDIDATES = 500;
-    for (const e of recentEntries) {
-      if (candidateMap.size >= MAX_CANDIDATES) break;
-      candidateMap.set(e.id, e);
+    const MAX_CANDIDATES = 1000;
+    if (candidateMap.size < topK * 3) {
+      const recentEntries = await this.backend.list(filters);
+      for (const e of recentEntries) {
+        if (candidateMap.size >= MAX_CANDIDATES) break;
+        candidateMap.set(e.id, e);
+      }
     }
 
     const candidates = Array.from(candidateMap.values());
-    // F-2: 检测查询向量是否为 HRR（通过 embedder 类型判断）
-    const queryIsHRR = this.embedder instanceof HRRProvider;
+    // ISSUE-3: 通过接口字段判断查询向量类型，不再依赖 instanceof
+    const queryIsHRR = this.embedder.embeddingType === "hrr";
+    // P2-2: 预分词查询，避免每个候选条目都重复分词
+    const queryTokens = MemoryManager.tokenize(query);
     const scored: MemorySearchResult[] = candidates.map((entry) => {
-      const textScore = this.textSimilarity(query, entry.content);
+      const textScore = this.textSimilarity(query, entry.content, queryTokens);
       let embScore = 0;
       if (entry.embedding) {
         // F-2: 根据向量类型选择相似度算法
@@ -750,17 +863,76 @@ export class MemoryManager {
         // 混合情况（旧向量 vs 新 HRR 查询）：embScore 保持 0，依赖 text+jaccard
       }
       // C-2: Jaccard token overlap 重排（学 Hermes retrieval.py）
-      const jaccardScore = this.jaccardSimilarity(query, entry.content);
-      const relevance = 0.35 * textScore + 0.45 * embScore + 0.20 * jaccardScore;
+      const jaccardScore = this.jaccardSimilarity(query, entry.content, queryTokens);
+      const relevance = this._searchWeights.text * textScore + this._searchWeights.embedding * embScore + this._searchWeights.jaccard * jaccardScore;
       // C-1: 信任加权（学 Hermes score = relevance * trust_score）
       const trust = entry.trustScore ?? 0.5;
-      // C-2: 时间衰减（学 Hermes _temporal_decay）
-      const decay = this.temporalDecay(entry.createdAt);
-      return { entry, score: relevance * trust * decay };
+      // C-2: 时间衰减 — P1-1: 传入类型和信任分
+      const decay = this.temporalDecay(entry.createdAt, entry.type, entry.trustScore);
+      // ✨ T1: 业务优先级加权（老数据 priority 为 undefined 时 fallback normal=1.0，等价旧行为）
+      const priorityBoost = PRIORITY_BOOST[entry.priority ?? "normal"] ?? 1.0;
+      return { entry, score: relevance * trust * decay * priorityBoost };
     });
 
     return scored
       .filter((r) => r.score > 0.02) // C-2: 降低阈值因为多了衰减因子
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topK);
+  }
+
+  /**
+   * ✨ T6.4: 图扩展检索（知识图谱 + 原始检索融合）。
+   * 流程：从查询中提取实体 → 获取子图 → 查找关联记忆 → graphBoost=0.2 加权合并。
+   * 仅在 options.enableGraphExpansion=true 时调用，默认关闭不影响现有性能。
+   */
+  async searchWithGraphExpansion(
+    query: string,
+    filters: MemoryFilter,
+    topK = 10,
+    options: MemorySearchOptions = {},
+  ): Promise<MemorySearchResult[]> {
+    // 第一步：执行常规检索
+    const baseResults = await this.search(query, filters, topK, options);
+
+    // 第二步：图扩展（仅在 KG 可用且启用时）
+    if (!options.enableGraphExpansion || !this.kg) return baseResults;
+
+    const seedEntities = extractEntities(query);
+    if (seedEntities.length === 0) return baseResults;
+
+    // 找到查询实体对应的 ID（仅查找不创建）
+    const seedIds: number[] = [];
+    for (const name of seedEntities) {
+      const id = this.kg.findEntityId(name);
+      if (id != null) seedIds.push(id);
+    }
+    if (seedIds.length === 0) return baseResults;
+
+    // 获取子图中的所有实体 ID
+    const graphDepth = options.graphDepth ?? 2;
+    const allNodeIds = new Set<number>();
+    for (const seedId of seedIds) {
+      const sub = this.kg.subgraph(seedId, graphDepth);
+      for (const node of sub.nodes) allNodeIds.add(node.id);
+    }
+
+    // 反查关联记忆 ID
+    const graphMemoryIds = this.kg.findMemoriesByEntityIds(Array.from(allNodeIds));
+    if (graphMemoryIds.length === 0) return baseResults;
+
+    // 排除已在基础结果中的记忆
+    const existingIds = new Set(baseResults.map((r) => r.entry.id));
+    const newIds = graphMemoryIds.filter((id) => !existingIds.has(id));
+    if (newIds.length === 0) return baseResults;
+
+    // 加载图扩展记忆，以固定 boost 加权合并
+    const GRAPH_BOOST = 0.2;
+    const graphEntries = await Promise.all(newIds.slice(0, topK).map((id) => this.backend.get(id)));
+    const graphResults: MemorySearchResult[] = graphEntries
+      .filter((e): e is MemoryEntry => e != null)
+      .map((entry) => ({ entry, score: GRAPH_BOOST }));
+
+    return [...baseResults, ...graphResults]
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
   }
@@ -810,9 +982,31 @@ export class MemoryManager {
     return denom > 0 ? dot / denom : 0;
   }
 
-  private textSimilarity(query: string, text: string): number {
-    const qWords = new Set(query.toLowerCase().split(/\W+/).filter(Boolean));
-    const tWords = new Set(text.toLowerCase().split(/\W+/).filter(Boolean));
+  // P2-2: 分词工具方法 — 统一分词逻辑，避免重复
+  // BUG-1 修复：\W+ 在 JS 中等价于 [^a-zA-Z0-9_]，中文字符全部被视为分隔符导致丢弃
+  // 改为 Unicode-aware 分词：拉丁词（含数字）+ 中文 bigram + 单字兜底
+  private static tokenize(text: string): Set<string> {
+    const lower = text.toLowerCase();
+    // 拉丁词和数字（如 "hello", "gpt4", "api"）
+    const latin = lower.match(/[a-z0-9_]+/g) ?? [];
+    // 中文 bigram 分词（无需分词库，覆盖常见搜索场景）
+    const cjk: string[] = [];
+    const cjkChars = lower.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) ?? [];
+    if (cjkChars.length >= 2) {
+      // 滑动窗口取 bigram："深度学习" → ["深度", "度学", "学习"]
+      for (let i = 0; i < cjkChars.length - 1; i++) {
+        cjk.push(cjkChars[i] + cjkChars[i + 1]);
+      }
+    } else {
+      // 单字兜底（只有 1 个中文字时）
+      cjk.push(...cjkChars);
+    }
+    return new Set([...latin, ...cjk]);
+  }
+
+  private textSimilarity(query: string, text: string, queryTokens?: Set<string>): number {
+    const qWords = queryTokens ?? MemoryManager.tokenize(query);
+    const tWords = MemoryManager.tokenize(text);
     if (qWords.size === 0) return 0;
     let overlap = 0;
     for (const w of qWords) if (tWords.has(w)) overlap++;
@@ -820,9 +1014,9 @@ export class MemoryManager {
   }
 
   // C-2: Jaccard 相似度（学 Hermes retrieval.py jaccard_similarity）
-  private jaccardSimilarity(a: string, b: string): number {
-    const setA = new Set(a.toLowerCase().split(/\W+/).filter(Boolean));
-    const setB = new Set(b.toLowerCase().split(/\W+/).filter(Boolean));
+  private jaccardSimilarity(a: string, b: string, aTokens?: Set<string>): number {
+    const setA = aTokens ?? MemoryManager.tokenize(a);
+    const setB = MemoryManager.tokenize(b);
     if (setA.size === 0 || setB.size === 0) return 0;
     let intersection = 0;
     for (const w of setA) if (setB.has(w)) intersection++;
@@ -830,10 +1024,24 @@ export class MemoryManager {
     return union > 0 ? intersection / union : 0;
   }
 
-  // C-2: 时间衰减（学 Hermes _temporal_decay，默认30天半衰期）
-  private temporalDecay(createdAt: Date, halfLifeDays = 30): number {
+  // C-2: 时间衰减（学 Hermes _temporal_decay）
+  // P1-1: 按类型区分衰减策略 — core 不衰减，archival 慢衰减，recall 正常衰减
+  private temporalDecay(createdAt: Date, type?: MemoryEntry["type"], trustScore?: number): number {
+    // core 记忆：始终在上下文中，不应因时间降权
+    if (type === "core") return 1.0;
+
     const ageDays = (Date.now() - createdAt.getTime()) / 86_400_000;
     if (ageDays < 0) return 1;
+
+    // archival 记忆：半衰期 180 天（长期知识不该快速衰减）
+    // recall 记忆：半衰期 30 天（近期对话上下文）
+    let halfLifeDays = type === "archival" ? 180 : 30;
+
+    // 高信任记忆衰减减半（信任分 > 0.8 说明被验证过多次有用）
+    if ((trustScore ?? 0.5) > 0.8) {
+      halfLifeDays *= 2;
+    }
+
     return Math.pow(0.5, ageDays / halfLifeDays);
   }
 
@@ -906,8 +1114,32 @@ export class MemoryManager {
     );
 
     if (hrrCandidates.length === 0) {
-      // 降级：拼接实体名做普通搜索
-      return this.search(entities.join(" "), filters, topK);
+      // P2-3: 降级增强 — 分别搜索每个实体，取交集（AND 语义）
+      // 原先只是拼接所有实体做单次搜索，容易命中无关结果
+      // ISSUE-7 修复：改为串行搜索，避免使用 QwenEmbedding 时并发触发限流/熔断
+      const perEntityResults: MemorySearchResult[][] = [];
+      for (const e of entities) {
+        perEntityResults.push(await this.search(e, filters, topK * 5));
+      }
+      // 统计每条记忆被多少个实体命中
+      const hitCount = new Map<string, { entry: MemoryEntry; totalScore: number; hits: number }>();
+      for (const results of perEntityResults) {
+        for (const r of results) {
+          const existing = hitCount.get(r.entry.id);
+          if (existing) {
+            existing.hits++;
+            existing.totalScore += r.score;
+          } else {
+            hitCount.set(r.entry.id, { entry: r.entry, totalScore: r.score, hits: 1 });
+          }
+        }
+      }
+      // 仅保留被所有实体都命中的记忆（AND 语义），按平均分排序
+      return Array.from(hitCount.values())
+        .filter((h) => h.hits >= entities.length)
+        .map((h) => ({ entry: h.entry, score: h.totalScore / h.hits }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, topK);
     }
 
     const scored = hrrCandidates.map((entry) => {
@@ -955,9 +1187,9 @@ export class MemoryManager {
 
         const contentSim = hrr.similarity(va, vb);
 
-        // 计算 token Jaccard 重叠
-        const tokensA = new Set(a.content.toLowerCase().split(/\W+/).filter(Boolean));
-        const tokensB = new Set(b.content.toLowerCase().split(/\W+/).filter(Boolean));
+        // 计算 token Jaccard 重叠（使用 Unicode-aware 的 tokenize 替代 \W+ 分割）
+        const tokensA = MemoryManager.tokenize(a.content);
+        const tokensB = MemoryManager.tokenize(b.content);
         let overlap = 0;
         for (const t of tokensA) if (tokensB.has(t)) overlap++;
         const union = tokensA.size + tokensB.size - overlap;
@@ -1002,6 +1234,9 @@ export interface MemoryCreateInput {
   content: string;
   type?: MemoryEntry["type"];
   metadata?: Record<string, unknown>;
+  // ✨ T1: 允许调用方显式指定业务优先级（默认 normal）
+  priority?: MemoryEntry["priority"];
+  relevanceScore?: number;
 }
 
 export interface MemoryStats {
@@ -1026,21 +1261,36 @@ export function createMemoryTools(manager: MemoryManager): ToolDefinition[] {
       parameters: z.object({
         content: z.string().describe("The information to remember"),
         type: z.enum(["core", "recall", "archival"]).default("archival").describe("Memory type: 'archival' for long-term, 'recall' for recent context, 'core' for identity"),
+        // ✨ T1: 业务优先级入参。说明何时使用 blocker / action，避免滥用
+        priority: z
+          .enum(["blocker", "action", "task_state", "conclusion", "normal"])
+          .default("normal")
+          .describe(
+            "Business priority for retrieval boosting. Use 'blocker' ONLY for hard user constraints " +
+            "(e.g. 'never use external APIs', allergies, compliance rules). Use 'action' for actionable " +
+            "todos. Use 'task_state' for in-progress task status. Use 'conclusion' for stage conclusions. " +
+            "Default 'normal' for ordinary facts."
+          ),
       }),
       execute: async (params: unknown, ctx: ToolContext): Promise<ToolResult> => {
-        const { content, type } = params as { content: string; type: MemoryEntry["type"] };
+        const { content, type, priority } = params as {
+          content: string;
+          type: MemoryEntry["type"];
+          priority: NonNullable<MemoryEntry["priority"]>;
+        };
         try {
           const entry = await manager.add({
             agentId: ctx.agentId,
             userId: ctx.userId,
             content,
             type,
+            priority,
             metadata: { source: "agent_tool", sessionId: ctx.sessionId },
           });
           return {
             success: true,
-            output: `Remembered: "${content.slice(0, 80)}${content.length > 80 ? "..." : ""}" (id: ${entry.id})`,
-            data: { id: entry.id, type },
+            output: `Remembered: "${content.slice(0, 80)}${content.length > 80 ? "..." : ""}" (id: ${entry.id}, priority: ${priority})`,
+            data: { id: entry.id, type, priority },
           };
         } catch (err: any) {
           // A-1: 友好返回安全扫描拦截信息
@@ -1069,12 +1319,18 @@ export function createMemoryTools(manager: MemoryManager): ToolDefinition[] {
           return { success: true, output: "No relevant memories found." };
         }
         const formatted = results
-          .map((r, i) => `${i + 1}. [${r.entry.type}] (score: ${r.score.toFixed(2)}) ${r.entry.content}`)
+          .map((r, i) => {
+            // P1-4: 丰富上下文 — 增加信任分、记忆年龄，便于 Agent 判断可靠性
+            const trust = r.entry.trustScore ?? 0.5;
+            const ageDays = Math.floor((Date.now() - new Date(r.entry.createdAt).getTime()) / 86_400_000);
+            const ageStr = ageDays === 0 ? "today" : ageDays === 1 ? "1d ago" : `${ageDays}d ago`;
+            return `${i + 1}. [${r.entry.type}] (score: ${r.score.toFixed(2)}, trust: ${trust.toFixed(2)}, ${ageStr}) ${r.entry.content}`;
+          })
           .join("\n");
         return {
           success: true,
           output: `Found ${results.length} memories:\n${formatted}`,
-          data: results.map((r) => ({ id: r.entry.id, content: r.entry.content, score: r.score })),
+          data: results.map((r) => ({ id: r.entry.id, content: r.entry.content, score: r.score, trust: r.entry.trustScore ?? 0.5 })),
         };
       },
     },

@@ -12,8 +12,12 @@ import type { FastifyInstance } from "fastify";
 import websocket from "@fastify/websocket";
 import type { WebSocket } from "ws";
 import type { PlatformEventType, PlatformEvent } from "@super-agent/core";
+import {
+  runInContext, createRootContext, withSpan, SpanOperations, isTracingEnabled,
+} from "@super-agent/core";
 import type { AppContext } from "../context.js";
 import { requirePermission } from "../auth/index.js";
+import { safeEqualSecret } from "../auth/secret-equal.js";
 
 // ─── Event Bus ───────────────────────────────────────────────
 
@@ -248,7 +252,7 @@ export async function registerWebSocket(app: FastifyInstance, ctx: AppContext): 
     const expectedKey = process.env.API_KEY || process.env.AUTH_SECRET || "";
     if (expectedKey) {
       const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-      if (token !== expectedKey) {
+      if (!safeEqualSecret(token, expectedKey)) {
         app.log.warn("IM Gateway WebSocket 鉴权失败: token 不匹配");
         send(socket, { type: "error", error: "Unauthorized: invalid or missing API key" });
         socket.close(4001, "Unauthorized");
@@ -277,9 +281,12 @@ export async function registerWebSocket(app: FastifyInstance, ctx: AppContext): 
       if (msg.type === "chat") {
         const { requestId, agentId, sessionId, message: userMsg, metadata } = msg;
 
-        // 允许空 message（图片/文件/音频消息），但 requestId 和 agentId 仍必填
-        if (!requestId || !agentId) {
-          send(socket, { type: "error", requestId, error: "Missing required fields: requestId, agentId" });
+        // 全链路追踪: 为 WS 聊天消息创建根追踪上下文
+        const _traceCtx = isTracingEnabled() ? createRootContext(requestId) : null;
+
+        // requestId 必填，agentId 可选（Task 4.1: MessageRouter 路由接入）
+        if (!requestId) {
+          send(socket, { type: "error", requestId, error: "Missing required field: requestId" });
           return;
         }
 
@@ -297,9 +304,38 @@ export async function registerWebSocket(app: FastifyInstance, ctx: AppContext): 
         // 立即标记为已处理，防止并发重复
         ctx.dedup.markSeen(requestId);
 
-        const agent = ctx.agentManager.getAgent(agentId);
+        // Task 4.1: 三级 Agent 解析 — 显式 agentId > MessageRouter 路由 > 默认 Agent
+        let agent;
+        if (agentId) {
+          // 客户端显式指定 agentId（前端 / A2A / 直接调用）
+          agent = ctx.agentManager.getAgent(agentId);
+        } else if (metadata?.channelId) {
+          // 渠道消息：通过 MessageRouter 的三级路由解析（精确匹配 > 渠道匹配 > 默认）
+          agent = ctx.router.resolve({
+            id: requestId,
+            channelId: metadata.channelId as string,
+            platform: (metadata.platform as string) || "unknown",
+            chatId: (metadata.chatId as string) || "",
+            chatType: (metadata.chatType as string) || "private",
+            senderId: (metadata.senderId as string) || "",
+            text: userMsg || "",
+            timestamp: new Date(),
+            metadata,
+          } as any);
+        } else {
+          // 降级：使用默认 Agent 兜底
+          const defaultId = ctx.router.getDefaultAgentId();
+          agent = defaultId ? ctx.agentManager.getAgent(defaultId) : null;
+        }
+
         if (!agent) {
-          send(socket, { type: "error", requestId, error: `Agent not found: ${agentId}` });
+          send(socket, {
+            type: "error",
+            requestId,
+            error: agentId
+              ? `Agent not found: ${agentId}`
+              : "No agent resolved \u2014 provide agentId or configure channel binding",
+          });
           return;
         }
 

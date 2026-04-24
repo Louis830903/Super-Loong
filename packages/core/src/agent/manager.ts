@@ -141,6 +141,27 @@ export class AgentManager extends EventEmitter<AgentManagerEvents> {
     return deleted;
   }
 
+  /**
+   * P2-1：返回当前全局可用的工具名列表。
+   * 为 AgentMatcher、UI Autocomplete 等消费方提供统一的工具白名单数据源，
+   * 避免各模块自己从 globalTools 取 keys 导致联系耦合。
+   */
+  listAvailableToolNames(): string[] {
+    return Array.from(this.globalTools.keys());
+  }
+
+  /**
+   * P1-2 / P2-1：返回当前加载的技能名列表（基于 skillLoader.listSkills）。
+   * 若 skillLoader 未注入则返回空数组。名称来源于 Skill.frontmatter.name。
+   */
+  listAvailableSkillNames(): string[] {
+    if (!this.skillLoader) return [];
+    return this.skillLoader
+      .listSkills()
+      .map((s) => s.frontmatter?.name)
+      .filter((n): n is string => typeof n === "string" && n.length > 0);
+  }
+
   /** Create a new agent from config. */
   createAgent(config: Partial<AgentConfig> & { name: string }): AgentRuntime {
     const id = config.id ?? uuid();
@@ -189,9 +210,27 @@ export class AgentManager extends EventEmitter<AgentManagerEvents> {
     return this.agents.get(id);
   }
 
-  /** List all agents. */
-  listAgents(): AgentState[] {
-    return Array.from(this.agents.values()).map((a) => a.state);
+  /**
+   * 列出所有 Agent。
+   *
+   * 默认会过滤掉 `metadata.source === "crew-dynamic"` 的动态 Agent：
+   * 这类 Agent 由多 Agent 协作（autoAssign）运行时临时创建，
+   * 完成后由 orchestrator 统一回收，不应出现在 UI 下拉框 / IM 通道 /
+   * 模型推断 / 聊天 / 进化等面向用户的 Agent 列表中，避免出现“幽灵 Agent”。
+   *
+   * 如确需访问动态 Agent（例如调试或特殊内部场景），
+   * 显式传入 `{ includeDynamic: true }` 作为逃生舱。
+   *
+   * 注意：orchestrator 的 cleanupDynamicAgents 走独立的 dynamicAgentIds Map
+   * 精准清理，不依赖本方法，因此默认过滤不会影响回收逻辑。
+   */
+  listAgents(options?: { includeDynamic?: boolean }): AgentState[] {
+    const all = Array.from(this.agents.values()).map((a) => a.state);
+    if (options?.includeDynamic) return all;
+    return all.filter((s) => {
+      const src = (s.config as { metadata?: { source?: string } })?.metadata?.source;
+      return src !== "crew-dynamic";
+    });
   }
 
   /** Update an agent's config. */

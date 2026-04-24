@@ -136,9 +136,11 @@ class FeishuGateway:
             # 保存 API 客户端实例（用于文件下载等后续 API 调用）
             self._lark_client = cli
 
-            # 注册事件处理器
+            # 注册事件处理器（必须显式注册所有需要处理的事件类型，否则 SDK 会报 processor not found）
             event_handler = lark.EventDispatcherHandler.builder("", "") \
                 .register_p2_im_message_receive_v1(self._on_message_event) \
+                .register_p2_im_message_message_read_v1(self._on_message_read_event) \
+                .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(self._on_bot_chat_entered_event) \
                 .build()
 
             # 使用 WebSocket 客户端
@@ -231,6 +233,24 @@ class FeishuGateway:
                 loop.close()
             except Exception:
                 pass
+
+    def _on_message_read_event(self, data) -> None:
+        """飞书消息已读事件回调（静默处理，避免 SDK 报 processor not found）"""
+        try:
+            reader_id = getattr(getattr(data.event, "reader", None), "reader_id", None)
+            open_id = getattr(reader_id, "open_id", "?") if reader_id else "?"
+            msg_ids = getattr(data.event, "message_id_list", []) or []
+            logger.debug("飞书消息已读: reader=%s, msg_count=%d", open_id, len(msg_ids))
+        except Exception:
+            logger.debug("飞书消息已读事件（解析跳过）")
+
+    def _on_bot_chat_entered_event(self, data) -> None:
+        """用户进入机器人私聊界面事件回调（静默处理，避免 SDK 报 processor not found）"""
+        try:
+            chat_id = getattr(getattr(data.event, "chat_id", None), "__str__", lambda: "?")() if hasattr(data.event, "chat_id") else "?"
+            logger.debug("用户进入机器人聊天: chat_id=%s", chat_id)
+        except Exception:
+            logger.debug("用户进入机器人聊天事件（解析跳过）")
 
     def _on_message_event(self, data) -> None:
         """飞书消息事件回调（由 lark_oapi SDK 调用）

@@ -209,11 +209,12 @@ export function isExtensionSafe(filePath: string): boolean {
 
 /**
  * ZIP 文件进一步判断是否为 Office 文档
- * 检查 ZIP 内部的 [Content_Types].xml 标记
+ * 检查 ZIP 内部 Local File Header 中的路径名是否包含 Office 标志性前缀
+ * M-2: 扫描范围从 2KB 扩大到 8KB，覆盖更多 entry header 排列顺序
  */
 function refineZipMime(buffer: Buffer): string | undefined {
-  // 简单检查 ZIP 内容中是否包含 Office 文档的标志性字符串
-  const str = buffer.toString("ascii", 0, Math.min(buffer.length, 2048));
+  const scanLen = Math.min(buffer.length, 8192);
+  const str = buffer.toString("ascii", 0, scanLen);
   if (str.includes("word/")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   if (str.includes("xl/")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (str.includes("ppt/")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";

@@ -7,6 +7,7 @@
     "dev": "pnpm -r --parallel dev",
     "dev:api": "pnpm --filter @super-agent/api dev",
     "dev:web": "pnpm --filter @super-agent/web dev",
+    "dev:monitor": "pnpm --filter @super-agent/monitor dev",
     "dev:gateway": "cd services/im-gateway && python server.py",
     "build": "pnpm -r build",
     "build:api": "pnpm --filter @super-agent/api build",

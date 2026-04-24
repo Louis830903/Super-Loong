@@ -10,8 +10,8 @@ import type { MediaKind } from "../types/index.js";
 /** 单文件最大字节数 (5MB，对标 OpenClaw MEDIA_MAX_BYTES) */
 export const MEDIA_MAX_BYTES = 5 * 1024 * 1024;
 
-/** 临时文件 TTL (2 分钟，对标 OpenClaw DEFAULT_TTL_MS) */
-export const MEDIA_TTL_MS = 2 * 60 * 1000;
+/** 临时文件 TTL (4 小时，覆盖 Crew 长任务 + 用户延迟下载场景) */
+export const MEDIA_TTL_MS = 4 * 60 * 60 * 1000;
 
 /** 流式下载时 MIME 嗅探的前缀字节数 */
 export const MIME_SNIFF_BYTES = 16 * 1024;

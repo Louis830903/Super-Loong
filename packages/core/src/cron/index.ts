@@ -2,7 +2,7 @@
  * Cron Module — scheduled task management + heartbeat.
  */
 
-export { CronScheduler, parseNaturalLanguageToCron } from "./scheduler.js";
+export { CronScheduler, parseNaturalLanguageToCron, parseNaturalLanguageToCronEx, validateCronExpression } from "./scheduler.js";
 export type { CronJobConfig, CronHistory } from "./scheduler.js";
 
 // Phase 1: 心跳引擎（学 OpenClaw Heartbeat System）

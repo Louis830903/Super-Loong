@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { ToolDefinition, ToolResult } from "../types/index.js";
+import type { ToolDefinition, ToolResult, ToolContext } from "../types/index.js";
 import { truncateResult } from "./shared-security.js";
 
 // ── 路径验证（复用 filesystem.ts 的 ALLOWED_ROOTS 逻辑） ──
@@ -248,3 +248,196 @@ const gitCommitTool: ToolDefinition = {
 };
 
 export const gitTools: ToolDefinition[] = [gitStatusTool, gitLogTool, gitDiffTool, gitCommitTool];
+
+// ─── Git 高级操作 (P1 — Feature Flag 控制, SUPER_AGENT_DEV_TOOLS) ──────
+
+/** git_branch — 分支管理 */
+const gitBranchTool: ToolDefinition = {
+  name: "git_branch",
+  description: "Git 分支管理: 创建/切换/删除/列出分支。",
+  parameters: z.object({
+    cwd: z.string().optional().describe("工作目录路径"),
+    action: z.enum(["list", "create", "switch", "delete"]).describe("操作类型"),
+    name: z.string().optional().describe("分支名称(create/switch/delete时必填)"),
+  }),
+  execute: async (params: unknown, _ctx: ToolContext): Promise<ToolResult> => {
+    const { cwd, action, name } = params as { cwd?: string; action: string; name?: string };
+    const workDir = cwd || process.cwd();
+    const cwdErr = validateGitCwd(workDir);
+    if (cwdErr) return { success: false, output: cwdErr, error: cwdErr };
+
+    if (action === "list") {
+      const r = runGit(["branch", "-a", "--format=%(refname:short) %(upstream:short) %(objectname:short)"], workDir);
+      return { success: !r.isError, output: r.stdout.trim() || r.stderr };
+    }
+
+    if (!name) return { success: false, output: `${action} 操作需要指定分支名称` };
+    if (!SAFE_REF_RE.test(name)) return { success: false, output: `非法的分支名称: '${name}'` };
+
+    let r: GitResult;
+    switch (action) {
+      case "create": r = runGit(["checkout", "-b", name], workDir); break;
+      case "switch": r = runGit(["checkout", name], workDir); break;
+      case "delete": r = runGit(["branch", "-d", name], workDir); break;
+      default: return { success: false, output: `未知操作: ${action}` };
+    }
+    return { success: !r.isError, output: r.stdout.trim() || r.stderr };
+  },
+};
+
+/** git_merge — 合并分支 */
+const gitMergeTool: ToolDefinition = {
+  name: "git_merge",
+  description: "合并分支到当前分支。含冲突检测。",
+  parameters: z.object({
+    cwd: z.string().optional().describe("工作目录路径"),
+    branch: z.string().describe("要合并的源分支名"),
+    noFf: z.boolean().optional().describe("禁止快进合并(--no-ff), 默认false"),
+  }),
+  execute: async (params: unknown, _ctx: ToolContext): Promise<ToolResult> => {
+    const { cwd, branch, noFf } = params as { cwd?: string; branch: string; noFf?: boolean };
+    const workDir = cwd || process.cwd();
+    const cwdErr = validateGitCwd(workDir);
+    if (cwdErr) return { success: false, output: cwdErr, error: cwdErr };
+    if (!SAFE_REF_RE.test(branch)) return { success: false, output: `非法的分支名称: '${branch}'` };
+
+    const args = ["merge", "--no-edit"];
+    if (noFf) args.push("--no-ff");
+    args.push(branch);
+
+    const r = runGit(args, workDir);
+    if (r.isError && r.stdout.includes("CONFLICT")) {
+      return { success: false, output: `⚠️ 合并冲突\n${r.stdout}`, data: { hasConflict: true } };
+    }
+    return { success: !r.isError, output: r.stdout.trim() || r.stderr };
+  },
+};
+
+/** git_stash — 暂存管理 */
+const gitStashTool: ToolDefinition = {
+  name: "git_stash",
+  description: "Git Stash 暂存管理: 保存/恢复/列出/删除暂存。",
+  parameters: z.object({
+    cwd: z.string().optional().describe("工作目录路径"),
+    action: z.enum(["save", "pop", "list", "drop", "apply"]).describe("操作类型"),
+    message: z.string().optional().describe("暂存说明(save时)"),
+    index: z.number().optional().describe("stash 索引(pop/drop/apply时, 默认0)"),
+  }),
+  execute: async (params: unknown, _ctx: ToolContext): Promise<ToolResult> => {
+    const { cwd, action, message, index } = params as { cwd?: string; action: string; message?: string; index?: number };
+    const workDir = cwd || process.cwd();
+    const cwdErr = validateGitCwd(workDir);
+    if (cwdErr) return { success: false, output: cwdErr, error: cwdErr };
+
+    let args: string[];
+    switch (action) {
+      case "save": args = ["stash", "push", "-m", message ?? "auto-stash"]; break;
+      case "pop": args = ["stash", "pop", `stash@{${index ?? 0}}`]; break;
+      case "apply": args = ["stash", "apply", `stash@{${index ?? 0}}`]; break;
+      case "list": args = ["stash", "list"]; break;
+      case "drop": args = ["stash", "drop", `stash@{${index ?? 0}}`]; break;
+      default: return { success: false, output: `未知操作: ${action}` };
+    }
+
+    const r = runGit(args, workDir);
+    return { success: !r.isError, output: r.stdout.trim() || r.stderr || "操作完成" };
+  },
+};
+
+/** git_remote — 远程仓库操作 */
+const gitRemoteTool: ToolDefinition = {
+  name: "git_remote",
+  description: "Git 远程仓库管理: 列出/添加/删除远程。",
+  parameters: z.object({
+    cwd: z.string().optional().describe("工作目录路径"),
+    action: z.enum(["list", "add", "remove"]).describe("操作类型"),
+    name: z.string().optional().describe("远程名称(add/remove时)"),
+    url: z.string().optional().describe("远程URL(add时)"),
+  }),
+  execute: async (params: unknown, _ctx: ToolContext): Promise<ToolResult> => {
+    const { cwd, action, name, url } = params as { cwd?: string; action: string; name?: string; url?: string };
+    const workDir = cwd || process.cwd();
+    const cwdErr = validateGitCwd(workDir);
+    if (cwdErr) return { success: false, output: cwdErr, error: cwdErr };
+
+    if (action === "list") {
+      const r = runGit(["remote", "-v"], workDir);
+      return { success: !r.isError, output: r.stdout.trim() || "无远程仓库" };
+    }
+
+    if (!name) return { success: false, output: `${action} 操作需要指定 name` };
+    if (action === "add") {
+      if (!url) return { success: false, output: "add 操作需要指定 url" };
+      const r = runGit(["remote", "add", name, url], workDir);
+      return { success: !r.isError, output: r.stdout.trim() || r.stderr || `远程 ${name} 已添加` };
+    }
+    // remove
+    const r = runGit(["remote", "remove", name], workDir);
+    return { success: !r.isError, output: r.stdout.trim() || r.stderr || `远程 ${name} 已移除` };
+  },
+};
+
+/** git_cherry_pick — 选择性合并 */
+const gitCherryPickTool: ToolDefinition = {
+  name: "git_cherry_pick",
+  description: "Cherry-pick: 将指定 commit 应用到当前分支。",
+  parameters: z.object({
+    cwd: z.string().optional().describe("工作目录路径"),
+    commit: z.string().describe("要 cherry-pick 的 commit hash"),
+  }),
+  execute: async (params: unknown, _ctx: ToolContext): Promise<ToolResult> => {
+    const { cwd, commit } = params as { cwd?: string; commit: string };
+    const workDir = cwd || process.cwd();
+    const cwdErr = validateGitCwd(workDir);
+    if (cwdErr) return { success: false, output: cwdErr, error: cwdErr };
+    if (!SAFE_REF_RE.test(commit)) return { success: false, output: `非法的 commit 引用: '${commit}'` };
+
+    const r = runGit(["cherry-pick", "--no-edit", commit], workDir);
+    if (r.isError && r.stdout.includes("CONFLICT")) {
+      return { success: false, output: `⚠️ Cherry-pick 冲突\n${r.stdout}`, data: { hasConflict: true } };
+    }
+    return { success: !r.isError, output: r.stdout.trim() || r.stderr || "Cherry-pick 完成" };
+  },
+};
+
+/** git_rebase — 变基操作 (破坏性, 额外审批) */
+const gitRebaseTool: ToolDefinition = {
+  name: "git_rebase",
+  description: "Git Rebase: 将当前分支变基到目标分支。⚠️ 这是破坏性操作, 请确保分支未推送到远程。",
+  parameters: z.object({
+    cwd: z.string().optional().describe("工作目录路径"),
+    onto: z.string().describe("变基目标分支"),
+    interactive: z.boolean().optional().describe("交互式变基(仅列出计划, 不执行)"),
+  }),
+  execute: async (params: unknown, _ctx: ToolContext): Promise<ToolResult> => {
+    const { cwd, onto, interactive } = params as { cwd?: string; onto: string; interactive?: boolean };
+    const workDir = cwd || process.cwd();
+    const cwdErr = validateGitCwd(workDir);
+    if (cwdErr) return { success: false, output: cwdErr, error: cwdErr };
+    if (!SAFE_REF_RE.test(onto)) return { success: false, output: `非法的分支名称: '${onto}'` };
+
+    // 交互式模式: 仅展示计划, 不实际变基
+    if (interactive) {
+      const r = runGit(["log", "--oneline", `${onto}..HEAD`], workDir);
+      return { success: !r.isError, output: `将要变基的 commits:\n${r.stdout.trim() || "无"}` };
+    }
+
+    const r = runGit(["rebase", onto], workDir);
+    if (r.isError && (r.stdout.includes("CONFLICT") || r.stderr.includes("CONFLICT"))) {
+      // 自动中止冲突的 rebase
+      runGit(["rebase", "--abort"], workDir);
+      return { success: false, output: `⚠️ Rebase 冲突(已自动中止)\n${r.stdout}\n${r.stderr}`.trim() };
+    }
+    return { success: !r.isError, output: r.stdout.trim() || r.stderr || "Rebase 完成" };
+  },
+};
+
+/** Git 高级工具 — P1, 通过 SUPER_AGENT_DEV_TOOLS Feature Flag 加载 */
+export const gitAdvancedTools: ToolDefinition[] = [
+  gitBranchTool,
+  gitMergeTool,
+  gitStashTool,
+  gitRemoteTool,
+  gitCherryPickTool,
+  gitRebaseTool,
+];

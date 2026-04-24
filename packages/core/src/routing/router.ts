@@ -36,6 +36,11 @@ export class MessageRouter {
     this.defaultAgentId = agentId;
   }
 
+  /** 获取默认 Agent ID（由 index.ts 启动时通过 setDefaultAgent 设置） */
+  getDefaultAgentId(): string | null {
+    return this.defaultAgentId;
+  }
+
   /** Add a channel → agent binding. */
   addBinding(binding: RouteBinding): void {
     this.bindings.push(binding);

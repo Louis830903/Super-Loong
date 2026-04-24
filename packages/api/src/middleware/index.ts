@@ -195,6 +195,10 @@ export async function registerNotFoundHandler(app: FastifyInstance): Promise<voi
   });
 }
 
+// ─── Tracing (re-export) ────────────────────────────────────
+
+export { registerTracing } from "./tracing.js";
+
 // ─── Register All Middleware ─────────────────────────────────
 
 export async function registerMiddleware(
@@ -202,6 +206,9 @@ export async function registerMiddleware(
   options?: { rateLimit?: Partial<RateLimitConfig> },
 ): Promise<void> {
   await registerRequestId(app);
+  // 追踪中间件在 requestId 之后注册，确保 traceId 可以复用 requestId
+  const { registerTracing } = await import("./tracing.js");
+  await registerTracing(app);
   await registerRequestLogging(app);
   await registerErrorHandler(app);
   await registerNotFoundHandler(app);

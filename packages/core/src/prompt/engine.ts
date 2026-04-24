@@ -23,11 +23,14 @@
 import type { AgentConfig, Session, ToolDefinition } from "../types/index.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { SkillLoader } from "../skills/loader.js";
+import { createRequire } from "node:module";
 import {
   TOOL_USE_ENFORCEMENT,
   MEMORY_GUIDANCE,
   SKILLS_GUIDANCE_HEADER,
   SAFETY_GUARDRAILS,
+  SAFETY_POLICIES_SHORT,
+  OUTPUT_FORMAT,
   CAPABILITIES_OVERVIEW,
 } from "./guidance.js";
 import { HEARTBEAT_SYSTEM_SECTION } from "../cron/heartbeat.js";
@@ -196,6 +199,10 @@ export class PromptEngine {
       if (this.config.heartbeatEnabled) {
         parts.push(HEARTBEAT_SYSTEM_SECTION);
       }
+
+      // ✨ T3 Task 3.4: Output 分区 — 注入到 stable prefix 末尾
+      // 输出格式规范是相对稳定的，适合 cache；仅 full 模式注入，避免污染 minimal/subagent
+      parts.push(OUTPUT_FORMAT);
     }
 
     const prefix = parts.filter(Boolean).join("\n\n");
@@ -214,31 +221,27 @@ export class PromptEngine {
     const parts: string[] = [];
 
     if (!minimalMode) {
-      // L7: Core Memory Blocks
-      const memoryXml = this.buildMemorySection();
-      if (memoryXml) parts.push(memoryXml);
+      // ✨ T3 Task 3.3: Task 分区（条件注入 — 仅在 session.metadata.currentTask 存在时）
+      // 位于 L7 Memory 之前，让 LLM 第一时间看到当前目标
+      const taskSection = this.buildTaskSection(session);
+      if (taskSection) parts.push(taskSection);
 
-      // L7.5: Markdown Memory Files (MEMORY.md / USER.md / SOUL.md — Hermes pattern)
-      // B-1: 使用冻结快照，确保 session 内 system prompt 稳定（学 Hermes _system_prompt_snapshot）
-      if (this.config.markdownMemory) {
-        const mdBlock = this.config.markdownMemory.getFrozenPromptBlock();
-        if (mdBlock) parts.push(mdBlock);
-      }
+      // ✨ T3 Task 3.5: Evidence 分区 — 合并 L7 Core Memory + L7.5 Markdown Memory
+      // 用 <evidence> XML 标签包裹，风格与 <core_memory_block> 一致
+      const evidenceSection = this.buildEvidenceSection();
+      if (evidenceSection) parts.push(evidenceSection);
 
-      // L8: Project Context Files (cached with TTL to avoid sync IO per turn)
-      const now = Date.now();
-      if (
-        this._cachedContextFiles === null ||
-        now - this._contextFilesCachedAt > PromptEngine.CONTEXT_FILES_TTL_MS
-      ) {
-        this._cachedContextFiles = discoverContextFiles(this.config.contextFilesRoot);
-        this._contextFilesCachedAt = now;
-      }
-      if (this._cachedContextFiles) parts.push(this._cachedContextFiles);
+      // ✨ T3 Task 3.5: Context 分区 — L8 项目上下文文件
+      const contextSection = this.buildContextSection();
+      if (contextSection) parts.push(contextSection);
     }
 
-    // L9: Available Tools + Session Info + Runtime Environment
-    parts.push(this.buildRuntimeSection(session, tools));
+    // ✨ T3 Task 3.2: ToolBox 分区（工具列表，独立于 State）
+    const toolBoxSection = this.buildToolBoxSection(tools);
+    if (toolBoxSection) parts.push(toolBoxSection);
+
+    // ✨ T3 Task 3.2: State 分区（运行时环境 + 会话 + 多模态能力，用 <state> 包裹）
+    parts.push(this.buildStateSection(session));
 
     if (!minimalMode) {
       // L10: Platform Hint
@@ -270,6 +273,13 @@ export class PromptEngine {
 
     // Base system prompt from config
     parts.push(cfg.systemPrompt);
+
+    // ✨ T3 Task 3.1: 在 Identity 后紧跟 Policies，让 LLM 第一时间看到硬约束
+    // 与 L6 SAFETY_GUARDRAILS 详版互补：Identity 给最显眼的 5 条，L6 给全量细节
+    parts.push("");
+    parts.push("## Policies");
+    parts.push(SAFETY_POLICIES_SHORT);
+
     return parts.join("\n");
   }
 
@@ -319,33 +329,100 @@ export class PromptEngine {
     return `Skills: ${items}`;
   }
 
-  private buildMemorySection(): string {
-    const mm = this.config.memoryManager;
-    if (!mm) return "";
+  // ─── ✨ T3 新分区构建器（Task/Evidence/Context/ToolBox/State） ─────
 
-    const agentId = this.config.agentConfig.id;
-    // B-1: 使用冻结快照，确保 session 内 Core Memory 稳定
-    const coreXml = mm.getFrozenCoreMemory(agentId);
-    if (!coreXml) return "";
+  /**
+   * T3 Task 3.3: Task 分区（条件注入）
+   * 从 session.metadata.currentTask 读取当前任务目标与子任务。
+   * 返回值用 <task> XML 标签包裹；没有 currentTask 时返回空串，不占 token。
+   */
+  private buildTaskSection(session: Session): string {
+    const raw = session.metadata?.currentTask as
+      | { goal?: unknown; subtasks?: unknown }
+      | undefined;
+    if (!raw || typeof raw !== "object") return "";
+    const goal = typeof raw.goal === "string" ? raw.goal.trim() : "";
+    if (!goal) return "";
 
-    return `## Persistent Memory\n${coreXml}`;
+    const subtasks = Array.isArray(raw.subtasks)
+      ? raw.subtasks.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
+
+    const lines = ["## Task", `**Goal**: ${goal}`];
+    if (subtasks.length > 0) {
+      lines.push("**Subtasks**:");
+      for (const s of subtasks) lines.push(`- ${s}`);
+    }
+    return `<task>\n${lines.join("\n")}\n</task>`;
   }
 
-  private buildRuntimeSection(
-    session: Session,
-    tools?: Map<string, ToolDefinition>,
-  ): string {
+  /**
+   * T3 Task 3.5: Evidence 分区 — 合并持久化记忆与 Markdown 记忆。
+   * 包含 L7 Core Memory（MemoryManager.getFrozenCoreMemory）+ L7.5 Markdown Memory。
+   * 整体用 <evidence> 包裹，便于 LLM 识别「来自历史的证据」。
+   */
+  private buildEvidenceSection(): string {
+    const inner: string[] = [];
+
+    const mm = this.config.memoryManager;
+    if (mm) {
+      // B-1: 使用冻结快照，确保 session 内 Core Memory 稳定
+      const coreXml = mm.getFrozenCoreMemory(this.config.agentConfig.id);
+      if (coreXml) {
+        inner.push("### Persistent Memory");
+        inner.push(coreXml);
+      }
+    }
+
+    // L7.5: Markdown Memory Files (MEMORY.md / USER.md / SOUL.md — Hermes pattern)
+    if (this.config.markdownMemory) {
+      const mdBlock = this.config.markdownMemory.getFrozenPromptBlock();
+      if (mdBlock) {
+        if (inner.length > 0) inner.push("");
+        inner.push("### Markdown Memory");
+        inner.push(mdBlock);
+      }
+    }
+
+    if (inner.length === 0) return "";
+    return `<evidence>\n## Evidence\n${inner.join("\n")}\n</evidence>`;
+  }
+
+  /**
+   * T3 Task 3.5: Context 分区 — L8 项目上下文文件（AGENTS.md / README.md / CLAUDE.md 等）。
+   * 用 <context> 包裹；保留原 60 秒 TTL 缓存以避免每轮同步 IO。
+   */
+  private buildContextSection(): string {
+    const now = Date.now();
+    if (
+      this._cachedContextFiles === null ||
+      now - this._contextFilesCachedAt > PromptEngine.CONTEXT_FILES_TTL_MS
+    ) {
+      this._cachedContextFiles = discoverContextFiles(this.config.contextFilesRoot);
+      this._contextFilesCachedAt = now;
+    }
+    if (!this._cachedContextFiles) return "";
+    return `<context>\n## Context\n${this._cachedContextFiles}\n</context>`;
+  }
+
+  /**
+   * T3 Task 3.2: ToolBox 分区 — 可用工具列表（名字摘要）。
+   * 工具 JSON schema 通过 toolDefs 单独下发，这里只提示 LLM 可用哪些。
+   */
+  private buildToolBoxSection(tools?: Map<string, ToolDefinition>): string {
+    if (!tools || tools.size === 0) return "";
+    const names = Array.from(tools.keys()).join(", ");
+    return `## Tools (${tools.size})\n${names}`;
+  }
+
+  /**
+   * T3 Task 3.2: State 分区 — 运行时状态 + 环境提示 + SysOps + Multimodal。
+   * 从原 buildRuntimeSection 拆出，去除 Tools 块（已独立为 ToolBox）。
+   * 用 <state> XML 包裹，顶部标题改为 ## State（满足验收「6 大分区能 grep 到 H2 标题」）。
+   */
+  private buildStateSection(session: Session): string {
     const parts: string[] = [];
     const cfg = this.config.agentConfig;
-
-    // Available tools summary (compact: name only, full schema sent via toolDefs)
-    if (tools && tools.size > 0) {
-      parts.push(`## Tools (${tools.size})`);
-      // Only list tool names — descriptions are already in the tool definitions JSON
-      const toolNames = Array.from(tools.keys()).join(", ");
-      parts.push(toolNames);
-      parts.push("");
-    }
 
     // Runtime environment (enhanced — follows OpenClaw buildSystemPromptParams + Hermes build_environment_hints)
     const now = new Date();
@@ -355,7 +432,7 @@ export class PromptEngine {
     const shellLabel = PromptEngine.detectShell();
     const envHints = PromptEngine.buildEnvironmentHints();
 
-    parts.push("## Runtime");
+    parts.push("## State");
     parts.push(`- Time: ${timeStr} (${tz})`);
     parts.push(`- Model: ${cfg.llmProvider.model}`);
     parts.push(`- OS: ${osLabel}`);
@@ -373,6 +450,29 @@ export class PromptEngine {
     // Environment-specific hints (WSL, Docker, etc.)
     if (envHints) parts.push(`\n${envHints}`);
 
+    // ── SysOps 平台感知增强 (Task 6.2) ──
+    // 仅当 SysOps 总开关开启时才注入，避免占用普通模式的 token
+    if (process.env.SUPER_AGENT_SYSOPS_ENABLED === "true") {
+      try {
+        // ESM 兼容: 使用 createRequire 在同步方法中加载模块
+        const esmRequire = createRequire(import.meta.url);
+        const { getInstalledCLISummary } = esmRequire("../platform/cli-detector.js") as { getInstalledCLISummary: () => string };
+        const cliSummary = getInstalledCLISummary();
+        if (cliSummary) {
+          parts.push("");
+          parts.push("## System Operations");
+          parts.push("You have system-level operation capabilities. Available CLI tools:");
+          parts.push(cliSummary);
+          parts.push("");
+          parts.push("Guidelines:");
+          parts.push("- Prefer installed CLI tools over writing scripts");
+          parts.push("- Use `terminal` for long-running commands, `run_shell` for quick ones");
+          parts.push("- Dangerous operations (rm -rf, git push --force) require approval");
+          parts.push("- Always verify before modifying: check status first, then act");
+        }
+      } catch { /* CLI detector not available, skip silently */ }
+    }
+
     // 多模态能力认知声明 — 让模型知道自己能不能直接看图
     const visionCapable = cfg.llmProvider.supportsVision;
     parts.push("");
@@ -386,7 +486,7 @@ export class PromptEngine {
       parts.push("- If users send images, politely inform them and suggest switching to a vision-capable model (e.g. Kimi K2.5, GLM-5V, Qwen-Plus).");
     }
 
-    return parts.join("\n");
+    return `<state>\n${parts.join("\n")}\n</state>`;
   }
 
   // ─── OS & Environment Detection (学 OpenClaw resolveOsSummary + Hermes build_environment_hints) ──

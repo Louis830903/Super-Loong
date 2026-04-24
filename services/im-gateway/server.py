@@ -12,6 +12,7 @@ Super Agent IM Gateway - FastAPI 主服务（OpenClaw 声明式插件架构 v2�
 import asyncio
 import os
 import sys
+import hmac
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 
@@ -219,7 +220,7 @@ async def _make_message_handler(channel_id: str):
 
         # ── A-0-② + A-2: 统一附件处理（文档注入 + 图片 base64）────────
         if event.media_urls:
-            # A-0-②: 先解析虚拟 URI（feishu://、weixin://）为本地路径
+            # A-0-②: 先解析虚拟 URI（feishu://）为本地路径
             resolved_urls, resolved_types = await _resolve_media_urls(
                 event.media_urls, event.media_types,
                 msg_id=event.msg_id,
@@ -378,13 +379,6 @@ def _migrate_env_configs() -> int:
             "app_key": os.environ.get("DINGTALK_CLIENT_ID", ""),
             "app_secret": os.environ.get("DINGTALK_CLIENT_SECRET", ""),
             "robot_code": os.environ.get("DINGTALK_ROBOT_CODE", ""),
-        }
-
-    # 微信
-    if os.environ.get("WEIXIN_API_URL"):
-        env_map["weixin"] = {
-            "api_url": os.environ.get("WEIXIN_API_URL", ""),
-            "api_token": os.environ.get("WEIXIN_API_TOKEN", ""),
         }
 
     if env_map:
@@ -555,6 +549,17 @@ app.add_middleware(
 # API Key 验证中间件
 IM_GATEWAY_API_KEY = os.environ.get("IM_GATEWAY_API_KEY", "")
 
+# 启动时弱密码/占位符检测（参考 OpenClaw startup-auth.ts）
+KNOWN_WEAK_KEYS = {
+    "change-me", "changeme", "dev-token", "test-token",
+    "your-api-key-here", "sk-xxx",
+}
+if IM_GATEWAY_API_KEY and IM_GATEWAY_API_KEY in KNOWN_WEAK_KEYS:
+    logger.warning(
+        f"[SECURITY] IM_GATEWAY_API_KEY 使用了已知的弱密码/占位符 '{IM_GATEWAY_API_KEY}'，"
+        "建议生成强密钥: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
+
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
     """API Key 验证中间件，跳过健康检查端点"""
@@ -562,7 +567,7 @@ async def api_key_middleware(request: Request, call_next):
         return await call_next(request)
     if IM_GATEWAY_API_KEY:
         key = request.headers.get("x-api-key", "")
-        if key != IM_GATEWAY_API_KEY:
+        if not hmac.compare_digest(key, IM_GATEWAY_API_KEY):
             return JSONResponse(status_code=401, content={"error": "Invalid or missing API key"})
     try:
         return await call_next(request)
@@ -1035,11 +1040,21 @@ if __name__ == "__main__":
     # 仅手动开发运行时启用热重载（IM_GATEWAY_RELOAD=true）
     # GatewayLauncher 已有崩溃重启机制，无需 uvicorn reload 二次重启
     enable_reload = os.environ.get("IM_GATEWAY_RELOAD", "false").lower() == "true"
-    uvicorn.run(
-        "server:app",
-        host="0.0.0.0",
-        port=port,
-        reload=enable_reload,
-        reload_dirs=[os.path.dirname(__file__)] if enable_reload else [],
-        reload_excludes=["data/*", "*.json", ".media/*", "*.tmp", "__pycache__", "**/__pycache__", "**/__pycache__/*", "*.pyc"] if enable_reload else [],
-    )
+    # 注意：非 reload 模式下直接传 app 对象，避免 uvicorn 二次 import server 模块
+    # 导致模块级对象重复实例化（SessionManager / Bridge / HealthMonitor 等）
+    if enable_reload:
+        # reload 模式必须用字符串，uvicorn 需要重新 import
+        uvicorn.run(
+            "server:app",
+            host="0.0.0.0",
+            port=port,
+            reload=True,
+            reload_dirs=[os.path.dirname(__file__)],
+            reload_excludes=["data/*", "*.json", ".media/*", "*.tmp", "__pycache__", "**/__pycache__", "**/__pycache__/*", "*.pyc"],
+        )
+    else:
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=port,
+        )

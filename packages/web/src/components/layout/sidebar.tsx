@@ -17,6 +17,8 @@ import {
   Shield,
   Users,
   Sparkles,
+  Image,
+  Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -32,6 +34,8 @@ const navigation = [
   { name: "定时任务", href: "/cron", icon: Clock },
   { name: "多 Agent 协作", href: "/collaboration", icon: Users },
   { name: "进化引擎", href: "/evolution", icon: Sparkles },
+  { name: "A2A 协议", href: "/a2a", icon: Globe },
+  { name: "媒体管理", href: "/media", icon: Image },
   { name: "安全管理", href: "/security", icon: Shield },
   { name: "系统设置", href: "/settings", icon: Settings },
 ];
@@ -67,8 +71,9 @@ export default function Sidebar() {
       >
         {/* Logo */}
         <div className="flex h-16 items-center gap-2 border-b border-zinc-800 px-4">
-          <Bot className="h-7 w-7 shrink-0 text-blue-500" />
-          <span className="text-2xl font-extrabold text-white">Super LV</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Super Loong" width={36} height={36} className="shrink-0 rounded-lg" />
+          <span className="text-2xl font-extrabold text-white">Super Loong</span>
         </div>
 
         {/* Nav */}
@@ -97,7 +102,7 @@ export default function Sidebar() {
 
         {/* Footer */}
         <div className="border-t border-zinc-800 px-4 py-4">
-          <p className="text-xs text-zinc-500">Super LV v0.1.0</p>
+          <p className="text-xs text-zinc-500">Super Loong v0.1.0</p>
         </div>
       </aside>
     </>

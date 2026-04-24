@@ -19,6 +19,7 @@ EVENT_TYPE_BOT_ADDED = "im.chat.member.bot.added_v1"
 EVENT_TYPE_BOT_REMOVED = "im.chat.member.bot.deleted_v1"
 EVENT_TYPE_USER_ADDED = "im.chat.member.user.added_v1"
 EVENT_TYPE_CHAT_DISBANDED = "im.chat.disbanded_v1"
+EVENT_TYPE_BOT_P2P_CHAT_ENTERED = "im.chat.access_event.bot_p2p_chat_entered_v1"
 
 ALL_EVENT_TYPES = [
     EVENT_TYPE_MESSAGE,
@@ -28,6 +29,7 @@ ALL_EVENT_TYPES = [
     EVENT_TYPE_BOT_REMOVED,
     EVENT_TYPE_USER_ADDED,
     EVENT_TYPE_CHAT_DISBANDED,
+    EVENT_TYPE_BOT_P2P_CHAT_ENTERED,
 ]
 
 # 事件处理回调类型

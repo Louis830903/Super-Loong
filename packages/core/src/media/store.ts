@@ -20,7 +20,7 @@ import {
   MEDIA_TTL_MS,
 } from "./constants.js";
 import { detectMime, mimeToExt, kindFromMime } from "./mime.js";
-import { assertSizeAllowed, assertNotInternalUrl } from "./security.js";
+import { assertSizeAllowed, assertNotInternalUrl, assertMimeAllowed } from "./security.js";
 
 // ─── 类型定义 ───────────────────────────────────────────────
 
@@ -52,12 +52,30 @@ function resolveSubdir(subdir: "inbound" | "outbound"): string {
 
 /**
  * 初始化媒体存储目录
- * 确保 inbound/outbound 子目录存在
+ * 确保 inbound/outbound 子目录存在，并启动 TTL 定时清理器
  */
 export async function initMediaStore(): Promise<void> {
   const root = resolveMediaRoot();
   await fs.mkdir(path.join(root, MEDIA_INBOUND_DIR), { recursive: true });
   await fs.mkdir(path.join(root, MEDIA_OUTBOUND_DIR), { recursive: true });
+
+  // M-1: 启动定时清理器 — 每 30 分钟主动扫描一次过期文件，防止僵尸堆积
+  startCleanupTimer();
+}
+
+/** TTL 定时清理器句柄（避免重复启动） */
+let cleanupTimerRef: ReturnType<typeof setInterval> | null = null;
+
+/** 启动/重启 TTL 定时清理器（30 分钟间隔） */
+function startCleanupTimer(): void {
+  if (cleanupTimerRef) return; // 已启动则跳过
+  cleanupTimerRef = setInterval(() => {
+    cleanExpiredMedia().catch(() => {});
+  }, 30 * 60 * 1000);
+  // 不阻止 Node 进程退出
+  if (cleanupTimerRef && typeof cleanupTimerRef === "object" && "unref" in cleanupTimerRef) {
+    cleanupTimerRef.unref();
+  }
 }
 
 // ─── 保存 ─────────────────────────────────────────────────
@@ -153,6 +171,9 @@ export async function saveMediaFromUrl(
     filePath: new URL(url).pathname,
     declaredMime: declaredMime ?? undefined,
   });
+
+  // S-2 修复: 拒绝可执行文件等危险 MIME 类型
+  assertMimeAllowed(contentType);
 
   // 从 URL 推断原始文件名
   const urlPath = new URL(url).pathname;

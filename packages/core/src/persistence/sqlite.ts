@@ -29,7 +29,7 @@ const logger = pino({ name: "sqlite" });
 
 // ─── Schema Version ─────────────────────────────────────────
 // Bump this when adding migrations. Each version corresponds to a migrateVN() function.
-const CURRENT_SCHEMA_VERSION = 9;
+const CURRENT_SCHEMA_VERSION = 14;
 
 // ─── Database Singleton ──────────────────────────────────────
 // NOTE (P2-03): Module-level singleton pattern limits to one DB per process.
@@ -109,6 +109,23 @@ function runMigrations(db: SqlJsDatabase): void {
 
   // ── v9: config_store 表（进化引擎 Nudge 配置持久化） ──
   if (currentVersion < 9) migrateV9(db);
+
+  // ── v10: subagent_runs 表（I-2 孤儿回收 + 子代理持久化） ──
+  if (currentVersion < 10) migrateV10(db);
+
+  // ── v11: T1 记忆优先级（hello-agents 借鉴）──
+  // memories 表新增 priority / relevanceScore 两列，加联合索引
+  if (currentVersion < 11) migrateV11(db);
+
+  // ── v12: T6 知识图谱三元组表（hello-agents SemanticMemory 借鉴）──
+  // 新建 relations 表 + 三个索引（subject/object/unique triple）
+  if (currentVersion < 12) migrateV12(db);
+
+  // ── v13: T5 A2A Agent 注册表（跨进程 Agent 发现） ──
+  if (currentVersion < 13) migrateV13(db);
+
+  // ── v14: T5 A2A Task 持久化（Task 状态机 + 产物/历史） ──
+  if (currentVersion < 14) migrateV14(db);
 }
 
 /** v2: Add api_key_iv column to llm_providers for AES-256-CBC encryption. */
@@ -366,6 +383,199 @@ function migrateV9(db: SqlJsDatabase): void {
 }
 
 /**
+ * v10: I-2 子代理运行记录表（孤儿回收 + 持久化）。
+ * 用于 SubagentManager 将 spawn/complete/kill 状态持久化到 SQLite，
+ * 进程重启后通过 reconcileOrphans() 恢复未完成的子代理记录。
+ */
+function migrateV10(db: SqlJsDatabase): void {
+  db.run("BEGIN TRANSACTION");
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS subagent_runs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        parent_session_id TEXT NOT NULL,
+        task TEXT NOT NULL,
+        label TEXT,
+        depth INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL CHECK(status IN ('running','success','error','timeout','killed','orphan_recovered','archived')),
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        result TEXT,
+        error TEXT
+      )
+    `);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_subagent_runs_status ON subagent_runs(status)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent ON subagent_runs(parent_session_id)`);
+    setSchemaVersion(db, 10, "Add subagent_runs table for orphan recovery (I-2)");
+    db.run("COMMIT");
+    logger.info("Migration v10: Created subagent_runs table (committed)");
+  } catch (e: any) {
+    db.run("ROLLBACK");
+    if (e.message?.includes("already exists")) {
+      setSchemaVersion(db, 10, "subagent_runs table (skipped: already exists)");
+      logger.info("Migration v10: skipped (table already exists), version recorded");
+    } else {
+      logger.error({ err: e.message }, "Migration v10 failed, rolled back");
+      throw e;
+    }
+  }
+}
+
+/**
+ * v11: T1 记忆优先级字段（参考 hello-agents NoteTool 分类）。
+ * - priority TEXT  CHECK 枚举（blocker / action / task_state / conclusion / normal）默认 normal
+ * - relevanceScore REAL  与 trustScore 解耦的预留评分，默认 0.5
+ * - 联合索引 idx_memories_priority 加速按 agentId+priority 过滤
+ * 幂等实现：重复运行不报错（duplicate column 走 skipped 分支）。
+ */
+function migrateV11(db: SqlJsDatabase): void {
+  db.run("BEGIN TRANSACTION");
+  try {
+    // SQLite ALTER TABLE 仅支持 ADD COLUMN，CHECK 约束随列一同创建
+    db.run(
+      "ALTER TABLE memories ADD COLUMN priority TEXT " +
+      "CHECK(priority IN ('blocker','action','task_state','conclusion','normal')) " +
+      "DEFAULT 'normal'"
+    );
+    db.run("ALTER TABLE memories ADD COLUMN relevanceScore REAL DEFAULT 0.5");
+    // 加联合索引（检索时常以 agentId 为主过滤 + priority 排序）
+    db.run("CREATE INDEX IF NOT EXISTS idx_memories_priority ON memories(agentId, priority)");
+    setSchemaVersion(db, 11, "Add priority + relevanceScore columns to memories (T1)");
+    db.run("COMMIT");
+    logger.info("Migration v11: Added priority/relevanceScore columns to memories (committed)");
+  } catch (e: any) {
+    db.run("ROLLBACK");
+    if (e.message?.includes("duplicate column")) {
+      // 列已存在（复跑场景），仅补索引并记录版本
+      try {
+        db.run("CREATE INDEX IF NOT EXISTS idx_memories_priority ON memories(agentId, priority)");
+      } catch { /* index may also exist */ }
+      setSchemaVersion(db, 11, "Priority columns (skipped: already exist)");
+      logger.info("Migration v11: skipped (columns already exist), version recorded");
+    } else {
+      logger.error({ err: e.message }, "Migration v11 failed, rolled back");
+      throw e;
+    }
+  }
+}
+
+/**
+ * v12: T6 知识图谱三元组表 + 三个索引
+ * 实体间关系建模（主体-谓词-客体），支持递归 CTE 子图查询。
+ * 参考 hello-agents 第 8 章 SemanticMemory 设计。
+ */
+function migrateV12(db: SqlJsDatabase): void {
+  db.run("BEGIN TRANSACTION");
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS relations (
+        id TEXT PRIMARY KEY,
+        subjectId INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+        predicate TEXT NOT NULL,
+        objectId INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+        confidence REAL NOT NULL DEFAULT 0.5 CHECK(confidence BETWEEN 0 AND 1),
+        source TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        metadata TEXT DEFAULT '{}'
+      )
+    `);
+    // 主体+谓词 索引：快速查找某实体的所有出边
+    db.run(`CREATE INDEX IF NOT EXISTS idx_relations_subject ON relations(subjectId, predicate)`);
+    // 客体+谓词 索引：快速查找某实体的所有入边
+    db.run(`CREATE INDEX IF NOT EXISTS idx_relations_object ON relations(objectId, predicate)`);
+    // 三元组唯一索引：防止重复插入（upsert 用）
+    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_relations_triple ON relations(subjectId, predicate, objectId)`);
+
+    setSchemaVersion(db, 12, "Add relations table for knowledge graph triples (T6)");
+    db.run("COMMIT");
+    logger.info("Migration v12: Created relations table with 3 indexes (committed)");
+  } catch (e: any) {
+    db.run("ROLLBACK");
+    if (e.message?.includes("already exists")) {
+      setSchemaVersion(db, 12, "relations table (skipped: already exists)");
+      logger.info("Migration v12: skipped (table already exists), version recorded");
+    } else {
+      logger.error({ err: e.message }, "Migration v12 failed, rolled back");
+      throw e;
+    }
+  }
+}
+
+/**
+ * v13: T5 A2A Agent 注册表
+ * 跨进程 Agent 发现与注册。支持 online/offline/draining 三态 + 心跳 TTL 过期。
+ * 参考 Spec §5.3 Task 5.2 + §7.2 Agent Card 标准。
+ */
+function migrateV13(db: SqlJsDatabase): void {
+  db.run("BEGIN TRANSACTION");
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS agent_registry (
+        agentId TEXT PRIMARY KEY,
+        card TEXT NOT NULL,
+        endpoint TEXT NOT NULL,
+        lastHeartbeat TEXT NOT NULL,
+        ttlMs INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('online','offline','draining'))
+      )
+    `);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_agent_registry_status ON agent_registry(status)`);
+
+    setSchemaVersion(db, 13, "Add agent_registry table for A2A agent discovery (T5)");
+    db.run("COMMIT");
+    logger.info("Migration v13: Created agent_registry table with status index (committed)");
+  } catch (e: any) {
+    db.run("ROLLBACK");
+    if (e.message?.includes("already exists")) {
+      setSchemaVersion(db, 13, "agent_registry table (skipped: already exists)");
+      logger.info("Migration v13: skipped (table already exists), version recorded");
+    } else {
+      logger.error({ err: e.message }, "Migration v13 failed, rolled back");
+      throw e;
+    }
+  }
+}
+
+/**
+ * v14: T5 A2A Task 持久化
+ * Task 状态机 8 态 + 完整 JSON payload（artifacts + history）。
+ * 参考 Spec §7.3 Task 7.3 + a2a.proto Task message。
+ */
+function migrateV14(db: SqlJsDatabase): void {
+  db.run("BEGIN TRANSACTION");
+  try {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS a2a_tasks (
+        id TEXT PRIMARY KEY,
+        contextId TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN
+          ('submitted','working','input-required','auth-required',
+           'completed','failed','canceled','rejected')),
+        payload TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+    `);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_a2a_tasks_context ON a2a_tasks(contextId)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_a2a_tasks_state ON a2a_tasks(state)`);
+
+    setSchemaVersion(db, 14, "Add a2a_tasks table for A2A task persistence (T5)");
+    db.run("COMMIT");
+    logger.info("Migration v14: Created a2a_tasks table with 2 indexes (committed)");
+  } catch (e: any) {
+    db.run("ROLLBACK");
+    if (e.message?.includes("already exists")) {
+      setSchemaVersion(db, 14, "a2a_tasks table (skipped: already exists)");
+      logger.info("Migration v14: skipped (table already exists), version recorded");
+    } else {
+      logger.error({ err: e.message }, "Migration v14 failed, rolled back");
+      throw e;
+    }
+  }
+}
+
+/**
  * Initialize the SQLite database. Call once at startup.
  * @param dbPath File path for the database (e.g. "./data/super-agent.db")
  */
@@ -557,6 +767,12 @@ export async function initDatabase(dbPath?: string): Promise<SqlJsDatabase> {
       nextRunAt TEXT
     )
   `);
+
+  // [v3 Task 3-8a] 新增调度类型字段（ALTER TABLE ADD COLUMN 仅对已有表有效）
+  try { _db.run(`ALTER TABLE cron_jobs ADD COLUMN scheduleType TEXT DEFAULT 'cron'`); } catch {}
+  try { _db.run(`ALTER TABLE cron_jobs ADD COLUMN runAt TEXT`); } catch {}
+  try { _db.run(`ALTER TABLE cron_jobs ADD COLUMN intervalMs INTEGER`); } catch {}
+  try { _db.run(`ALTER TABLE cron_jobs ADD COLUMN timeoutSeconds INTEGER`); } catch {}
 
   _db.run(`
     CREATE TABLE IF NOT EXISTS cron_history (
@@ -850,6 +1066,8 @@ export function closeDatabase(): void {
     _db.close();
     _db = null;
     _dbPath = null;
+    // ISSUE-5 修复：重置 FTS5 缓存，确保下次 initDatabase 后重新检测
+    _fts5Cache = null;
   }
 }
 
@@ -936,8 +1154,8 @@ export class SQLiteBackend implements MemoryBackend {
       }
     }
     this.db.run(
-      `INSERT OR REPLACE INTO memories (id, agentId, userId, content, type, embedding, metadata, createdAt, updatedAt, trust_score, helpful_count, retrieval_count, embedding_type)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO memories (id, agentId, userId, content, type, embedding, metadata, createdAt, updatedAt, trust_score, helpful_count, retrieval_count, embedding_type, priority, relevanceScore)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         entry.id,
         entry.agentId,
@@ -952,6 +1170,10 @@ export class SQLiteBackend implements MemoryBackend {
         entry.helpfulCount ?? 0,
         entry.retrievalCount ?? 0,
         entry.embeddingType ?? "simple",
+        // ✨ T1: 业务优先级（默认 normal，配合 PRIORITY_BOOST 加权）
+        entry.priority ?? "normal",
+        // ✨ T1: 相关性预留字段（与 trustScore 解耦）
+        entry.relevanceScore ?? 0.5,
       ]
     );
     scheduleSave();
@@ -969,7 +1191,7 @@ export class SQLiteBackend implements MemoryBackend {
     return null;
   }
 
-  async update(id: string, updates: Partial<Pick<MemoryEntry, "content" | "metadata" | "embedding" | "trustScore" | "helpfulCount" | "retrievalCount">>): Promise<void> {
+  async update(id: string, updates: Partial<Pick<MemoryEntry, "content" | "metadata" | "embedding" | "trustScore" | "helpfulCount" | "retrievalCount" | "priority" | "relevanceScore">>): Promise<void> {
     const existing = await this.get(id);
     if (!existing) throw new Error(`Memory ${id} not found`);
 
@@ -1010,6 +1232,15 @@ export class SQLiteBackend implements MemoryBackend {
       sets.push("retrieval_count = ?");
       params.push(updates.retrievalCount);
     }
+    // ✨ T1: 优先级与相关性写入
+    if (updates.priority !== undefined) {
+      sets.push("priority = ?");
+      params.push(updates.priority);
+    }
+    if (updates.relevanceScore !== undefined) {
+      sets.push("relevanceScore = ?");
+      params.push(updates.relevanceScore);
+    }
 
     params.push(id);
     this.db.run(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`, params as any[]);
@@ -1033,7 +1264,15 @@ export class SQLiteBackend implements MemoryBackend {
   }
 
   async search(query: string, filters: MemoryFilter, topK: number): Promise<MemorySearchResult[]> {
-    // Text-based search: use SQL LIKE for keyword matching
+    // P0-1: FTS5 优先搜索（BM25 排序，O(log N)），LIKE 兜底
+    if (hasFTS5()) {
+      try {
+        const ftsResults = this.searchViaFTS5(query, filters, topK);
+        if (ftsResults.length > 0) return ftsResults;
+      } catch { /* FTS5 查询异常，fallback 到 LIKE */ }
+    }
+
+    // Fallback: 全表遍历 + JS 层关键词匹配（原有逻辑，保持不变）
     const candidates = await this.list(filters);
     const queryLower = query.toLowerCase();
     const words = queryLower.split(/\W+/).filter(Boolean);
@@ -1052,6 +1291,50 @@ export class SQLiteBackend implements MemoryBackend {
       .filter((r) => r.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
+  }
+
+  /**
+   * P0-1: FTS5 搜索内部方法。
+   * BUG-2 修复：优先使用 v6 内容同步表（rowid JOIN，更规范），兼容回退旧表（id JOIN）。
+   * 安全处理：双引号转义 + 短语包裹，防止 FTS5 语法注入。
+   */
+  private searchViaFTS5(query: string, filters: MemoryFilter, topK: number): MemorySearchResult[] {
+    const safeQuery = '"' + query.replace(/"/g, '""') + '"';
+
+    // BUG-2: 优先使用 v6 内容同步表（rowid 关联，标准 FTS5 维护模式）
+    const useV6 = hasFTS5v6();
+    let sql: string;
+    if (useV6) {
+      sql = `
+        SELECT m.* FROM memories m
+        JOIN memories_fts_v6 f ON m.rowid = f.rowid
+        WHERE f.memories_fts_v6 MATCH ?
+      `;
+    } else {
+      sql = `
+        SELECT m.* FROM memories m
+        JOIN memories_fts f ON m.id = f.id
+        WHERE f.memories_fts MATCH ?
+      `;
+    }
+    const params: unknown[] = [safeQuery];
+
+    if (filters.agentId) { sql += " AND m.agentId = ?"; params.push(filters.agentId); }
+    if (filters.userId) { sql += " AND m.userId = ?"; params.push(filters.userId); }
+    if (filters.type) { sql += " AND m.type = ?"; params.push(filters.type); }
+
+    sql += " ORDER BY f.rank LIMIT ?";
+    params.push(topK);
+
+    const results = this.db.exec(sql, params);
+    if (!results.length) return [];
+
+    // 利用已有的 resultToEntries 反序列化完整 MemoryEntry
+    // ISSUE-6: 用位置倒数近似 BM25 权重（比固定 1.0 更有信息量）
+    return this.resultToEntries(results[0]).map((entry, i) => ({
+      entry,
+      score: 1.0 / (1 + i),
+    }));
   }
 
   async count(filters: MemoryFilter): Promise<number> {
@@ -1133,6 +1416,9 @@ export class SQLiteBackend implements MemoryBackend {
       trustScore: (row.trust_score as number) ?? 0.5,
       helpfulCount: (row.helpful_count as number) ?? 0,
       retrievalCount: (row.retrieval_count as number) ?? 0,
+      // ✨ T1: 业务优先级与相关性预留
+      priority: ((row.priority as string) ?? "normal") as MemoryEntry["priority"],
+      relevanceScore: (row.relevanceScore as number) ?? 0.5,
     };
   }
 
@@ -1468,11 +1754,32 @@ export function listSessionsByAgent(agentId: string): Array<{ id: string; agentI
 
 // ─── FTS5 Full-Text Search ──────────────────────────────────
 
-/** Check if FTS5 tables are available */
+/** P2-1: hasFTS5() 结果缓存 — 避免每次调用都查 sqlite_master */
+let _fts5Cache: boolean | null = null;
+
+/** Check if FTS5 tables are available (cached after first check) */
+// BUG-2 修复：统一检查 v6 表（内容同步表，更规范的 FTS5 维护模式）
 function hasFTS5(): boolean {
+  if (_fts5Cache !== null) return _fts5Cache;
   try {
     const db = getDatabase();
+    // 优先检查 v6 表，兼容回退到旧表
+    const rv6 = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts_v6'");
+    if (rv6.length > 0 && rv6[0].values.length > 0) {
+      _fts5Cache = true;
+      return true;
+    }
     const r = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'");
+    _fts5Cache = r.length > 0 && r[0].values.length > 0;
+  } catch { _fts5Cache = false; }
+  return _fts5Cache;
+}
+
+/** 检查是否有 v6 版内容同步 FTS5 表（用于选择 JOIN 策略） */
+function hasFTS5v6(): boolean {
+  try {
+    const db = getDatabase();
+    const r = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts_v6'");
     return r.length > 0 && r[0].values.length > 0;
   } catch { return false; }
 }
@@ -1914,6 +2221,11 @@ interface CronJobInput {
   createdAt: string;
   lastRunAt?: string | null;
   nextRunAt?: string | null;
+  /** [v3 Task 3-8a] 新增字段 */
+  scheduleType?: string | null;
+  runAt?: string | null;
+  intervalMs?: number | null;
+  timeoutSeconds?: number | null;
 }
 
 /** Typed input for addCronHistory — compatible with CronHistory via structural typing */
@@ -1930,11 +2242,12 @@ interface CronHistoryInput {
 export function saveCronJob(job: CronJobInput): void {
   const db = getDatabase();
   db.run(
-    `INSERT OR REPLACE INTO cron_jobs (id, name, expression, naturalLanguage, agentId, message, deliveryChannel, deliveryChatId, enabled, timezone, maxRetries, createdAt, lastRunAt, nextRunAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO cron_jobs (id, name, expression, naturalLanguage, agentId, message, deliveryChannel, deliveryChatId, enabled, timezone, maxRetries, createdAt, lastRunAt, nextRunAt, scheduleType, runAt, intervalMs, timeoutSeconds)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [job.id, job.name, job.expression, job.naturalLanguage ?? null, job.agentId, job.message,
      job.deliveryChannel ?? null, job.deliveryChatId ?? null, job.enabled ? 1 : 0,
-     job.timezone ?? "Asia/Shanghai", job.maxRetries ?? 1, job.createdAt, job.lastRunAt ?? null, job.nextRunAt ?? null]
+     job.timezone ?? "Asia/Shanghai", job.maxRetries ?? 1, job.createdAt, job.lastRunAt ?? null, job.nextRunAt ?? null,
+     job.scheduleType ?? "cron", job.runAt ?? null, job.intervalMs ?? null, job.timeoutSeconds ?? null]
   );
   scheduleSave();
 }
@@ -1975,6 +2288,16 @@ export function loadCronHistory(jobId: string, limit = 20): Array<Record<string,
     results[0].columns.forEach((col: string, i: number) => { row[col] = vals[i]; });
     return row;
   });
+}
+
+/** [v3 Task 2-2] 清理超过 retentionDays 天的 cron 执行历史 */
+export function cleanupOldCronHistory(retentionDays = 30): number {
+  const db = getDatabase();
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+  db.run("DELETE FROM cron_history WHERE startedAt < ?", [cutoff]);
+  // sql.js 没有 changes()，返回 -1 表示已执行但无法知道具体数量
+  scheduleSave();
+  return -1;
 }
 
 // ─── MCP Servers Persistence ────────────────────────────────
@@ -2108,6 +2431,94 @@ export function loadCollabHistory(limit = 100): Array<Record<string, unknown>> {
 export function deleteCollabHistory(id: string): void {
   const db = getDatabase();
   db.run("DELETE FROM collab_history WHERE id = ?", [id]);
+  scheduleSave();
+}
+
+/** M-2: 按 id 查询单条协作历史记录（用于 getResultById 的 DB fallback） */
+export function loadCollabHistoryById(id: string): Record<string, unknown> | undefined {
+  const db = getDatabase();
+  const results = db.exec("SELECT * FROM collab_history WHERE id = ? LIMIT 1", [id]);
+  if (!results.length || !results[0].values.length) return undefined;
+  const row: Record<string, unknown> = {};
+  results[0].columns.forEach((col: string, i: number) => { row[col] = results[0].values[0][i]; });
+  return row;
+}
+
+// ─── I-2: Subagent Runs Persistence ────────────────────────────
+
+/**
+ * I-2: 保存子代理运行记录到 DB（P1: fire-and-forget 调用，不阻塞 spawn）。
+ */
+export function saveSubagentRun(entry: {
+  id: string;
+  sessionId: string;
+  parentSessionId: string;
+  task: string;
+  label?: string;
+  depth: number;
+  status: string;
+  createdAt: string;
+}): void {
+  const db = getDatabase();
+  db.run(
+    `INSERT OR REPLACE INTO subagent_runs (id, session_id, parent_session_id, task, label, depth, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [entry.id, entry.sessionId, entry.parentSessionId, entry.task, entry.label ?? null, entry.depth, entry.status, entry.createdAt]
+  );
+  scheduleSave();
+}
+
+/**
+ * I-2: 更新子代理运行状态。
+ */
+export function updateSubagentRunStatus(id: string, status: string, completedAt?: string, result?: string, error?: string): void {
+  const db = getDatabase();
+  db.run(
+    `UPDATE subagent_runs SET status = ?, completed_at = ?, result = ?, error = ? WHERE id = ?`,
+    [status, completedAt ?? null, result?.slice(0, 2000) ?? null, error?.slice(0, 1000) ?? null, id]
+  );
+  scheduleSave();
+}
+
+/**
+ * I-2/R4: 将某个 parent session 下所有 running 状态的子代理标记为 cancelled。
+ * 用于 E-3 abort 时同步更新 DB 状态，防止 reconcileOrphans 误判。
+ */
+export function markSubagentRunsCancelled(parentSessionId: string): number {
+  const db = getDatabase();
+  const now = new Date().toISOString();
+  const result = db.run(
+    `UPDATE subagent_runs SET status = 'killed', completed_at = ? WHERE parent_session_id = ? AND status = 'running'`,
+    [now, parentSessionId]
+  );
+  scheduleSave();
+  return result.changes ?? 0;
+}
+
+/**
+ * I-2: 查询孤儿子代理（运行超过指定时间仍为 running 的记录）。
+ */
+export function findOrphanSubagentRuns(thresholdMs = 30 * 60 * 1000): Array<Record<string, unknown>> {
+  const db = getDatabase();
+  const cutoff = new Date(Date.now() - thresholdMs).toISOString();
+  const results = db.exec(
+    `SELECT * FROM subagent_runs WHERE status = 'running' AND created_at < ?`,
+    [cutoff]
+  );
+  if (!results.length) return [];
+  return results[0].values.map((vals: unknown[]) => {
+    const row: Record<string, unknown> = {};
+    results[0].columns.forEach((col: string, i: number) => { row[col] = vals[i]; });
+    return row;
+  });
+}
+
+/**
+ * I-2/M3: 将 DB 中子代理记录标记为 archived（配合 G-4 惰性清理同步）。
+ */
+export function archiveSubagentRun(id: string): void {
+  const db = getDatabase();
+  db.run(`UPDATE subagent_runs SET status = 'archived' WHERE id = ?`, [id]);
   scheduleSave();
 }
 

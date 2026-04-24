@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Super Agent Monitor</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#c9d1d9;--text-dim:#8b949e;--accent:#58a6ff;--success:#3fb950;--warning:#d29922;--error:#f85149;--trace:#58a6ff}
+body{font-family:'Cascadia Code','Consolas','SF Mono',monospace;background:var(--bg);color:var(--text);font-size:13px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* 顶栏 - 系统状态 */
+#header{background:var(--surface);border-bottom:1px solid var(--border);padding:8px 16px;display:flex;align-items:center;gap:16px;flex-shrink:0}
+#header h1{font-size:14px;color:var(--accent);white-space:nowrap}
+.stat-badge{padding:2px 8px;border-radius:10px;font-size:11px;border:1px solid var(--border)}
+.stat-badge.ok{border-color:var(--success);color:var(--success)}
+.stat-badge.warn{border-color:var(--warning);color:var(--warning)}
+.stat-badge.err{border-color:var(--error);color:var(--error)}
+#connection-status{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--success);animation:pulse 2s infinite}
+.dot.disconnected{background:var(--error);animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* 主体布局 - 左右分栏 */
+#main{flex:1;display:flex;overflow:hidden}
+
+/* 左栏 - 日志流 */
+#log-panel{flex:1;display:flex;flex-direction:column;border-right:1px solid var(--border);min-width:400px}
+#log-toolbar{background:var(--surface);padding:6px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
+.filter-btn{padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;font-size:11px;font-family:inherit;transition:all .15s}
+.filter-btn.active{border-color:var(--accent);color:var(--accent);background:rgba(88,166,255,0.1)}
+.filter-btn:hover{border-color:var(--accent)}
+#log-search{flex:1;min-width:80px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit;font-size:11px;outline:none}
+#log-search:focus{border-color:var(--accent)}
+#log-container{flex:1;overflow-y:auto;padding:4px 8px}
+.log-line{padding:2px 6px;border-radius:3px;margin:1px 0;display:flex;gap:6px;line-height:1.5;border-left:3px solid transparent;font-size:12px}
+.log-line:hover{background:var(--surface)}
+.log-line.ERROR,.log-line.FATAL{border-left-color:var(--error);background:rgba(218,54,51,0.06)}
+.log-line.WARN{border-left-color:var(--warning)}
+.log-line.INFO{border-left-color:var(--success)}
+.log-line.TRACE{border-left-color:var(--trace);background:rgba(88,166,255,0.06)}
+.log-line.DEBUG{border-left-color:var(--text-dim)}
+.log-time{color:var(--text-dim);min-width:65px;flex-shrink:0}
+.log-level{min-width:44px;font-weight:600;flex-shrink:0}
+.log-level.ERROR,.log-level.FATAL{color:var(--error)}
+.log-level.WARN{color:var(--warning)}
+.log-level.INFO{color:var(--success)}
+.log-level.TRACE{color:var(--trace)}
+.log-level.DEBUG{color:var(--text-dim)}
+.log-name{color:#bc8cff;min-width:80px;max-width:120px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
+.log-msg{color:var(--text);flex:1;word-break:break-all}
+.log-line.hidden{display:none}
+
+/* 右栏 - Trace 瀑布图 */
+#trace-panel{width:480px;display:flex;flex-direction:column;min-width:300px}
+#trace-header{background:var(--surface);padding:6px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+#trace-header h2{font-size:12px;color:var(--accent)}
+#trace-count{font-size:11px;color:var(--text-dim)}
+#trace-container{flex:1;overflow-y:auto;padding:4px 8px}
+.trace-item{border:1px solid var(--border);border-radius:6px;margin:4px 0;padding:8px;cursor:pointer;transition:all .15s}
+.trace-item:hover{border-color:var(--accent);background:var(--surface)}
+.trace-item.error{border-left:3px solid var(--error)}
+.trace-item.ok{border-left:3px solid var(--success)}
+.trace-item.slow{border-left:3px solid var(--warning)}
+.trace-meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.trace-op{font-size:12px;font-weight:600;color:var(--text)}
+.trace-duration{font-size:11px;padding:1px 6px;border-radius:8px;background:var(--surface);border:1px solid var(--border)}
+.trace-duration.fast{color:var(--success)}
+.trace-duration.medium{color:var(--warning)}
+.trace-duration.slow{color:var(--error)}
+.trace-bar-container{height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-top:4px}
+.trace-bar{height:100%;border-radius:3px;transition:width .3s}
+.trace-bar.ok{background:var(--success)}
+.trace-bar.error{background:var(--error)}
+.trace-bar.slow{background:var(--warning)}
+.trace-spans{margin-top:6px;padding-left:12px;border-left:2px solid var(--border);display:none}
+.trace-item.expanded .trace-spans{display:block}
+.span-line{padding:2px 0;font-size:11px;display:flex;gap:6px;align-items:center}
+.span-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.span-dot.ok{background:var(--success)}
+.span-dot.error{background:var(--error)}
+.span-op{color:var(--text-dim)}
+.span-dur{color:var(--accent);margin-left:auto}
+
+/* 底栏 */
+#footer{background:var(--surface);border-top:1px solid var(--border);padding:4px 16px;font-size:11px;color:var(--text-dim);display:flex;justify-content:space-between;flex-shrink:0}
+
+/* 分割条 */
+#resizer{width:4px;cursor:col-resize;background:var(--border);transition:background .15s}
+#resizer:hover{background:var(--accent)}
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>Super Agent Monitor</h1>
+  <span class="stat-badge ok" id="stat-agents">Agents: -</span>
+  <span class="stat-badge ok" id="stat-traces">Traces: 0</span>
+  <span class="stat-badge ok" id="stat-errors">Errors: 0</span>
+  <div id="connection-status"><span class="dot" id="conn-dot"></span><span id="conn-text">Connecting...</span></div>
+</div>
+
+<div id="main">
+  <!-- 左栏: 日志 -->
+  <div id="log-panel">
+    <div id="log-toolbar">
+      <button class="filter-btn active" data-level="all">ALL</button>
+      <button class="filter-btn active" data-level="ERROR">ERR</button>
+      <button class="filter-btn active" data-level="WARN">WARN</button>
+      <button class="filter-btn active" data-level="INFO">INFO</button>
+      <button class="filter-btn active" data-level="TRACE">TRACE</button>
+      <button class="filter-btn" data-level="DEBUG">DBG</button>
+      <input id="log-search" type="text" placeholder="Filter logs...">
+    </div>
+    <div id="log-container"></div>
+  </div>
+
+  <!-- 分割条 -->
+  <div id="resizer"></div>
+
+  <!-- 右栏: Traces -->
+  <div id="trace-panel">
+    <div id="trace-header">
+      <h2>Traces</h2>
+      <span id="trace-count">0 traces</span>
+    </div>
+    <div id="trace-container"></div>
+  </div>
+</div>
+
+<div id="footer">
+  <span id="log-count">0 logs</span>
+  <span id="last-update">-</span>
+</div>
+
+<script>
+// ─── 配置 ───────────────────────────────────────
+const config = window.monitorAPI ? window.monitorAPI.getConfig() : { monitorPort: 3002, apiPort: 3001 };
+const MONITOR_URL = `http://localhost:${config.monitorPort}`;
+const API_URL = `http://localhost:${config.apiPort}`;
+
+// ─── 状态 ───────────────────────────────────────
+let logCount = 0, traceCount = 0, errorCount = 0;
+let autoScroll = true;
+let activeFilters = new Set(['ERROR','WARN','INFO','TRACE','FATAL','LOG','all']);
+const traces = new Map(); // traceId → {spans, el}
+
+// ─── DOM 引用 ───────────────────────────────────
+const logContainer = document.getElementById('log-container');
+const traceContainer = document.getElementById('trace-container');
+const logCountEl = document.getElementById('log-count');
+const traceCountEl = document.getElementById('trace-count');
+const lastUpdateEl = document.getElementById('last-update');
+const connDot = document.getElementById('conn-dot');
+const connText = document.getElementById('conn-text');
+const searchEl = document.getElementById('log-search');
+
+// ─── SSE 连接: 日志流 ────────────────────────────
+let evtSource = null;
+function connectSSE() {
+  evtSource = new EventSource(`${MONITOR_URL}/events`);
+  evtSource.onopen = () => {
+    connDot.className = 'dot';
+    connText.textContent = 'Connected';
+  };
+  evtSource.onmessage = (e) => {
+    try {
+      const entry = JSON.parse(e.data);
+      addLogLine(entry);
+      if (entry.isSpan && entry.parsed?.extra) {
+        addTraceSpan(entry.parsed.extra);
+      }
+    } catch {}
+  };
+  evtSource.onerror = () => {
+    connDot.className = 'dot disconnected';
+    connText.textContent = 'Disconnected - retrying...';
+  };
+}
+connectSSE();
+
+// ─── Trace SSE: 从 API 直接获取 ──────────────────
+let traceSource = null;
+function connectTraceSse() {
+  traceSource = new EventSource(`${API_URL}/api/traces/live`);
+  traceSource.onmessage = (e) => {
+    try {
+      const span = JSON.parse(e.data);
+      if (span.type === 'span') addTraceSpan(span);
+    } catch {}
+  };
+}
+connectTraceSse();
+
+// ─── 日志渲染 ────────────────────────────────────
+function addLogLine(entry) {
+  const p = entry.parsed || {};
+  const level = p.level || 'LOG';
+  const div = document.createElement('div');
+  div.className = 'log-line ' + level;
+  div.dataset.level = level;
+  div.dataset.text = ((p.msg || '') + ' ' + (p.name || '')).toLowerCase();
+
+  div.innerHTML = `<span class="log-time">${esc(p.time || '')}</span><span class="log-level ${level}">${level}</span><span class="log-name">${esc(p.name || '')}</span><span class="log-msg">${esc(p.msg || entry.raw || '')}</span>`;
+
+  if (!shouldShow(div)) div.classList.add('hidden');
+  logContainer.appendChild(div);
+  logCount++;
+  if (level === 'ERROR' || level === 'FATAL') {
+    errorCount++;
+    document.getElementById('stat-errors').textContent = `Errors: ${errorCount}`;
+    document.getElementById('stat-errors').className = 'stat-badge err';
+  }
+  logCountEl.textContent = `${logCount} logs`;
+  lastUpdateEl.textContent = new Date().toLocaleTimeString();
+  if (autoScroll) logContainer.scrollTop = logContainer.scrollHeight;
+
+  // 限制 DOM 节点数量
+  while (logContainer.children.length > 2000) logContainer.removeChild(logContainer.firstChild);
+}
+
+// ─── Trace 渲染 ──────────────────────────────────
+function addTraceSpan(span) {
+  const tid = span.traceId;
+  if (!tid) return;
+
+  if (!traces.has(tid)) {
+    traces.set(tid, { spans: [], el: null });
+    traceCount++;
+    traceCountEl.textContent = `${traceCount} traces`;
+    document.getElementById('stat-traces').textContent = `Traces: ${traceCount}`;
+  }
+
+  const t = traces.get(tid);
+  t.spans.push(span);
+  renderTrace(tid, t);
+}
+
+function renderTrace(traceId, t) {
+  const spans = t.spans;
+  const rootSpan = spans[0];
+  const lastSpan = spans[spans.length - 1];
+  const duration = lastSpan?.endTime ? lastSpan.endTime - rootSpan.startTime : 0;
+  const hasError = spans.some(s => s.status === 'error');
+  const isSlow = duration > 2000;
+
+  let el = t.el;
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'trace-item ' + (hasError ? 'error' : isSlow ? 'slow' : 'ok');
+    el.onclick = () => el.classList.toggle('expanded');
+    traceContainer.prepend(el);
+    t.el = el;
+  } else {
+    el.className = 'trace-item ' + (hasError ? 'error' : isSlow ? 'slow' : 'ok');
+    if (el.classList.contains('expanded')) el.classList.add('expanded');
+  }
+
+  const durClass = duration > 2000 ? 'slow' : duration > 500 ? 'medium' : 'fast';
+  const barWidth = Math.min(100, Math.max(5, duration / 50));
+
+  el.innerHTML = `
+    <div class="trace-meta">
+      <span class="trace-op">${esc(rootSpan?.operation || 'unknown')} <small style="color:var(--text-dim)">${traceId.slice(0,8)}</small></span>
+      <span class="trace-duration ${durClass}">${duration}ms</span>
+    </div>
+    <div class="trace-bar-container"><div class="trace-bar ${hasError?'error':isSlow?'slow':'ok'}" style="width:${barWidth}%"></div></div>
+    <div class="trace-spans">${spans.map(s => `
+      <div class="span-line">
+        <span class="span-dot ${s.status}"></span>
+        <span class="span-op">${esc(s.operation)}</span>
+        <span class="span-dur">${s.duration||0}ms</span>
+      </div>
+    `).join('')}</div>
+  `;
+
+  // 限制 trace DOM
+  while (traceContainer.children.length > 200) traceContainer.removeChild(traceContainer.lastChild);
+}
+
+// ─── 过滤逻辑 ────────────────────────────────────
+function shouldShow(div) {
+  const level = div.dataset.level;
+  if (!activeFilters.has(level) && !activeFilters.has('all')) return false;
+  const q = searchEl.value.toLowerCase();
+  if (q && !div.dataset.text.includes(q)) return false;
+  return true;
+}
+
+function refilter() {
+  for (const div of logContainer.children) {
+    div.classList.toggle('hidden', !shouldShow(div));
+  }
+}
+
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const level = btn.dataset.level;
+    if (level === 'all') {
+      const allActive = btn.classList.contains('active');
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', !allActive));
+      if (!allActive) activeFilters = new Set(['ERROR','WARN','INFO','DEBUG','TRACE','FATAL','LOG','all']);
+      else activeFilters.clear();
+    } else {
+      btn.classList.toggle('active');
+      if (btn.classList.contains('active')) activeFilters.add(level);
+      else { activeFilters.delete(level); activeFilters.delete('all'); }
+    }
+    refilter();
+  });
+});
+searchEl.addEventListener('input', refilter);
+
+// ─── 分割条拖拽 ──────────────────────────────────
+const resizer = document.getElementById('resizer');
+const tracePanel = document.getElementById('trace-panel');
+let isResizing = false;
+resizer.addEventListener('mousedown', (e) => { isResizing = true; e.preventDefault(); });
+document.addEventListener('mousemove', (e) => {
+  if (!isResizing) return;
+  const newWidth = document.body.clientWidth - e.clientX;
+  tracePanel.style.width = Math.max(200, Math.min(800, newWidth)) + 'px';
+});
+document.addEventListener('mouseup', () => { isResizing = false; });
+
+// ─── 自动滚动控制 ────────────────────────────────
+logContainer.addEventListener('mouseenter', () => autoScroll = false);
+logContainer.addEventListener('mouseleave', () => { autoScroll = true; logContainer.scrollTop = logContainer.scrollHeight; });
+
+// ─── 工具函数 ────────────────────────────────────
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>

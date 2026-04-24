@@ -13,6 +13,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fastifyJwt from "@fastify/jwt";
 import pino from "pino";
 import type { AppContext } from "../context.js";
+import { safeEqualSecret } from "./secret-equal.js";
 
 const logger = pino({ name: "auth" });
 
@@ -152,9 +153,45 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
       "Generate one with: node -e \"console.log(require('crypto').randomBytes(64).toString('hex'))\""
     );
   }
+
+  // 已知的弱密码/占位符集合（参考 OpenClaw startup-auth.ts）
+  const KNOWN_WEAK_SECRETS = new Set([
+    "super-agent-dev-secret-change-me",
+    "change-me",
+    "changeme",
+    "dev-token",
+    "test-token",
+    "your-api-key-here",
+    "sk-xxx",
+  ]);
+
+  // 启动时检测 JWT_SECRET 是否为已知弱密码
+  if (jwtSecret && KNOWN_WEAK_SECRETS.has(jwtSecret)) {
+    throw new Error(
+      "[SECURITY] JWT_SECRET 使用了已知的弱密码/占位符。" +
+      "请生成强密钥: node -e \"console.log(require('crypto').randomBytes(64).toString('hex'))\""
+    );
+  }
+
+  // 检测 ADMIN_PASSWORD 是否为已知弱密码
+  if (process.env.ADMIN_PASSWORD && KNOWN_WEAK_SECRETS.has(process.env.ADMIN_PASSWORD)) {
+    throw new Error(
+      "[SECURITY] ADMIN_PASSWORD 使用了已知的弱密码/占位符，请设置强密码。"
+    );
+  }
+
   const secret = jwtSecret ?? "super-agent-dev-secret-change-me";
   if (!jwtSecret) {
     app.log.warn("Using default JWT secret — NOT safe for production. Set JWT_SECRET env var.");
+  }
+
+  // 安全提示：未配置 WebSocket 网关认证密钥
+  if (!process.env.API_KEY && !process.env.AUTH_SECRET) {
+    app.log.warn(
+      "[AUTH] API_KEY / AUTH_SECRET 未配置，WebSocket 网关端点无鉴权保护。\n" +
+      "  生产环境请配置 API_KEY 并同步到 IM 网关的 SUPER_AGENT_API_KEY。\n" +
+      "  生成方法: node -e \"console.log(require('crypto').randomBytes(24).toString('hex'))\""
+    );
   }
 
   await app.register(fastifyJwt, {
@@ -248,7 +285,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(503).send({ error: "Password login not configured. Set ADMIN_USERNAME and ADMIN_PASSWORD environment variables." });
     }
 
-    if (username !== adminUser || password !== adminPass) {
+    if (username !== adminUser || !safeEqualSecret(password, adminPass)) {
       return reply.status(401).send({ error: "Invalid credentials" });
     }
 

@@ -18,7 +18,6 @@ dependencies = [
 wecom = ["aiohttp>=3.9.0"]
 feishu = ["lark-oapi>=1.0.0"]
 dingtalk = ["dingtalk-stream>=1.0.0"]
-weixin = ["pycryptodome>=3.18.0", "aiohttp>=3.9.0"]
 telegram = ["python-telegram-bot[webhooks]>=22.6"]
 discord = ["discord.py>=2.0"]
 slack = ["slack-sdk>=3.0"]
@@ -26,7 +25,6 @@ all = [
     "aiohttp>=3.9.0",
     "lark-oapi>=1.0.0",
     "dingtalk-stream>=1.0.0",
-    "pycryptodome>=3.18.0",
     "python-telegram-bot[webhooks]>=22.6",
     "discord.py>=2.0",
     "slack-sdk>=3.0",

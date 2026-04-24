@@ -1,0 +1,97 @@
+# T4.6 — 评估基准 CI 集成
+# 每周日凌晨 2:00 UTC 自动跑 BFCL 50 题基准测试
+# 也可手动触发 (workflow_dispatch)
+
+name: Benchmark Evaluation
+
+on:
+  schedule:
+    # 每周日凌晨 2:00 UTC（北京时间 10:00）
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: "数据集名称 (bfcl / gaia / toolbench)"
+        required: true
+        default: "bfcl"
+        type: choice
+        options:
+          - bfcl
+          - gaia
+          - toolbench
+      max_tasks:
+        description: "最大任务数"
+        required: false
+        default: "50"
+      difficulty:
+        description: "难度等级 (仅 GAIA，1/2/3，留空=全部)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  benchmark:
+    name: Run Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @super-agent/research build
+
+      # ── 定时任务：默认跑 BFCL 50 题 ──
+      - name: Run Benchmark (Scheduled - BFCL)
+        if: github.event_name == 'schedule'
+        run: |
+          npx tsx packages/research/src/cli/benchmark.ts \
+            --dataset bfcl \
+            --max-tasks 50 \
+            --judges exact_match,tool_call \
+            --output packages/research/data/history/bfcl-$(date +%Y%m%d).json
+
+      # ── 手动触发 ──
+      - name: Run Benchmark (Manual)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          ARGS="--dataset ${{ inputs.dataset }} --max-tasks ${{ inputs.max_tasks }} --judges exact_match,tool_call"
+          if [ -n "${{ inputs.difficulty }}" ]; then
+            ARGS="$ARGS --difficulty ${{ inputs.difficulty }}"
+          fi
+          npx tsx packages/research/src/cli/benchmark.ts \
+            $ARGS \
+            --output packages/research/data/history/${{ inputs.dataset }}-$(date +%Y%m%d).json
+
+      # ── 上传报告 ──
+      - name: Upload Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report-${{ github.run_number }}
+          path: packages/research/data/history/*.json
+          retention-days: 90
+
+      # ── 提交历史数据到仓库 ──
+      - name: Commit History Data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/research/data/history/ || true
+          git diff --cached --quiet || git commit -m "[chore] benchmark report $(date +%Y-%m-%d)"
+          git push || echo "No changes to push"

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/utils";
-import { Puzzle, Plus, Trash2, FileText, Code, Search, Download, Store, Loader2, ExternalLink } from "lucide-react";
+import { Puzzle, Plus, Trash2, FileText, Code, Search, Download, Store, Loader2, ExternalLink, ChevronDown, ChevronUp, X } from "lucide-react";
 
 interface Skill {
   id: string;
@@ -34,6 +34,18 @@ export default function SkillsPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Skill | null>(null);
   const [tab, setTab] = useState<"local" | "marketplace">("local");
+  const [localQuery, setLocalQuery] = useState("");
+
+  // 搜索过滤本地技能
+  const filteredSkills = useMemo(() => {
+    const q = localQuery.trim().toLowerCase();
+    if (!q) return skills;
+    return skills.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      s.description.toLowerCase().includes(q) ||
+      (s.triggers ?? []).some(t => t.toLowerCase().includes(q))
+    );
+  }, [skills, localQuery]);
 
   // Marketplace state
   const [marketQuery, setMarketQuery] = useState("");
@@ -132,7 +144,7 @@ export default function SkillsPage() {
       </div>
 
       {tab === "local" ? (
-        /* Local Skills */
+        /* 本地已安装技能 — 全宽卡片网格 + 搜索 + 展开详情 */
         <>
           {loading ? (
             <div className="py-12 text-center text-zinc-500">加载中...</div>
@@ -143,67 +155,106 @@ export default function SkillsPage() {
               <p className="mt-2 text-sm text-zinc-600">兼容 OpenClaw / Hermes / Super Agent 格式</p>
             </div>
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-3">
-                {skills.map((skill) => (
-                  <div
-                    key={skill.id}
-                    onClick={() => setSelected(skill)}
-                    className={`cursor-pointer rounded-xl border p-4 transition-colors ${
-                      selected?.id === skill.id
-                        ? "border-blue-600 bg-blue-600/5"
-                        : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Puzzle className="h-5 w-5 text-purple-400" />
-                        <div>
-                          <h3 className="font-medium text-white">{skill.name}</h3>
-                          <p className="text-xs text-zinc-500">{skill.description}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-zinc-600">v{skill.version}</span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleSkill(skill); }}
-                          className={`rounded-full px-2 py-0.5 text-xs ${
-                            skill.enabled ? "bg-green-600/10 text-green-400" : "bg-zinc-800 text-zinc-500"
-                          }`}
-                        >
-                          {skill.enabled ? "已启用" : "已停用"}
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleUninstall(skill.id); }}
-                          className="rounded p-1 text-zinc-500 hover:text-red-400"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                    {skill.triggers && skill.triggers.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {skill.triggers.map((t) => (
-                          <span key={t} className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">{t}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
+            <>
+              {/* 搜索过滤 */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+                <input
+                  value={localQuery}
+                  onChange={(e) => setLocalQuery(e.target.value)}
+                  placeholder={`搜索已安装技能（共 ${skills.length} 个）...`}
+                  className="w-full rounded-xl border border-zinc-800 bg-zinc-900 py-2.5 pl-10 pr-4 text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+                />
               </div>
 
-              {selected && (
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <FileText className="h-5 w-5 text-zinc-400" />
-                    <h3 className="font-semibold text-white">{selected.name}</h3>
-                  </div>
-                  <pre className="max-h-[60vh] overflow-auto rounded-lg bg-zinc-950 p-4 text-sm text-zinc-300">
-                    {selected.content || "暂无内容"}
-                  </pre>
-                </div>
+              {/* 全宽响应式卡片网格 */}
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {filteredSkills.map((skill) => {
+                  const isExpanded = selected?.id === skill.id;
+                  return (
+                    <div
+                      key={skill.id}
+                      className={`rounded-xl border transition-colors ${
+                        isExpanded
+                          ? "border-blue-600 bg-blue-600/5"
+                          : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700"
+                      }`}
+                    >
+                      {/* 卡片头 */}
+                      <div
+                        className="cursor-pointer p-4"
+                        onClick={() => setSelected(isExpanded ? null : skill)}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-3 min-w-0 flex-1">
+                            <Puzzle className="h-5 w-5 shrink-0 mt-0.5 text-purple-400" />
+                            <div className="min-w-0">
+                              <h3 className="font-medium text-white truncate">{skill.name}</h3>
+                              <p className="mt-1 text-xs text-zinc-500 line-clamp-2">{skill.description}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleSkill(skill); }}
+                              className={`rounded-full px-2 py-0.5 text-xs whitespace-nowrap ${
+                                skill.enabled ? "bg-green-600/10 text-green-400" : "bg-zinc-800 text-zinc-500"
+                              }`}
+                            >
+                              {skill.enabled ? "已启用" : "已停用"}
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleUninstall(skill.id); }}
+                              className="rounded p-1 text-zinc-500 hover:text-red-400"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        {/* 版本 + 触发词 */}
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-zinc-600">v{skill.version}</span>
+                          {skill.triggers && skill.triggers.slice(0, 3).map((t) => (
+                            <span key={t} className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">{t}</span>
+                          ))}
+                          {skill.triggers && skill.triggers.length > 3 && (
+                            <span className="text-xs text-zinc-600">+{skill.triggers.length - 3}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 展开的详情区 */}
+                      {isExpanded && (
+                        <div className="border-t border-zinc-800 p-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <FileText className="h-4 w-4 text-zinc-400" />
+                              <span className="text-xs font-medium text-zinc-400">技能内容</span>
+                            </div>
+                            <button onClick={() => setSelected(null)} className="text-zinc-500 hover:text-white">
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                          {skill.triggers && skill.triggers.length > 0 && (
+                            <div className="mb-3 flex flex-wrap gap-1">
+                              {skill.triggers.map((t) => (
+                                <span key={t} className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">{t}</span>
+                              ))}
+                            </div>
+                          )}
+                          <pre className="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-3 text-xs text-zinc-300">
+                            {skill.content || "暂无内容"}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {filteredSkills.length === 0 && (
+                <div className="py-8 text-center text-zinc-500">没有匹配的技能</div>
               )}
-            </div>
+            </>
           )}
         </>
       ) : (

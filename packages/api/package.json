@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "node log-monitor.js --dev",
+    "dev:raw": "tsx watch src/index.ts",
     "build": "tsup src/index.ts --format esm",
     "start": "node dist/index.js",
     "test": "vitest run",

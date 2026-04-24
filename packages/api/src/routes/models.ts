@@ -76,6 +76,13 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
         keyChanged: body.apiKey !== undefined,
       });
 
+      // 千问 provider 的 API Key 同时用于 QwenEmbedding 向量检索
+      // 保存后热更新 MemoryManager 中的 embedder，无需重启即生效
+      if (id === "qwen" && body.apiKey) {
+        ctx.memoryManager.updateEmbedderApiKey(body.apiKey);
+        app.log.info("QwenEmbedding API Key hot-reloaded from settings page");
+      }
+
       // If this provider now has a valid config, update the default agent's LLM settings
       if (record.apiKey && record.selectedModel) {
         const agents = ctx.agentManager.listAgents();

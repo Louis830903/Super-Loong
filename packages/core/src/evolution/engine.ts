@@ -88,6 +88,7 @@ export interface NudgeConfig {
 /** Snapshot of the evolution state at a point in time */
 export interface EvolutionSnapshot {
   id: string;
+  label?: string;
   stageIndex: number;
   avgScore: number;
   totalCases: number;
@@ -107,6 +108,39 @@ export interface EvolutionStats {
   totalSnapshots: number;
   bestScore: number;
   nudges: { memory: number; skill: number };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// T2.4 Reflection ↔ Evolution 联动
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 在线反思的 5 种分类 → InteractionCase.failureCategory 的 5 种枚举映射。
+ *
+ * 映射原则（按 Spec v1.3 L388-394）：
+ *   - param_error    → wrong_tool   （参数用错也归入工具调用问题，借用现有枚举）
+ *   - wrong_tool     → wrong_tool
+ *   - external_error → timeout       （外部依赖故障与超时同类）
+ *   - logic_error    → skill_gap     （调用顺序/前置步骤缺失 → 技能缺口）
+ *   - ambiguous      → bad_response  （意图不清，需回复用户）
+ */
+export function mapReflectionCategoryToFailureCategory(
+  category: "param_error" | "wrong_tool" | "external_error" | "logic_error" | "ambiguous",
+): NonNullable<InteractionCase["failureCategory"]> {
+  switch (category) {
+    case "param_error":
+      return "wrong_tool";
+    case "wrong_tool":
+      return "wrong_tool";
+    case "external_error":
+      return "timeout";
+    case "logic_error":
+      return "skill_gap";
+    case "ambiguous":
+      return "bad_response";
+    default:
+      return "other";
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -426,6 +460,8 @@ export class EvolutionEngine extends EventEmitter {
     score?: number;
     failureReason?: string;
     failureCategory?: InteractionCase["failureCategory"];
+    /** T2.4：来源/反思详情等额外信息（metadata.source="reflection" 用于去重） */
+    metadata?: Record<string, unknown>;
   }): InteractionCase {
     const interactionCase: InteractionCase = {
       id: `case_${uuid().slice(0, 8)}`,
@@ -439,6 +475,7 @@ export class EvolutionEngine extends EventEmitter {
       failureReason: data.failureReason,
       failureCategory: data.failureCategory,
       timestamp: new Date(),
+      ...(data.metadata ? { metadata: data.metadata } : {}),
     };
 
     this.cases.addCase(interactionCase);
@@ -482,7 +519,11 @@ export class EvolutionEngine extends EventEmitter {
 
   /** Trigger evolution analysis using an LLM agent */
   async analyzeFailures(analyzerAgentId?: string): Promise<SkillProposal[]> {
-    const failures = this.cases.getFailureCases();
+    // T2.4 v1.3 防双触发：过滤掉已被在线 reflection 处理过的 case，
+    //            避免「在线反思 + 离线 Nudge」对同一失败重复生成技能提案。
+    const failures = this.cases.getFailureCases().filter(
+      (c) => (c.metadata as Record<string, unknown> | undefined)?.source !== "reflection",
+    );
     if (failures.length === 0) {
       logger.info("No failure cases to analyze");
       return [];
@@ -930,10 +971,11 @@ ${options.currentMemoryState}
   // ─── Snapshots ─────────────────────────────────────────────
 
   /** Take a snapshot of current evolution state */
-  takeSnapshot(): EvolutionSnapshot {
+  takeSnapshot(label?: string): EvolutionSnapshot {
     const caseStats = this.cases.getStats();
     const snapshot: EvolutionSnapshot = {
       id: `snap_${uuid().slice(0, 8)}`,
+      label: label || `Snapshot #${this.snapshots.length + 1}`,
       stageIndex: this.snapshots.length,
       avgScore: caseStats.successRate,
       totalCases: caseStats.total,
@@ -963,6 +1005,22 @@ ${options.currentMemoryState}
   /** Get the best snapshot */
   getBestSnapshot(): EvolutionSnapshot | null {
     return this.bestSnapshotIdx >= 0 ? this.snapshots[this.bestSnapshotIdx] : null;
+  }
+
+  /** Delete a snapshot by id */
+  deleteSnapshot(snapshotId: string): boolean {
+    const idx = this.snapshots.findIndex(s => s.id === snapshotId);
+    if (idx < 0) return false;
+    this.snapshots.splice(idx, 1);
+    // 重新计算 bestSnapshotIdx
+    if (this.snapshots.length === 0) {
+      this.bestSnapshotIdx = -1;
+    } else {
+      this.bestSnapshotIdx = this.snapshots.reduce((best, s, i) =>
+        s.avgScore > this.snapshots[best].avgScore ? i : best, 0);
+    }
+    this.emit("snapshot:deleted", { id: snapshotId });
+    return true;
   }
 
   // ─── Stats ─────────────────────────────────────────────────

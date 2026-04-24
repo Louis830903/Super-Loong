@@ -45,15 +45,34 @@ const RecordInteractionSchema = z.object({
 });
 
 const ReviewSchema = z.object({
-  agentId: z.string().min(1),
+  agentId: z.string().min(1).optional(), // 可选：未传时自动取第一个 Agent
   reviewMemory: z.boolean().optional(),
   reviewSkills: z.boolean().optional(),
   conversationContext: z.string().optional(),
 });
 
+// Task 3.4: 会话搜索 Schema
+const SearchSchema = z.object({
+  query: z.string().min(1),
+  sessionFilter: z.array(z.string()).optional(),
+  roleFilter: z.array(z.enum(["user", "assistant"])).optional(),
+  limit: z.number().int().positive().optional(),
+});
+
+// Task 3.4: 知识提取 Schema
+const ExtractSchema = z.object({
+  agentId: z.string().min(1).optional(),
+  maxCases: z.number().int().positive().optional(),
+});
+
+// Task 3.4: 验证管道 Schema
+const VerifySchema = z.object({
+  proposalId: z.string().min(1),
+});
+
 // Phase A-2: Flush Schema
 const FlushSchema = z.object({
-  agentId: z.string().min(1),
+  agentId: z.string().min(1).optional(), // 可选：未传时自动取第一个 Agent
   messages: z.array(z.object({
     role: z.string(),
     content: z.string(),
@@ -71,6 +90,13 @@ const NudgeConfigSchema = z.object({
 
 export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   const engine = ctx.evolutionEngine;
+
+  // 辅助：获取默认 agentId（取第一个可用 Agent）
+  const resolveAgentId = (id?: string): string | null => {
+    if (id) return id;
+    const agents = ctx.agentManager.listAgents();
+    return agents.length > 0 ? agents[0].id : null;
+  };
 
   // ─── Interactions ──────────────────────────────────────────
 
@@ -116,33 +142,49 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   app.post("/api/evolution/review", async (req, reply) => {
-    const parsed = ReviewSchema.safeParse(req.body);
+    const parsed = ReviewSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
     }
     const body = parsed.data;
+    const agentId = resolveAgentId(body.agentId);
+    if (!agentId) {
+      return reply.status(400).send({ error: "没有可用的 Agent，请先创建一个" });
+    }
 
-    const result = await engine.triggerReview(body.agentId, {
-      reviewMemory: body.reviewMemory,
-      reviewSkills: body.reviewSkills,
-      conversationContext: body.conversationContext,
-    });
-
-    return reply.send(result);
+    try {
+      const result = await engine.triggerReview(agentId, {
+        reviewMemory: body.reviewMemory,
+        reviewSkills: body.reviewSkills,
+        conversationContext: body.conversationContext,
+      });
+      return reply.send(result);
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message ?? "Review 执行失败" });
+    }
   });
 
   // Phase A-2: 会话 Flush — 上下文丢失前自动保存记忆/技能
   app.post("/api/evolution/flush", async (req, reply) => {
-    const parsed = FlushSchema.safeParse(req.body);
+    const parsed = FlushSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
     }
     const body = parsed.data;
-    const result = await engine.flushBeforeReset(body.agentId, {
-      conversationMessages: body.messages ?? [],
-      currentMemoryState: body.currentMemoryState,
-    });
-    return reply.send(result);
+    const agentId = resolveAgentId(body.agentId);
+    if (!agentId) {
+      return reply.status(400).send({ error: "没有可用的 Agent，请先创建一个" });
+    }
+
+    try {
+      const result = await engine.flushBeforeReset(agentId, {
+        conversationMessages: body.messages ?? [],
+        currentMemoryState: body.currentMemoryState,
+      });
+      return reply.send(result);
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message ?? "Flush 执行失败" });
+    }
   });
 
   // ─── Proposals ─────────────────────────────────────────────
@@ -178,8 +220,9 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
 
   // ─── Snapshots ─────────────────────────────────────────────
 
-  app.post("/api/evolution/snapshots", async (_req, reply) => {
-    const snapshot = engine.takeSnapshot();
+  app.post("/api/evolution/snapshots", async (req, reply) => {
+    const body = (req.body ?? {}) as { label?: string };
+    const snapshot = engine.takeSnapshot(body.label);
     return reply.send(snapshot);
   });
 
@@ -188,6 +231,13 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
       snapshots: engine.getSnapshots(),
       best: engine.getBestSnapshot(),
     });
+  });
+
+  app.delete("/api/evolution/snapshots/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const ok = engine.deleteSnapshot(id);
+    if (!ok) return reply.status(404).send({ error: "Snapshot not found" });
+    return reply.send({ success: true });
   });
 
   // ─── Config & Stats ────────────────────────────────────────
@@ -210,4 +260,99 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   app.log.info("Evolution routes registered");
+
+  // ─── Task 3.4: Evolution 高级模块端点 ────────────────────────
+
+  // POST /api/evolution/search — 会话全文搜索
+  app.post("/api/evolution/search", async (req, reply) => {
+    if (!ctx.sessionSearch) {
+      return reply.status(501).send({ error: "SessionSearchEngine 未初始化" });
+    }
+    const parsed = SearchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+    }
+    const { query, sessionFilter, roleFilter, limit } = parsed.data;
+    try {
+      const results = await ctx.sessionSearch.search(query, { sessionFilter, roleFilter: roleFilter as any, limit });
+      return reply.send({ results, count: results.length });
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message ?? "搜索失败" });
+    }
+  });
+
+  // POST /api/evolution/extract — 知识提取
+  app.post("/api/evolution/extract", async (req, reply) => {
+    if (!ctx.knowledgeExtractor) {
+      return reply.status(501).send({ error: "KnowledgeExtractor 未初始化" });
+    }
+    const parsed = ExtractSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+    }
+    try {
+      // 从 CaseCollector 获取交互案例作为提取源
+      const cases = engine.cases.getAllCases().slice(-(parsed.data.maxCases ?? 100));
+      const result = await ctx.knowledgeExtractor.extractFromCases(cases);
+      return reply.send(result);
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message ?? "知识提取失败" });
+    }
+  });
+
+  // GET /api/evolution/insights — 获取统计洞察报告
+  app.get("/api/evolution/insights", async (req, reply) => {
+    if (!ctx.insightsEngine) {
+      return reply.status(501).send({ error: "InsightsEngine 未初始化" });
+    }
+    try {
+      // 将当前 CaseCollector 中的案例供给 InsightsEngine 生成报告
+      const allCases = engine.cases.getAllCases();
+      ctx.insightsEngine.addCases(allCases);
+      const query = req.query as { fromDate?: string; toDate?: string };
+      const report = ctx.insightsEngine.generateReport({
+        fromDate: query.fromDate ? new Date(query.fromDate) : undefined,
+        toDate: query.toDate ? new Date(query.toDate) : undefined,
+      });
+      return reply.send(report);
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message ?? "Insights 生成失败" });
+    }
+  });
+
+  // POST /api/evolution/verify — 运行验证管道
+  app.post("/api/evolution/verify", async (req, reply) => {
+    if (!ctx.verificationPipeline) {
+      return reply.status(501).send({ error: "VerificationPipeline 未初始化" });
+    }
+    const parsed = VerifySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+    }
+    try {
+      const proposals = engine.getProposals();
+      const proposal = proposals.find((p) => p.id === parsed.data.proposalId);
+      if (!proposal) {
+        return reply.status(404).send({ error: "Proposal not found" });
+      }
+      const result = await ctx.verificationPipeline.verify(proposal);
+      return reply.send(result);
+    } catch (err: any) {
+      return reply.status(500).send({ error: err.message ?? "验证执行失败" });
+    }
+  });
+
+  // GET /api/evolution/verify/results — 获取验证历史
+  app.get("/api/evolution/verify/results", async (_req, reply) => {
+    if (!ctx.verificationPipeline) {
+      return reply.status(501).send({ error: "VerificationPipeline 未初始化" });
+    }
+    return reply.send({
+      history: ctx.verificationPipeline.getHistory(),
+      stats: ctx.verificationPipeline.getStats(),
+      rollbacks: ctx.verificationPipeline.getRollbacks(),
+    });
+  });
+
+  app.log.info("Evolution advanced module routes registered (search, extract, insights, verify)");
 }

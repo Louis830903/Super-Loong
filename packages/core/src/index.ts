@@ -20,6 +20,10 @@ export { resolveHome, resetResolvedHome, paths, ensureDirectories } from "./conf
 export { AgentRuntime, AgentManager } from "./agent/index.js";
 export type { AgentRuntimeOptions } from "./agent/index.js";
 
+// Builtin Expert Agents（211 个内置专家 Agent）
+export { builtinAgentCatalog, DEPT_LABELS, DEPARTMENTS, ensureBuiltinAgents } from "./builtin-agents/index.js";
+export type { BuiltinAgentEntry } from "./builtin-agents/index.js";
+
 // LLM
 export { LLMProvider } from "./llm/index.js";
 export type { LLMToolDef, LLMCompletionParams } from "./llm/index.js";
@@ -118,6 +122,16 @@ export * as hrr from "./memory/hrr.js";
 // H-2: 实体解析
 export { extractEntities, extractEntitiesWithAliases } from "./memory/entity-resolver.js";
 export type { ExtractedEntity, EntityRow } from "./memory/entity-resolver.js";
+// ✨ T6: 知识图谱核心模块
+export { KnowledgeGraph } from "./memory/knowledge-graph.js";
+export type { Triple, TripleInput, Subgraph, ExportFormat } from "./memory/knowledge-graph.js";
+// ✨ T6: 关系抽取器
+export { extractRelations } from "./memory/relation-extractor.js";
+export type { RelationCandidate } from "./memory/relation-extractor.js";
+// ✨ T6: 关系传播规则
+export { TRANSITIVE_PREDICATES, applyTransitiveClosure, applyAllTransitiveClosures } from "./memory/inference-rules.js";
+// ✨ T6: 搜索选项
+export type { MemorySearchOptions } from "./memory/manager.js";
 // J-1: 插件发现
 export { loadMemoryPlugins } from "./memory/plugin-loader.js";
 export type { MemoryPluginConfig } from "./memory/plugin-loader.js";
@@ -138,7 +152,64 @@ export type {
   GroupChatConfig,
   GroupChatResult,
   SpeakerSelectionMethod,
+  OrchestratorDeps,
+  RunningTaskInfo,
 } from "./collaboration/orchestrator.js";
+
+// AgentMatcher (Hierarchical 智能 Agent 分配)
+export { AgentMatcher } from "./collaboration/agent-matcher.js";
+export type {
+  MatchRequest,
+  MatchResult,
+  NewAgentSpec,
+} from "./collaboration/agent-matcher.js";
+
+// Collaboration Workspace（多Agent工作空间管理）
+export {
+  createWorkspace,
+  saveTaskOutput,
+  collectExternalAttachments,
+  generateReadme,
+  getWorkspacePath,
+  getCollabOutputsRoot,
+  cleanExpiredWorkspaces,
+  startWorkspaceCleanupTimer,
+  checkPythonDocLibs,
+} from "./collaboration/workspace.js";
+export type {
+  WorkspaceConfig,
+  WorkspaceInfo,
+  WorkspaceAttachment,
+  WorkspaceTaskOutput,
+  WorkspaceMessage,
+} from "./collaboration/workspace.js";
+
+// Phase 5: A2A 协议跨进程通信
+export {
+  TaskState, isTerminalState, isInterruptedState, VALID_TRANSITIONS,
+  A2A_ERROR_CODES,
+  mapAttachmentToA2APart, mapA2APartToAttachment,
+} from "./collaboration/a2a-types.js";
+export type {
+  IAgentLike, A2ATask, A2AMessage, Part, TextPart, RawPart, UrlPart, DataPart,
+  Artifact, TaskStatus, A2AAgentCard, AgentSkill, AgentCapabilities, AgentProvider,
+  SecurityScheme, SecurityRequirement,
+  SendMessageRequest, SendMessageResponse, StreamFrame, TaskFilter,
+  TaskPushNotificationConfig, PushEvent,
+  JsonRpcRequest, JsonRpcSuccessResponse, JsonRpcErrorResponse, JsonRpcResponse,
+} from "./collaboration/a2a-types.js";
+export { createMessage, createArtifact, attachmentsToParts, partsToAttachments, createTextMessage } from "./collaboration/a2a-message.js";
+export type { CreateMessageOptions } from "./collaboration/a2a-message.js";
+export { TaskStore, InvalidTransitionError, TaskNotFoundError } from "./collaboration/a2a-task.js";
+export { InMemoryAgentRegistry, SqliteAgentRegistry } from "./collaboration/agent-registry.js";
+export type { IAgentRegistry, AgentRegistryEntry, DiscoverFilter } from "./collaboration/agent-registry.js";
+export { A2AClient, A2AClientError } from "./collaboration/a2a-client.js";
+export type { A2AAuthConfig } from "./collaboration/a2a-client.js";
+export { PushNotificationDispatcher } from "./collaboration/a2a-push.js";
+export type { PushDispatcherOptions } from "./collaboration/a2a-push.js";
+export { RemoteAgentProxy } from "./collaboration/remote-agent-proxy.js";
+export { retryWithBackoff } from "./collaboration/retry.js";
+export type { RetryConfig } from "./collaboration/retry.js";
 
 // Phase 2: 子代理系统（学 OpenClaw Sub-Agent）
 export { buildSubagentSystemPrompt, filterToolsForDepth, SUBAGENT_BLOCKED_TOOLS } from "./collaboration/subagent-prompt.js";
@@ -190,6 +261,13 @@ export type { DockerSandboxConfig } from "./security/docker-sandbox.js";
 export { SSHSandbox } from "./security/ssh-sandbox.js";
 export type { SSHSandboxConfig } from "./security/ssh-sandbox.js";
 
+// SysOps Security (双层纵深防御 Layer 2: 声明式安全策略注入)
+export { SYSOPS_TOOL_PERMISSIONS, injectSysopsSecurityRules } from "./security/sysops-security.js";
+
+// Approval (安全审批机制)
+export { listPendingApprovals, resolveApproval, resolveAllPending, requestApproval, isApproved, recordApproval, clearSessionApprovals } from "./security/approval.js";
+export type { ApprovalScope, ApprovalStatus, ApprovalEntry, ApprovalResult } from "./security/approval.js";
+
 // Persistence (SQLite)
 export {
   initDatabase,
@@ -233,6 +311,7 @@ export {
   // Collaboration History persistence
   saveCollabHistory,
   loadCollabHistory,
+  loadCollabHistoryById,
   deleteCollabHistory,
   // Evolution tables cleanup
   purgeEvolutionCases,
@@ -298,14 +377,14 @@ export { MCPClient, MCPRegistry, MCPMarketplace, MCPServer, EventBridge, StdioTr
 export type { MCPServerConfig, MCPTool, MCPServerStatus, MCPServerInfo, MCPAuthConfig, MCPMarketEntry, MCPInstallConfig, MCPRegistryPackage, MCPServerOptions, MCPServerState, PermissionRequest, MCPEvent, MCPEventType, EventBridgeConfig, MCPTransport, SSEHandlerConfig } from "./mcp/index.js";
 
 // Built-in Tools (24 core sync + optional async-loaded)
-export { builtinTools, getAllBuiltinTools, getToolsByCategory, filesystemTools, codeExecTools, webTools, systemDataTools, configureTools, gitTools, productivityTools } from "./tools/index.js";
+export { builtinTools, getAllBuiltinTools, invalidateToolCache, getToolsByCategory, filesystemTools, codeExecTools, webTools, systemDataTools, configureTools, gitTools, productivityTools } from "./tools/index.js";
 
 // Service ConfigStore (对话式配置持久化)
 export { ConfigStore, SERVICE_CATALOG, getConfigStore, initConfigStore } from "./tools/index.js";
 export type { ServiceCatalogEntry, ServiceKeyDef, ServiceInfo } from "./tools/index.js";
 
 // Cron Scheduler
-export { CronScheduler, parseNaturalLanguageToCron } from "./cron/index.js";
+export { CronScheduler, parseNaturalLanguageToCron, parseNaturalLanguageToCronEx, validateCronExpression } from "./cron/index.js";
 export type { CronJobConfig, CronHistory } from "./cron/index.js";
 
 // Phase 1: 心跳引擎（学 OpenClaw Heartbeat System）
@@ -366,3 +445,14 @@ export { InsightsEngine } from "./evolution/insights.js";
 export type { ToolInsight, SessionInsight, TrendPoint, Bottleneck, InsightsReport } from "./evolution/insights.js";
 export { VerificationPipeline } from "./evolution/verification.js";
 export type { VerificationCase, VerificationResult, VerificationDetail, ABComparisonResult, RollbackRecord } from "./evolution/verification.js";
+
+// Tracing — 全链路追踪
+export {
+  runInContext, currentTrace, currentSpanId, currentTraceId,
+  startSpan, withSpan, withSpanSync, endSpan, addSpanEvent,
+  onSpan, offSpan, isTracingEnabled, setTracingEnabled, createRootContext,
+  SpanOperations,
+  initTraceStore, getTraceSpans, getRecentTraces, closeTraceStore,
+  instrumentRuntime, instrumentLLM, instrumentSecurity, instrumentMemory, instrumentPrompt, traceToolExec,
+} from "./tracing/index.js";
+export type { Span, SpanEvent, TraceContext, SpanStatus, SpanCallback, TraceListItem } from "./tracing/index.js";

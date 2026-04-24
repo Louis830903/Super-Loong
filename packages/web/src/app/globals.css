@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* 根字体从默认16px提升到21px（+31%），所有rem单位等比放大，提升整体可读性 */
+html {
+  font-size: 21px;
+}
+
 :root {
   --background: #09090b;
   --foreground: #fafafa;

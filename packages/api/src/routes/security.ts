@@ -20,11 +20,16 @@
  *
  * Stats:
  *   GET    /api/security/stats                 — Get security stats
+ *
+ * Approvals:
+ *   GET    /api/security/approvals/pending      — List pending approvals
+ *   POST   /api/security/approvals/:id/resolve  — Approve or deny
  */
 
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
-import { queryConfigAuditLog } from "@super-agent/core";
+import { queryConfigAuditLog, listPendingApprovals, resolveApproval } from "@super-agent/core";
+import type { ApprovalScope } from "@super-agent/core";
 import { requirePermission } from "../auth/index.js";
 
 export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
@@ -180,6 +185,35 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get("/api/security/stats", async (_req, reply) => {
     return reply.send(security.getStats());
+  });
+
+  // ─── Approvals ─────────────────────────────────────────────
+
+  // 待审批列表: 前端轮询或 WebSocket 推送
+  app.get("/api/security/approvals/pending", async (_req, reply) => {
+    const pending = listPendingApprovals();
+    return reply.send({ approvals: pending });
+  });
+
+  // 审批处理: 批准或拒绝（需要权限 — 防止未认证用户自行批准危险操作）
+  app.post("/api/security/approvals/:id/resolve", {
+    preHandler: requirePermission("*"),
+  }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as {
+      approved: boolean;
+      scope?: ApprovalScope;
+    } | undefined;
+
+    if (!body || typeof body.approved !== "boolean") {
+      return reply.status(400).send({ error: "approved (boolean) is required" });
+    }
+
+    const ok = resolveApproval(id, body.approved, body.scope ?? "once");
+    if (!ok) {
+      return reply.status(404).send({ error: "Approval not found or already resolved" });
+    }
+    return reply.send({ resolved: true, id, approved: body.approved, scope: body.scope ?? "once" });
   });
 
   app.log.info("Security routes registered");

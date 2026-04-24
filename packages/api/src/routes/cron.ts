@@ -12,7 +12,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
-import { parseNaturalLanguageToCron } from "@super-agent/core";
+import { parseNaturalLanguageToCron, validateCronExpression } from "@super-agent/core";
 
 export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
   if (!ctx.cronScheduler) {
@@ -39,11 +39,21 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
       deliveryChatId?: string;
       timezone?: string;
       maxRetries?: number;
+      /** [v3 Task 3-8b] 新增调度类型字段 */
+      scheduleType?: "cron" | "once" | "interval";
+      runAt?: string;
+      intervalMs?: number;
+      timeoutSeconds?: number;
     };
   }>("/api/cron/jobs", async (request, reply) => {
     const body = request.body ?? {};
     if (!body.name || !body.agentId || !body.message) {
       return reply.status(400).send({ error: "name, agentId, and message are required" });
+    }
+
+    // [v3 Task 2-8] 递归防护: 检查是否在 cron 执行上下文中
+    if (scheduler.isCronExecutionContext(body.agentId)) {
+      return reply.status(403).send({ error: "Cannot create cron jobs during cron execution (recursive protection)" });
     }
 
     // Parse natural language if no expression given
@@ -53,6 +63,12 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
     }
     if (!expression) {
       return reply.status(400).send({ error: "expression or naturalLanguage is required" });
+    }
+
+    // [v3 Task 2-5] 校验 cron 表达式合法性
+    const validation = validateCronExpression(expression);
+    if (!validation.valid) {
+      return reply.status(400).send({ error: `Invalid cron expression "${expression}": ${validation.error}` });
     }
 
     const job = scheduler.addJob({
@@ -66,6 +82,11 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
       enabled: true,
       timezone: body.timezone ?? "Asia/Shanghai",
       maxRetries: body.maxRetries ?? 1,
+      // [v3 Task 3-8b] 传递新字段
+      scheduleType: body.scheduleType,
+      runAt: body.runAt,
+      intervalMs: body.intervalMs,
+      timeoutSeconds: body.timeoutSeconds,
     });
 
     return reply.status(201).send(job);
@@ -84,12 +105,30 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
       deliveryChannel: string;
       deliveryChatId: string;
       maxRetries: number;
+      /** [v3 Task 3-8b] 新增调度类型字段 */
+      scheduleType: "cron" | "once" | "interval";
+      runAt: string;
+      intervalMs: number;
+      timeoutSeconds: number;
     }>;
   }>("/api/cron/jobs/:id", async (request, reply) => {
     const job = scheduler.getJob(request.params.id);
     if (!job) return reply.status(404).send({ error: "Job not found" });
 
     const body = request.body ?? {};
+
+    // [审核 M-1] 递归防护: PUT 也需要检查（与 POST 一致）
+    if (scheduler.isCronExecutionContext(job.agentId)) {
+      return reply.status(403).send({ error: "Cannot modify cron jobs during cron execution (recursive protection)" });
+    }
+
+    // [审核 S-3] 校验更新的 cron 表达式合法性
+    if (body.expression !== undefined) {
+      const validation = validateCronExpression(body.expression);
+      if (!validation.valid) {
+        return reply.status(400).send({ error: `Invalid cron expression "${body.expression}": ${validation.error}` });
+      }
+    }
 
     // enabled 单独处理（启用/禁用操作会重新调度）
     if (body.enabled === true) scheduler.enableJob(job.id);
@@ -105,6 +144,11 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
     if (body.deliveryChannel !== undefined) updates.deliveryChannel = body.deliveryChannel;
     if (body.deliveryChatId !== undefined) updates.deliveryChatId = body.deliveryChatId;
     if (body.maxRetries !== undefined) updates.maxRetries = body.maxRetries;
+    // [v3 Task 3-8b] 新增调度类型字段映射
+    if (body.scheduleType !== undefined) updates.scheduleType = body.scheduleType;
+    if (body.runAt !== undefined) updates.runAt = body.runAt;
+    if (body.intervalMs !== undefined) updates.intervalMs = body.intervalMs;
+    if (body.timeoutSeconds !== undefined) updates.timeoutSeconds = body.timeoutSeconds;
 
     if (Object.keys(updates).length > 0) {
       scheduler.updateJob(job.id, updates);

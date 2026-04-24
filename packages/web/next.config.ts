@@ -15,6 +15,8 @@ const nextConfig: NextConfig = {
         source: "/api/:path*",
         destination: `${API_SERVER}/api/:path*`,
       },
+      // 注: WebSocket 连接由前端直连后端（Next.js rewrites 不支持 WS 协议升级）
+      // WS_BASE 在 utils.ts 中配置为直连后端端口
     ];
   },
 };

@@ -30,8 +30,11 @@ export interface MarkdownMemoryConfig {
   userCharLimit?: number;
 }
 
-const DEFAULT_MEMORY_LIMIT = 2200;
-const DEFAULT_USER_LIMIT = 1375;
+// P1-2: 提升字符限制（原 Hermes 值偏保守，适配 128K 上下文窗口）
+// 原值：MEMORY=2200, USER=1375（合计 ~1200 token）
+// 新值：MEMORY=6000, USER=4000（合计 ~3300 token，对 128K 窗口仅占 2.6%）
+const DEFAULT_MEMORY_LIMIT = 6000;
+const DEFAULT_USER_LIMIT = 4000;
 
 // ─── Default Templates ──────────────────────────────────────
 

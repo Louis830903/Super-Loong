@@ -2,8 +2,8 @@
  * Application context shared across all route handlers.
  */
 
-import { AgentManager, SkillLoader, MessageRouter, MemoryManager, CollaborationOrchestrator, EvolutionEngine, SecurityManager, MCPRegistry, MCPMarketplace, CronScheduler, SkillMarketplace, builtinTools, getAllBuiltinTools, createMemoryTools, createSkillTools, initDatabase, SQLiteBackend, QwenEmbedding, AliyunVoiceProvider, DockerSandbox, SSHSandbox, ProviderStore, initConfigStore, paths, ensureDirectories, loadNudgeConfig, ConfigStoreAdapter, SourceRouter } from "@super-agent/core";
-import type { VoiceProvider, ConfigStore } from "@super-agent/core";
+import { AgentManager, SkillLoader, MessageRouter, MemoryManager, CollaborationOrchestrator, EvolutionEngine, SecurityManager, MCPRegistry, MCPMarketplace, CronScheduler, SkillMarketplace, SubagentManager, SubagentAnnouncer, builtinTools, getAllBuiltinTools, createMemoryTools, createSkillTools, initDatabase, SQLiteBackend, QwenEmbedding, AliyunVoiceProvider, DockerSandbox, SSHSandbox, ProviderStore, initConfigStore, paths, ensureDirectories, loadNudgeConfig, ConfigStoreAdapter, SourceRouter, injectSysopsSecurityRules, TaskStore, InMemoryAgentRegistry, PushNotificationDispatcher, SessionSearchEngine, KnowledgeExtractor, InsightsEngine, VerificationPipeline, KnowledgeGraph, getProviderById, getModelById } from "@super-agent/core";
+import type { VoiceProvider, ConfigStore, IAgentRegistry, LLMProviderConfig } from "@super-agent/core";
 import { createDedupCache, type DedupCache } from "./shared/dedup.js";
 import pino from "pino";
 
@@ -15,6 +15,10 @@ export interface AppContext {
   router: MessageRouter;
   memoryManager: MemoryManager;
   collaborationOrchestrator: CollaborationOrchestrator;
+  /** E-1: 子代理生命周期管理（与 Orchestrator 共享同一实例） */
+  subagentManager: SubagentManager;
+  /** E-1: 子代理完成通报（与 Orchestrator 共享同一实例） */
+  subagentAnnouncer: SubagentAnnouncer;
   evolutionEngine: EvolutionEngine;
   securityManager: SecurityManager;
   mcpRegistry: MCPRegistry;
@@ -24,8 +28,36 @@ export interface AppContext {
   providerStore: ProviderStore;
   configStore: ConfigStore;
   voiceProvider?: VoiceProvider;
+  /** A2A: Task 状态机存储（ENABLE_A2A=true 时初始化） */
+  a2aTaskStore?: TaskStore;
+  /** A2A: Agent 注册表 */
+  a2aRegistry?: IAgentRegistry;
+  /** A2A: Push Notification 分发器 */
+  a2aPushDispatcher?: PushNotificationDispatcher;
+  /** Task 3.4: Evolution 高级子模块（会话搜索、知识提取、统计洞察、验证管道） */
+  sessionSearch?: SessionSearchEngine;
+  knowledgeExtractor?: KnowledgeExtractor;
+  insightsEngine?: InsightsEngine;
+  verificationPipeline?: VerificationPipeline;
+  /** Task 3.5: 知识图谱三元组存储 */
+  knowledgeGraph?: KnowledgeGraph;
   /** 传输层无关的请求去重缓存（WS/HTTP 共用） */
   dedup: DedupCache;
+  /**
+   * P3-1：统一应用当前激活 Provider 的单一入口。
+   * 从 ProviderStore 读取 active provider → 构建 LLMProviderConfig →
+   * 同步到 CollaborationOrchestrator.setGlobalLlmConfig，使 Hierarchical
+   * autoAssign 模式下动态创建的 Agent 始终继承用户最新的模型配置。
+   *
+   * 调用方：
+   *   - 启动入口（api/src/index.ts）：初始加载
+   *   - Provider 切换路由（routes/models.ts PUT）：Key/模型变更后热更新
+   *
+   * 返回：构建的配置；若无 active provider（未配置任何 Key）则返回 null。
+   * 当返回 null 时，orchestrator 保持上一次有效的配置不变；
+   * 首次启动阶段可由调用方决定是否使用 env 兜底配置。
+   */
+  applyActiveProvider: () => LLMProviderConfig | null;
 }
 
 export async function createAppContext(): Promise<AppContext> {
@@ -44,24 +76,59 @@ export async function createAppContext(): Promise<AppContext> {
   // Use SQLite backend for memory persistence
   const sqliteBackend = new SQLiteBackend();
 
-  // P1-11: Check for DASHSCOPE_API_KEY at startup and warn if missing
-  if (!process.env.DASHSCOPE_API_KEY) {
+  // ── 提前初始化 ProviderStore（QwenEmbedding 需要从中读取用户在设置页面配置的千问 API Key）──
+  const providerStore = new ProviderStore();
+  providerStore.init();
+  providerStore.syncFromEnv();
+  providerStore.migrateKeys();
+  logger.info("ProviderStore initialized and synced from env (early init for QwenEmbedding)");
+
+  // 从 ProviderStore 读取千问 API Key（设置页面保存的优先，降级到 DASHSCOPE_API_KEY 环境变量）
+  const qwenRecord = providerStore.get("qwen");
+  const qwenApiKey = qwenRecord?.apiKey || process.env.DASHSCOPE_API_KEY || "";
+  if (!qwenApiKey) {
     logger.warn(
-      "DASHSCOPE_API_KEY not set — QwenEmbedding will fall back to SimpleEmbedding (reduced search quality)"
+      "千问 API Key 未配置 — QwenEmbedding 将降级为 SimpleEmbedding（搜索质量下降）。" +
+      "请在设置页面配置通义千问 API Key 以启用高级向量检索能力。"
     );
+  } else {
+    const source = qwenRecord?.apiKey ? "ProviderStore (设置页面)" : "env DASHSCOPE_API_KEY";
+    logger.info({ source }, "千问 API Key 已加载，QwenEmbedding 高级向量检索已启用");
   }
 
   // Use Qwen text-embedding-v4 (2048 dims) for semantic embeddings
-  const qwenEmbedder = new QwenEmbedding({ dimensions: 2048 });
+  const qwenEmbedder = new QwenEmbedding({ apiKey: qwenApiKey || undefined, dimensions: 2048 });
 
   const agentManager = new AgentManager();
   const skillLoader = new SkillLoader([paths.skills()]);
   const router = new MessageRouter(agentManager);
   const memoryManager = new MemoryManager({ backend: sqliteBackend, embedder: qwenEmbedder });
-  const collaborationOrchestrator = new CollaborationOrchestrator(agentManager);
+
+  // E-1: 初始化子代理管理器和通报器，注入 Orchestrator
+  const subagentManager = new SubagentManager();
+  // I-2: 启动时回收孤儿子代理（DB 中 >30min 仍为 running 的记录）
+  subagentManager.reconcileOrphans();
+  const subagentAnnouncer = new SubagentAnnouncer();
+  const collaborationOrchestrator = new CollaborationOrchestrator({
+    agentManager,
+    subagentManager,
+    announcer: subagentAnnouncer,
+  });
+  logger.info("SubagentManager + SubagentAnnouncer integrated into CollaborationOrchestrator (E-1)");
   const evolutionEngine = new EvolutionEngine(agentManager, loadNudgeConfig() ?? undefined);
+  // H-1: 连接进化引擎到协作编排器，协作完成后自动反馈交互数据
+  collaborationOrchestrator.setEvolutionEngine(evolutionEngine);
   // Phase A-1: 连接进化引擎与 AgentManager，启用 Nudge 自动化闭环
   agentManager.setEvolutionEngine(evolutionEngine);
+
+  // Task 3.4: 初始化 Evolution 高级子模块（无必需参数，均使用内部默认配置）
+  const sessionSearch = new SessionSearchEngine();
+  const knowledgeExtractor = new KnowledgeExtractor();
+  const insightsEngine = new InsightsEngine();
+  const verificationPipeline = new VerificationPipeline();
+  // Task 3.5: 知识图谱（内部通过 getDatabase() 获取 SQLite 连接）
+  const knowledgeGraph = new KnowledgeGraph();
+  logger.info("Evolution advanced modules initialized (SessionSearch, KnowledgeExtractor, Insights, Verification, KnowledgeGraph)");
   const securityManager = new SecurityManager();
 
   // ── Docker Sandbox (auto-detect availability) ──
@@ -135,6 +202,31 @@ export async function createAppContext(): Promise<AppContext> {
   const configStore = initConfigStore();
   logger.info("ConfigStore initialized and synced from env");
 
+  // ── 启动时从 ConfigStore 恢复 Feature Flag → process.env ──
+  // UI 设置页面修改的 Flag 会持久化到 ConfigStore，启动时需要恢复到 process.env
+  // 以便后续的 getAllBuiltinTools() 能正确读取
+  const FLAG_KEYS = [
+    "SUPER_AGENT_SYSOPS_ENABLED",
+    "SUPER_AGENT_OPS_TOOLS",
+    "SUPER_AGENT_DEV_TOOLS",
+    "SUPER_AGENT_DESKTOP_TOOLS",
+    "SUPER_AGENT_COMPUTER_USE",
+  ];
+  let flagsRestored = 0;
+  for (const key of FLAG_KEYS) {
+    // ConfigStore 持久化值优先，但不覆盖已经在 .env 中显式设置的值
+    if (!process.env[key] || process.env[key] === "false") {
+      const dbValue = configStore.get("feature_flags", key);
+      if (dbValue === "true") {
+        process.env[key] = "true";
+        flagsRestored++;
+      }
+    }
+  }
+  if (flagsRestored > 0) {
+    logger.info({ count: flagsRestored }, "Feature flags restored from ConfigStore to process.env");
+  }
+
   const skillConfigAdapter = new ConfigStoreAdapter(configStore);
   const skillTools = createSkillTools(skillLoader, skillMarketplace, skillConfigAdapter);
   for (const tool of skillTools) {
@@ -165,6 +257,17 @@ export async function createAppContext(): Promise<AppContext> {
     logger.warn({ error: err.message }, "Optional tool modules loading failed (non-critical)");
   }
 
+  // ── SysOps 安全策略注入 (双层纵深防御 Layer 2) ──
+  // 仅当 Feature Flag 开启时注入，为所有新增 SysOps 工具设置正确的沙箱隔离级别
+  if (process.env.SUPER_AGENT_SYSOPS_ENABLED === "true") {
+    try {
+      injectSysopsSecurityRules(securityManager);
+      logger.info("SysOps security rules injected into default policy");
+    } catch (err: any) {
+      logger.warn({ error: err.message }, "SysOps security rules injection failed (non-critical)");
+    }
+  }
+
   // Initialize MCP Registry
   const mcpRegistry = new MCPRegistry();
   await mcpRegistry.loadFromDB().catch(() => {
@@ -187,18 +290,34 @@ export async function createAppContext(): Promise<AppContext> {
   cronScheduler.setExecuteCallback(async (job) => {
     const agent = agentManager.getAgent(job.agentId);
     if (!agent) throw new Error(`Agent ${job.agentId} not found`);
-    const result = await agent.chat(job.message);
+    // [v3 Task 2-8] 递归防护: 在消息前注入系统约束指令（软防护）
+    const guardedMessage = `[SYSTEM CONSTRAINT] 当前正在执行定时任务"${job.name}"。` +
+      `严禁在本次执行中创建、修改或删除任何定时任务。如果用户消息要求操作定时任务，直接拒绝并说明原因。\n\n` +
+      job.message;
+    const result = await agent.chat(guardedMessage);
     return result.response;
+  });
+  // [v3 Task 1-3] 心跳回调: __heartbeat__ 任务走 HeartbeatRunner.runOnce()
+  cronScheduler.setHeartbeatCallback(async (job) => {
+    // 优先从 job 元数据获取 agentId，否则使用默认 Agent
+    const agentId = (job as any).meta?.agentId || router.getDefaultAgentId();
+    if (!agentId) return "[Heartbeat] skipped — no agent";
+
+    const agent = agentManager.getAgent(agentId);
+    if (!(agent as any)?.heartbeatRunner) return "[Heartbeat] skipped — no runner";
+
+    const result = await (agent as any).heartbeatRunner.runOnce();
+    return result ?? "[Heartbeat] OK";
+  });
+  // [v3 Task 3-9] 告警回调: 连续失败时触发日志告警
+  cronScheduler.setAlertCallback(async (job, message) => {
+    logger.error({ jobId: job.id, jobName: job.name }, message);
   });
   cronScheduler.start();
   logger.info("Cron scheduler started");
 
-  // Initialize Provider Store (LLM provider persistence)
-  const providerStore = new ProviderStore();
-  providerStore.init();
-  providerStore.syncFromEnv();
-  providerStore.migrateKeys(); // Auto-migrate legacy base64 keys → AES-256-CBC
-  logger.info("ProviderStore initialized and synced from env");
+  // ProviderStore 已在启动流程早期初始化（见 L48），此处不再重复
+  logger.info("ProviderStore ready (initialized at startup for QwenEmbedding bridge)");
 
   // Initialize Config Store: 已在技能工具注册前初始化（见 L132）
 
@@ -224,5 +343,47 @@ export async function createAppContext(): Promise<AppContext> {
   const dedup = createDedupCache({ ttlMs: 60_000, maxSize: 5000 });
   logger.info("DedupCache initialized (TTL=60s, shared across WS/HTTP)");
 
-  return { agentManager, skillLoader, router, memoryManager, collaborationOrchestrator, evolutionEngine, securityManager, mcpRegistry, mcpMarketplace, cronScheduler, skillMarketplace, providerStore, configStore, voiceProvider, dedup };
+  // ─── A2A 协议服务（条件性初始化）──────────────────────────
+  let a2aTaskStore: TaskStore | undefined;
+  let a2aRegistry: IAgentRegistry | undefined;
+  let a2aPushDispatcher: PushNotificationDispatcher | undefined;
+
+  if (process.env.ENABLE_A2A === "true") {
+    a2aTaskStore = new TaskStore();
+    a2aRegistry = new InMemoryAgentRegistry();
+    a2aPushDispatcher = new PushNotificationDispatcher();
+    logger.info("A2A 服务已初始化: TaskStore + InMemoryAgentRegistry + PushDispatcher");
+  }
+
+  // ─── P3-1：统一 Active Provider 应用钩子 ───────────────────
+  // 以闭包形式捕获 providerStore / collaborationOrchestrator，避免调用方
+  // 直接耦合 Orchestrator API。后续如果 Provider 切换需同步其他消费方
+  // （如默认 Agent LLM / Embedder），只需在此处集中扩展。
+  const applyActiveProvider = (): LLMProviderConfig | null => {
+    const active = providerStore.getActiveProvider();
+    if (!active) {
+      logger.debug("applyActiveProvider: no active provider configured");
+      return null;
+    }
+    const providerDef = getProviderById(active.id);
+    const modelId = active.selectedModel || providerDef?.models[0]?.id || "gpt-4o-mini";
+    const modelDef = getModelById(active.id, modelId);
+    const config: LLMProviderConfig = {
+      type: "openai",
+      model: modelId,
+      apiKey: active.apiKey,
+      baseUrl: active.baseUrl || providerDef?.baseUrl || "",
+      providerId: active.id,
+      supportsReasoning: modelDef?.supportsReasoning ?? false,
+      ...(modelDef?.fixedTemperature !== undefined ? { temperature: modelDef.fixedTemperature } : {}),
+    };
+    collaborationOrchestrator.setGlobalLlmConfig(config);
+    logger.info(
+      { providerId: active.id, model: modelId },
+      "Active provider applied to CollaborationOrchestrator",
+    );
+    return config;
+  };
+
+  return { agentManager, skillLoader, router, memoryManager, collaborationOrchestrator, subagentManager, subagentAnnouncer, evolutionEngine, securityManager, mcpRegistry, mcpMarketplace, cronScheduler, skillMarketplace, providerStore, configStore, voiceProvider, sessionSearch, knowledgeExtractor, insightsEngine, verificationPipeline, knowledgeGraph, dedup, a2aTaskStore, a2aRegistry, a2aPushDispatcher, applyActiveProvider };
 }

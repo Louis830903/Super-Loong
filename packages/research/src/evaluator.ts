@@ -57,6 +57,8 @@ export interface EvalReport {
   };
   perJudge: Record<string, { avgScore: number; passRate: number }>;
   results: EvalResult[];
+  /** T4.3: 按难度分组统计（仅 GAIA 等带难度标注的基准有値） */
+  byDifficulty?: Record<number, { passRate: number; avgScore: number; count: number }>;
 }
 
 // ═══════════════════════════════════════════════════════════════
