@@ -1183,103 +1183,9 @@ export function cleanupOldCronHistory(retentionDays = 30): number {
   return -1;
 }
 
-// ─── MCP Servers Persistence ────────────────────────────────
-
-export function saveMCPServer(server: Record<string, unknown>): void {
-  const db = getDatabase();
-  db.run(
-    `INSERT OR REPLACE INTO mcp_servers (id, name, transport, command, args, url, env, auth, enabled, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [server.id, server.name, server.transport, server.command ?? null,
-     JSON.stringify(server.args ?? []), server.url ?? null,
-     JSON.stringify(server.env ?? {}), server.auth ? JSON.stringify(server.auth) : null,
-     server.enabled ? 1 : 0, server.createdAt]
-  );
-  scheduleSave();
-}
-
-export function loadMCPServers(): Array<Record<string, unknown>> {
-  const db = getDatabase();
-  const results = db.exec("SELECT * FROM mcp_servers");
-  if (!results.length) return [];
-  return results[0].values.map((vals: unknown[]) => {
-    const row: Record<string, unknown> = {};
-    results[0].columns.forEach((col: string, i: number) => { row[col] = vals[i]; });
-    row.args = JSON.parse((row.args as string) || "[]");
-    row.env = JSON.parse((row.env as string) || "{}");
-    // B-5: 反序列化 auth 配置
-    if (row.auth && typeof row.auth === "string") {
-      try { row.auth = JSON.parse(row.auth); } catch { row.auth = undefined; }
-    }
-    row.enabled = !!(row.enabled as number);
-    return row;
-  });
-}
-
-export function deleteMCPServer(id: string): void {
-  const db = getDatabase();
-  db.run("DELETE FROM mcp_servers WHERE id = ?", [id]);
-  scheduleSave();
-}
-
-// ─── Installed Skills Persistence ───────────────────────────
-
-export function saveInstalledSkill(skill: Record<string, unknown>): void {
-  const db = getDatabase();
-  db.run(
-    `INSERT OR REPLACE INTO installed_skills (id, name, source, sourceUrl, version, format, installedAt, updatedAt, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [skill.id, skill.name, skill.source, skill.sourceUrl ?? null, skill.version ?? "1.0.0",
-     skill.format ?? "super-agent", skill.installedAt, skill.updatedAt, JSON.stringify(skill.metadata ?? {})]
-  );
-  scheduleSave();
-}
-
-export function loadInstalledSkills(): Array<Record<string, unknown>> {
-  const db = getDatabase();
-  const results = db.exec("SELECT * FROM installed_skills");
-  if (!results.length) return [];
-  return results[0].values.map((vals: unknown[]) => {
-    const row: Record<string, unknown> = {};
-    results[0].columns.forEach((col: string, i: number) => { row[col] = vals[i]; });
-    row.metadata = JSON.parse((row.metadata as string) || "{}");
-    return row;
-  });
-}
-
-export function deleteInstalledSkill(id: string): void {
-  const db = getDatabase();
-  db.run("DELETE FROM installed_skills WHERE id = ?", [id]);
-  scheduleSave();
-}
-
-// ─── Security Policy Persistence ──────────────────────────────
-
-export function saveSecurityPolicy(id: string, name: string, config: string): void {
-  const db = getDatabase();
-  db.run(
-    `INSERT OR REPLACE INTO security_policies (id, name, config, createdAt) VALUES (?, ?, ?, ?)`,
-    [id, name, config, new Date().toISOString()]
-  );
-  scheduleSave();
-}
-
-export function loadSecurityPolicies(): Array<{ id: string; name: string; config: string }> {
-  const db = getDatabase();
-  const results = db.exec("SELECT id, name, config FROM security_policies");
-  if (!results.length) return [];
-  return results[0].values.map((vals: unknown[]) => ({
-    id: vals[0] as string,
-    name: vals[1] as string,
-    config: vals[2] as string,
-  }));
-}
-
-export function deleteSecurityPolicy(id: string): void {
-  const db = getDatabase();
-  db.run("DELETE FROM security_policies WHERE id = ?", [id]);
-  scheduleSave();
-}
+// ─── MCP / Installed Skills / Security Policy Persistence ───
+// 已迁移至 persistence/sqlite/{mcp-store,skill-store,security-policy-store}.ts（批 2a）
+// 通过 sqlite/index.ts 桶导出提供向后兼容的公开 API。
 
 // ─── Collaboration History Persistence ───────────────────
 
@@ -1438,116 +1344,12 @@ export function purgeEvolutionCases(maxRows = 500, retentionDays = 30): number {
 
 /**
  * Purge old skill_proposals that are no longer relevant.
- *
- * @param maxRows  Keep at most this many rows (default 300)
- * @param retentionDays  Delete rows older than this many days (default 60)
- * @returns Number of rows deleted
+ * 已迁移至 persistence/sqlite/skill-store.ts（批 2a）
  */
-export function purgeSkillProposals(maxRows = 300, retentionDays = 60): number {
-  const db = getDatabase();
-  const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
 
-  db.run("DELETE FROM skill_proposals WHERE createdAt < ?", [cutoff]);
-  db.run(
-    `DELETE FROM skill_proposals WHERE id NOT IN (
-       SELECT id FROM skill_proposals ORDER BY createdAt DESC LIMIT ?
-     )`,
-    [maxRows],
-  );
-
-  const countRes = db.exec("SELECT changes()");
-  const deleted = countRes.length ? (countRes[0].values[0][0] as number) : 0;
-  if (deleted > 0) scheduleSave();
-  return deleted;
-}
-
-// ─── Credential Persistence (B-17) ───────────────────────
-
-export function saveCredentialToDB(entry: {
-  name: string;
-  encryptedValue: string;
-  iv: string;
-  description?: string;
-  allowedAgents?: string[];
-  allowedTools?: string[];
-}): void {
-  const db = getDatabase();
-  db.run(
-    `INSERT OR REPLACE INTO credentials (name, encrypted_value, iv, description, allowed_agents, allowed_tools, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [entry.name, entry.encryptedValue, entry.iv, entry.description ?? null,
-     JSON.stringify(entry.allowedAgents ?? []), JSON.stringify(entry.allowedTools ?? []),
-     new Date().toISOString()]
-  );
-  scheduleSave();
-}
-
-export function loadCredentialsFromDB(): Array<{
-  name: string;
-  encryptedValue: string;
-  iv: string;
-  description?: string;
-  allowedAgents?: string[];
-  allowedTools?: string[];
-  createdAt: string;
-}> {
-  const db = getDatabase();
-  const results = db.exec("SELECT * FROM credentials");
-  if (!results.length) return [];
-  return results[0].values.map((vals: unknown[]) => {
-    const row: Record<string, unknown> = {};
-    results[0].columns.forEach((col: string, i: number) => { row[col] = vals[i]; });
-    return {
-      name: row.name as string,
-      encryptedValue: row.encrypted_value as string,
-      iv: row.iv as string,
-      description: row.description as string | undefined,
-      allowedAgents: JSON.parse((row.allowed_agents as string) || "[]"),
-      allowedTools: JSON.parse((row.allowed_tools as string) || "[]"),
-      createdAt: row.createdAt as string,
-    };
-  });
-}
-
-export function deleteCredentialFromDB(name: string): void {
-  const db = getDatabase();
-  db.run("DELETE FROM credentials WHERE name = ?", [name]);
-  scheduleSave();
-}
-
-// ─── Channel Persistence (B-18) ─────────────────────────
-
-export function saveChannel(channel: { id: string; config: Record<string, unknown>; status: string }): void {
-  const db = getDatabase();
-  db.run(
-    `INSERT OR REPLACE INTO channels (id, config, status, createdAt)
-     VALUES (?, ?, ?, ?)`,
-    [channel.id, JSON.stringify(channel.config), channel.status, new Date().toISOString()]
-  );
-  scheduleSave();
-}
-
-export function loadChannels(): Array<{ id: string; config: Record<string, unknown>; status: string }> {
-  const db = getDatabase();
-  const results = db.exec("SELECT * FROM channels");
-  if (!results.length) return [];
-  return results[0].values.map((vals: unknown[]) => {
-    const row: Record<string, unknown> = {};
-    results[0].columns.forEach((col: string, i: number) => { row[col] = vals[i]; });
-    return {
-      id: row.id as string,
-      config: JSON.parse((row.config as string) || "{}"),
-      status: row.status as string,
-    };
-  });
-}
-
-export function deleteChannel(id: string): boolean {
-  const db = getDatabase();
-  db.run("DELETE FROM channels WHERE id = ?", [id]);
-  scheduleSave();
-  return true;
-}
+// ─── Credential / Channel Persistence ───────────────────
+// 已迁移至 persistence/sqlite/{credential-store,channel-store}.ts（批 2a）
+// 通过 sqlite/index.ts 桶导出提供向后兼容的公开 API。
 
 // ─── Config Store (Phase B-2: Nudge 配置持久化) ───────────
 

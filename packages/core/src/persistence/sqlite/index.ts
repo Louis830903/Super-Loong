@@ -33,3 +33,23 @@ export {
   cleanupOldBackups,
   registerShutdownHandlers,
 } from "./client.js";
+
+// ── 批 2a：无共享状态 CRUD ──
+export { saveMCPServer, loadMCPServers, deleteMCPServer } from "./mcp-store.js";
+export {
+  saveInstalledSkill,
+  loadInstalledSkills,
+  deleteInstalledSkill,
+  purgeSkillProposals,
+} from "./skill-store.js";
+export {
+  saveSecurityPolicy,
+  loadSecurityPolicies,
+  deleteSecurityPolicy,
+} from "./security-policy-store.js";
+export {
+  saveCredentialToDB,
+  loadCredentialsFromDB,
+  deleteCredentialFromDB,
+} from "./credential-store.js";
+export { saveChannel, loadChannels, deleteChannel } from "./channel-store.js";
