@@ -105,3 +105,35 @@ export {
   loadCollabHistoryById,
 } from "./collab-repo.js";
 export { purgeEvolutionCases } from "./maintenance-repo.js";
+
+// ── 批 3：核心高耦合四块（Memory Backend / FTS / Conversation / Subagent）──
+// 说明：SQLiteBackend 与 EntityRow 来自 memory-backend；FTS 仅 re-export 供上游消费的 5 个函数，
+//       hasFTS5 / hasFTS5v6 / resetFts5Cache 是内部符号，不进公开 API 面。
+export { SQLiteBackend, type EntityRow } from "./memory-backend.js";
+export {
+  indexMemoryFTS,
+  removeMemoryFTS,
+  searchMemoriesFTS,
+  indexSessionFTS,
+  searchSessionsFTS,
+} from "./fts-repo.js";
+export type { ConversationRecord, ConvMessageRecord } from "./conversation-repo.js";
+export {
+  createConversation,
+  getConversation,
+  listConversations,
+  updateConversationTitle,
+  updateConversationModel,
+  deleteConversation,
+  replaceConvMessages,
+  appendConvMessage,
+  getConvMessages,
+  searchConvMessages,
+} from "./conversation-repo.js";
+export {
+  saveSubagentRun,
+  updateSubagentRunStatus,
+  markSubagentRunsCancelled,
+  findOrphanSubagentRuns,
+  archiveSubagentRun,
+} from "./subagent-repo.js";

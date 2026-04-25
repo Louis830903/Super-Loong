@@ -25,6 +25,7 @@ import { logger } from "./logger.js";
 import type { SqlJsDatabase, SqlJsStatic } from "./constants.js";
 import { createInitialSchema, ensureSchemaVersionTable } from "./schema.js";
 import { runMigrations } from "./migrations.js";
+import { resetFts5Cache } from "./fts-repo.js";
 
 // ─── sql.js Loader ────────────────────────────────────────────
 async function loadSqlJs(): Promise<SqlJsStatic> {
@@ -251,11 +252,9 @@ export async function closeDatabase(): Promise<void> {
     _db.close();
     _db = null;
     _dbPath = null;
-    // ISSUE-5 修复：重置 FTS5 缓存，确保下次 initDatabase 后重新检测
-    // CORE-P1-02 批 1 临时注释：_fts5Cache 仍在原 sqlite.ts 业务段声明，
-    // 待批 3 搬迁到 fts-repo.ts 并 export resetFts5Cache() 后此处恢复调用。
-    // 过渡期影响：同进程重开 DB 时 FTS5 探测结果可能残留旧值（仅测试路径受影响，
-    // 因为 initDatabase 的 if (_db) return _db 幂等，生产路径不会重开）。
+    // ISSUE-5 修复：重置 FTS5 缓存，确保下次 initDatabase 后重新检测。
+    // CORE-P1-02 批 3：fts-repo.ts 已抽出并导出 resetFts5Cache，此处恢复真实调用。
+    resetFts5Cache();
   }
 }
 
