@@ -2,8 +2,8 @@
  * Application context shared across all route handlers.
  */
 
-import { AgentManager, SkillLoader, MessageRouter, MemoryManager, CollaborationOrchestrator, EvolutionEngine, SecurityManager, MCPRegistry, MCPMarketplace, CronScheduler, SkillMarketplace, SubagentManager, SubagentAnnouncer, builtinTools, getAllBuiltinTools, createMemoryTools, createSkillTools, initDatabase, SQLiteBackend, QwenEmbedding, AliyunVoiceProvider, DockerSandbox, SSHSandbox, ProviderStore, initConfigStore, paths, ensureDirectories, loadNudgeConfig, ConfigStoreAdapter, SourceRouter, injectSysopsSecurityRules, TaskStore, InMemoryAgentRegistry, PushNotificationDispatcher, SessionSearchEngine, KnowledgeExtractor, InsightsEngine, VerificationPipeline, KnowledgeGraph, getProviderById, getModelById } from "@super-agent/core";
-import type { VoiceProvider, ConfigStore, IAgentRegistry, LLMProviderConfig } from "@super-agent/core";
+import { AgentManager, SkillLoader, MessageRouter, MemoryManager, CollaborationOrchestrator, EvolutionEngine, SecurityManager, MCPRegistry, MCPMarketplace, CronScheduler, SkillMarketplace, SubagentManager, SubagentAnnouncer, builtinTools, getAllBuiltinTools, createMemoryTools, createSkillTools, initDatabase, SQLiteBackend, QwenEmbedding, HRRProvider, AliyunVoiceProvider, DockerSandbox, SSHSandbox, ProviderStore, initConfigStore, paths, ensureDirectories, loadNudgeConfig, ConfigStoreAdapter, SourceRouter, injectSysopsSecurityRules, TaskStore, InMemoryAgentRegistry, PushNotificationDispatcher, SessionSearchEngine, KnowledgeExtractor, InsightsEngine, VerificationPipeline, KnowledgeGraph, getProviderById, getModelById } from "@super-agent/core";
+import type { VoiceProvider, ConfigStore, IAgentRegistry, LLMProviderConfig, EmbeddingProvider } from "@super-agent/core";
 import { createDedupCache, type DedupCache } from "./shared/dedup.js";
 import pino from "pino";
 
@@ -88,21 +88,24 @@ export async function createAppContext(): Promise<AppContext> {
   const qwenApiKey = qwenRecord?.apiKey || process.env.DASHSCOPE_API_KEY || "";
   if (!qwenApiKey) {
     logger.warn(
-      "千问 API Key 未配置 — QwenEmbedding 将降级为 SimpleEmbedding（搜索质量下降）。" +
-      "请在设置页面配置通义千问 API Key 以启用高级向量检索能力。"
+      "千问 API Key 未配置 — 记忆检索将使用 HRR 确定性向量编码（零配置可用，标签正确）。" +
+      "配置千问 API Key 后将自动升级为 text-embedding-v4 高级语义检索。"
     );
   } else {
     const source = qwenRecord?.apiKey ? "ProviderStore (设置页面)" : "env DASHSCOPE_API_KEY";
     logger.info({ source }, "千问 API Key 已加载，QwenEmbedding 高级向量检索已启用");
   }
 
-  // Use Qwen text-embedding-v4 (2048 dims) for semantic embeddings
-  const qwenEmbedder = new QwenEmbedding({ apiKey: qwenApiKey || undefined, dimensions: 2048 });
+  // CORE-P1-05: 有 Key 走 Qwen text-embedding-v4 (2048D)；无 Key 走 HRR 确定性向量
+  //   —— 避免 QwenEmbedding 运行时把 Simple 哈希向量伪装成 "qwen" 类型污染检索
+  const embedder: EmbeddingProvider = qwenApiKey
+    ? new QwenEmbedding({ apiKey: qwenApiKey, dimensions: 2048 })
+    : new HRRProvider();
 
   const agentManager = new AgentManager();
   const skillLoader = new SkillLoader([paths.skills()]);
   const router = new MessageRouter(agentManager);
-  const memoryManager = new MemoryManager({ backend: sqliteBackend, embedder: qwenEmbedder });
+  const memoryManager = new MemoryManager({ backend: sqliteBackend, embedder });
 
   // E-1: 初始化子代理管理器和通报器，注入 Orchestrator
   const subagentManager = new SubagentManager();

@@ -17,6 +17,7 @@
  */
 
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import type { MemoryEntry, MemorySearchResult, ToolDefinition, ToolContext, ToolResult } from "../types/index.js";
 import { scanMemoryContent, sanitizeMemoryContent } from "../prompt/injection-guard.js";
 import type { IMemoryProvider, MemoryProviderConfig } from "./provider.js";
@@ -186,24 +187,21 @@ export class QwenEmbedding implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
+    // CORE-P1-05: 单一职责 — QwenEmbedding 只负责调 Qwen API，失败一律 throw。
+    // 降级策略由上游 MemoryManager 决定（写入时跳过 embedding，仅按文本召回），
+    // 避免把 Simple 哈希向量伪装成 "qwen" 类型写入数据库污染检索。
     if (!this.apiKey) {
-      console.warn(
-        `[QwenEmbedding] No DASHSCOPE_API_KEY set — using SimpleEmbedding fallback (${this.dimensions}D). ` +
-        `Semantic search quality will be degraded. Set DASHSCOPE_API_KEY for production use.`
+      throw new Error(
+        "[QwenEmbedding] No DASHSCOPE_API_KEY configured — caller should choose HRR/Simple provider instead."
       );
-      const fallback = new SimpleEmbedding(this.dimensions);
-      return fallback.embed(text);
     }
 
-    // D-2: 熔断器开启时直接降级到 SimpleEmbedding
+    // D-2: 熔断器开启时直接抛错，由 MemoryManager 决定降级策略（文本召回兜底）
     if (this.isBreakerOpen()) {
       const remainSec = Math.ceil((this._breakerOpenUntil - Date.now()) / 1000);
-      console.warn(
-        `[QwenEmbedding] Circuit breaker OPEN — ${this._consecutiveFailures} consecutive failures. ` +
-        `Falling back to SimpleEmbedding for ~${remainSec}s.`
+      throw new Error(
+        `[QwenEmbedding] Circuit breaker OPEN (${this._consecutiveFailures} consecutive failures, ~${remainSec}s remain)`
       );
-      const fallback = new SimpleEmbedding(this.dimensions);
-      return fallback.embed(text);
     }
 
     try {
@@ -233,7 +231,7 @@ export class QwenEmbedding implements EmbeddingProvider {
       this._consecutiveFailures = 0;
       return result;
     } catch (err) {
-      // D-2: 记录失败，达到阈值时开启熔断器
+      // D-2: 记录失败，达到阈值时开启熔断器；然后向上抛错让 Manager 决定兜底
       this._consecutiveFailures++;
       if (this._consecutiveFailures >= QwenEmbedding.BREAKER_THRESHOLD) {
         this._breakerOpenUntil = Date.now() + QwenEmbedding.BREAKER_COOLDOWN_MS;
@@ -242,18 +240,24 @@ export class QwenEmbedding implements EmbeddingProvider {
           `Cooldown ${QwenEmbedding.BREAKER_COOLDOWN_MS / 1000}s, next retry at ${new Date(this._breakerOpenUntil).toISOString()}`
         );
       }
-      // 降级到 SimpleEmbedding 保证可用性
-      console.warn(`[QwenEmbedding] API failed (attempt #${this._consecutiveFailures}), falling back to SimpleEmbedding`);
-      const fallback = new SimpleEmbedding(this.dimensions);
-      return fallback.embed(text);
+      // CORE-P1-05: 不再兜底为 SimpleEmbedding，直接抛错避免标签错配
+      throw err instanceof Error ? err : new Error(String(err));
     }
   }
 
   /** Batch embed multiple texts (max 10 per call per API limit) */
   async embedBatch(texts: string[]): Promise<number[][]> {
+    // CORE-P1-05: 同 embed()，失败一律 throw 交由上游决定降级
     if (!this.apiKey) {
-      const fallback = new SimpleEmbedding(this.dimensions);
-      return Promise.all(texts.map((t) => fallback.embed(t)));
+      throw new Error(
+        "[QwenEmbedding] No DASHSCOPE_API_KEY configured — caller should choose HRR/Simple provider instead."
+      );
+    }
+    if (this.isBreakerOpen()) {
+      const remainSec = Math.ceil((this._breakerOpenUntil - Date.now()) / 1000);
+      throw new Error(
+        `[QwenEmbedding] Circuit breaker OPEN (${this._consecutiveFailures} consecutive failures, ~${remainSec}s remain)`
+      );
     }
 
     const results: number[][] = [];
@@ -744,24 +748,34 @@ export class MemoryManager {
     // P0-3: 实体提取（同时用于 HRR 结构化编码 + T6 关系抽取）
     const entities = extractEntities(input.content);
 
-    let embedding: number[];
-    if (this.embedder.embedFact != null && entities.length > 0) {
-      // 有实体时用 embedFact：内容 + 实体角色绑定，支持 probe/unbind 代数查询
-      embedding = await this.embedder.embedFact(input.content, entities);
-    } else {
-      embedding = await this.embedder.embed(input.content);
+    // CORE-P1-05: embed 失败时写入 embedding=null，仅按文本召回，避免标签错配污染检索
+    let embedding: number[] | null = null;
+    let embeddingType: MemoryEntry["embeddingType"] | undefined;
+    try {
+      if (this.embedder.embedFact != null && entities.length > 0) {
+        // 有实体时用 embedFact：内容 + 实体角色绑定，支持 probe/unbind 代数查询
+        embedding = await this.embedder.embedFact(input.content, entities);
+      } else {
+        embedding = await this.embedder.embed(input.content);
+      }
+      // ISSUE-3: 直接使用接口声明的 embeddingType，消除 instanceof 硬耦合
+      embeddingType = this.embedder.embeddingType;
+    } catch (err) {
+      // 降级策略：保留记忆文本，embedding=null，检索时纯走 text+jaccard 兜底通道
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err), agentId: input.agentId },
+        "CORE-P1-05: embedding 计算失败，该 memory 仅按文本召回（不污染向量检索）",
+      );
     }
 
-    // ISSUE-3: 直接使用接口声明的 embeddingType，消除 instanceof 硬耦合
-    const embeddingType: MemoryEntry["embeddingType"] = this.embedder.embeddingType;
     const entry: MemoryEntry = {
-      id: `mem_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`,
+      id: `mem_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
       agentId: input.agentId,
       userId: input.userId,
       content: input.content,
       type: input.type ?? "archival",
-      embedding,
-      embeddingType,
+      ...(embedding ? { embedding } : {}),
+      ...(embeddingType ? { embeddingType } : {}),
       metadata: input.metadata ?? {},
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -794,8 +808,21 @@ export class MemoryManager {
 
   /** Update a memory's content */
   async update(id: string, content: string, metadata?: Record<string, unknown>): Promise<void> {
-    const embedding = await this.embedder.embed(content);
-    await this.backend.update(id, { content, embedding, metadata });
+    // CORE-P1-05: embed 失败时仅更新 content/metadata，保留原 embedding（避免污染）
+    let embedding: number[] | undefined;
+    try {
+      embedding = await this.embedder.embed(content);
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err), memoryId: id },
+        "CORE-P1-05: update 时 embedding 计算失败，仅更新文本内容",
+      );
+    }
+    await this.backend.update(id, {
+      content,
+      ...(embedding ? { embedding } : {}),
+      metadata,
+    });
   }
 
   /** Delete a memory */
@@ -821,7 +848,16 @@ export class MemoryManager {
    * C-2: 3阶段管线：text+emb+jaccard + 信任加权 + 时间衰减（学 Hermes retrieval.py）
    */
   async search(query: string, filters: MemoryFilter, topK = 10, options?: MemorySearchOptions): Promise<MemorySearchResult[]> {
-    const queryEmb = await this.embedder.embed(query);
+    // CORE-P1-05: queryEmb 失败时降级为纯文本召回（text + jaccard），不污染结果
+    let queryEmb: number[] | null = null;
+    try {
+      queryEmb = await this.embedder.embed(query);
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "CORE-P1-05: 查询 embedding 计算失败，降级为纯文本检索",
+      );
+    }
 
     // P0-1: 用 backend.search() 获取文本候选集（已升级为 FTS5 优先）
     const textCandidates = await this.backend.search(query, filters, topK * 20);
@@ -846,7 +882,8 @@ export class MemoryManager {
     const scored: MemorySearchResult[] = candidates.map((entry) => {
       const textScore = this.textSimilarity(query, entry.content, queryTokens);
       let embScore = 0;
-      if (entry.embedding) {
+      // CORE-P1-05: 查询 embedding 失败时跳过向量通道，完全依赖 text + jaccard
+      if (entry.embedding && queryEmb) {
         // F-2: 根据向量类型选择相似度算法
         const entryIsHRR = entry.embeddingType === "hrr";
         if (queryIsHRR && entryIsHRR) {
