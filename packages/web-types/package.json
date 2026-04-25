@@ -1,0 +1,19 @@
+{
+  "name": "@super-agent/web-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "前后端共享的纯类型与纯运行时常量，零 Node-only 依赖（禁止引入 sql.js/pino/fs 等 Node API）",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "sideEffects": false
+}
