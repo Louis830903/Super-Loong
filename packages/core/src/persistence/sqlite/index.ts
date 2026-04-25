@@ -77,3 +77,31 @@ export {
   updateProviderTemplate,
   deleteProviderTemplate,
 } from "./provider-template-repo.js";
+
+// ── 批 2c：联动块（Agent Config / Session / Cron / Collab / Maintenance）──
+export {
+  saveAgentConfig,
+  loadAllAgentConfigs,
+  deleteAgentConfig,
+} from "./agent-config-repo.js";
+export {
+  saveSession,
+  loadSession,
+  deleteSession,
+  listSessionsByAgent,
+} from "./session-repo.js";
+export {
+  saveCronJob,
+  loadCronJobs,
+  deleteCronJob,
+  addCronHistory,
+  loadCronHistory,
+  cleanupOldCronHistory,
+} from "./cron-repo.js";
+export {
+  saveCollabHistory,
+  loadCollabHistory,
+  deleteCollabHistory,
+  loadCollabHistoryById,
+} from "./collab-repo.js";
+export { purgeEvolutionCases } from "./maintenance-repo.js";

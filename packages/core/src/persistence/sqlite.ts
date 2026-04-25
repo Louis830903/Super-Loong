@@ -435,75 +435,10 @@ export type { EntityRow };
 // 说明：SENSITIVE_KEYS / SENSITIVE_SUFFIXES 就近声明在 audit-repo.ts 内 file-private，
 //       constants.ts 保持零依赖纯净（符合低耦合原则）。
 
-// ─── Agent Config Persistence ────────────────────────────────
-
-export function saveAgentConfig(id: string, config: Record<string, unknown>): void {
-  const db = getDatabase();
-  const now = new Date().toISOString();
-  // P1-02: Preserve original createdAt using COALESCE (same pattern as saveSession)
-  db.run(
-    `INSERT OR REPLACE INTO agents (id, config, createdAt) VALUES (?, ?, COALESCE((SELECT createdAt FROM agents WHERE id = ?), ?))`,
-    [id, JSON.stringify(config), id, now]
-  );
-  scheduleSave();
-}
-
-export function loadAllAgentConfigs(): Array<{ id: string; config: Record<string, unknown> }> {
-  const db = getDatabase();
-  const results = db.exec("SELECT id, config FROM agents");
-  if (!results.length) return [];
-  return results[0].values.map((vals: unknown[]) => ({
-    id: vals[0] as string,
-    config: JSON.parse(vals[1] as string),
-  }));
-}
-
-export function deleteAgentConfig(id: string): void {
-  const db = getDatabase();
-  db.run("DELETE FROM agents WHERE id = ?", [id]);
-  scheduleSave();
-}
-
-// ─── Session Persistence ─────────────────────────────────────
-
-export function saveSession(id: string, agentId: string, messages: unknown[], userId?: string): void {
-  const db = getDatabase();
-  const now = new Date().toISOString();
-  db.run(
-    `INSERT OR REPLACE INTO sessions (id, agentId, userId, messages, createdAt, updatedAt) VALUES (?, ?, ?, ?, COALESCE((SELECT createdAt FROM sessions WHERE id = ?), ?), ?)`,
-    [id, agentId, userId ?? null, JSON.stringify(messages), id, now, now]
-  );
-  scheduleSave();
-}
-
-export function loadSession(id: string): { id: string; agentId: string; messages: unknown[] } | null {
-  const db = getDatabase();
-  const results = db.exec("SELECT id, agentId, messages FROM sessions WHERE id = ?", [id]);
-  if (!results.length || !results[0].values.length) return null;
-  const vals = results[0].values[0];
-  return {
-    id: vals[0] as string,
-    agentId: vals[1] as string,
-    messages: JSON.parse(vals[2] as string),
-  };
-}
-
-export function deleteSession(id: string): void {
-  const db = getDatabase();
-  db.run("DELETE FROM sessions WHERE id = ?", [id]);
-  scheduleSave();
-}
-
-export function listSessionsByAgent(agentId: string): Array<{ id: string; agentId: string; messageCount: number }> {
-  const db = getDatabase();
-  const results = db.exec("SELECT id, agentId, messages FROM sessions WHERE agentId = ?", [agentId]);
-  if (!results.length) return [];
-  return results[0].values.map((vals: unknown[]) => ({
-    id: vals[0] as string,
-    agentId: vals[1] as string,
-    messageCount: JSON.parse(vals[2] as string).length,
-  }));
-}
+// ─── Agent Config / Session Persistence ─────────────────────
+// 已迁移至 persistence/sqlite/{agent-config-repo,session-repo}.ts（批 2c）
+// 说明：session-repo 仅负责 sessions 表 CRUD，与 FTS 解耦；
+//       indexSessionFTS / searchSessionsFTS 在批 3 fts-repo 中处理。
 
 // ─── FTS5 Full-Text Search ──────────────────────────────────
 
@@ -957,151 +892,16 @@ export function searchConvMessages(
 }
 
 // ─── Cron Persistence ───────────────────────────────────────
-
-/** Typed input for saveCronJob — compatible with CronJobConfig via structural typing */
-interface CronJobInput {
-  id: string;
-  name: string;
-  expression: string;
-  naturalLanguage?: string | null;
-  agentId: string;
-  message: string;
-  deliveryChannel?: string | null;
-  deliveryChatId?: string | null;
-  enabled: boolean;
-  timezone?: string;
-  maxRetries?: number;
-  createdAt: string;
-  lastRunAt?: string | null;
-  nextRunAt?: string | null;
-  /** [v3 Task 3-8a] 新增字段 */
-  scheduleType?: string | null;
-  runAt?: string | null;
-  intervalMs?: number | null;
-  timeoutSeconds?: number | null;
-}
-
-/** Typed input for addCronHistory — compatible with CronHistory via structural typing */
-interface CronHistoryInput {
-  jobId: string;
-  startedAt: string;
-  finishedAt?: string | null;
-  status: string;
-  response?: string | null;
-  error?: string | null;
-  deliveryStatus?: string | null;
-}
-
-export function saveCronJob(job: CronJobInput): void {
-  const db = getDatabase();
-  db.run(
-    `INSERT OR REPLACE INTO cron_jobs (id, name, expression, naturalLanguage, agentId, message, deliveryChannel, deliveryChatId, enabled, timezone, maxRetries, createdAt, lastRunAt, nextRunAt, scheduleType, runAt, intervalMs, timeoutSeconds)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [job.id, job.name, job.expression, job.naturalLanguage ?? null, job.agentId, job.message,
-     job.deliveryChannel ?? null, job.deliveryChatId ?? null, job.enabled ? 1 : 0,
-     job.timezone ?? "Asia/Shanghai", job.maxRetries ?? 1, job.createdAt, job.lastRunAt ?? null, job.nextRunAt ?? null,
-     job.scheduleType ?? "cron", job.runAt ?? null, job.intervalMs ?? null, job.timeoutSeconds ?? null]
-  );
-  scheduleSave();
-}
-
-export function loadCronJobs(): Array<Record<string, unknown>> {
-  const db = getDatabase();
-  const results = db.exec("SELECT * FROM cron_jobs");
-  if (!results.length) return [];
-  return results[0].values.map((vals: unknown[]) => {
-    const row: Record<string, unknown> = {};
-    results[0].columns.forEach((col: string, i: number) => { row[col] = vals[i]; });
-    row.enabled = !!(row.enabled as number);
-    return row;
-  });
-}
-
-export function deleteCronJob(id: string): void {
-  const db = getDatabase();
-  db.run("DELETE FROM cron_jobs WHERE id = ?", [id]);
-  scheduleSave();
-}
-
-export function addCronHistory(entry: CronHistoryInput): void {
-  const db = getDatabase();
-  db.run(
-    "INSERT INTO cron_history (jobId, startedAt, finishedAt, status, response, error, deliveryStatus) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [entry.jobId, entry.startedAt, entry.finishedAt ?? null, entry.status, entry.response ?? null, entry.error ?? null, entry.deliveryStatus ?? null]
-  );
-  scheduleSave();
-}
-
-export function loadCronHistory(jobId: string, limit = 20): Array<Record<string, unknown>> {
-  const db = getDatabase();
-  const results = db.exec("SELECT * FROM cron_history WHERE jobId = ? ORDER BY startedAt DESC LIMIT ?", [jobId, limit]);
-  if (!results.length) return [];
-  return results[0].values.map((vals: unknown[]) => {
-    const row: Record<string, unknown> = {};
-    results[0].columns.forEach((col: string, i: number) => { row[col] = vals[i]; });
-    return row;
-  });
-}
-
-/** [v3 Task 2-2] 清理超过 retentionDays 天的 cron 执行历史 */
-export function cleanupOldCronHistory(retentionDays = 30): number {
-  const db = getDatabase();
-  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
-  db.run("DELETE FROM cron_history WHERE startedAt < ?", [cutoff]);
-  // sql.js 没有 changes()，返回 -1 表示已执行但无法知道具体数量
-  scheduleSave();
-  return -1;
-}
+// 已迁移至 persistence/sqlite/cron-repo.ts（批 2c）
+// 说明：CronJobInput / CronHistoryInput 为 file-private interface 随函数一并搬走；
+//       cleanupOldCronHistory 紧耦合 cron_history 表，同样保留在 cron-repo。
 
 // ─── MCP / Installed Skills / Security Policy Persistence ───
 // 已迁移至 persistence/sqlite/{mcp-store,skill-store,security-policy-store}.ts（批 2a）
 // 通过 sqlite/index.ts 桶导出提供向后兼容的公开 API。
 
 // ─── Collaboration History Persistence ───────────────────
-
-export function saveCollabHistory(entry: {
-  id: string;
-  type: "crew" | "groupchat";
-  name: string;
-  status: string;
-  result: string;
-  durationMs: number;
-}): void {
-  const db = getDatabase();
-  db.run(
-    `INSERT OR REPLACE INTO collab_history (id, type, name, status, result, durationMs, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [entry.id, entry.type, entry.name, entry.status, entry.result, entry.durationMs, new Date().toISOString()]
-  );
-  scheduleSave();
-}
-
-export function loadCollabHistory(limit = 100): Array<Record<string, unknown>> {
-  const db = getDatabase();
-  const results = db.exec("SELECT * FROM collab_history ORDER BY createdAt DESC LIMIT ?", [limit]);
-  if (!results.length) return [];
-  return results[0].values.map((vals: unknown[]) => {
-    const row: Record<string, unknown> = {};
-    results[0].columns.forEach((col: string, i: number) => { row[col] = vals[i]; });
-    return row;
-  });
-}
-
-export function deleteCollabHistory(id: string): void {
-  const db = getDatabase();
-  db.run("DELETE FROM collab_history WHERE id = ?", [id]);
-  scheduleSave();
-}
-
-/** M-2: 按 id 查询单条协作历史记录（用于 getResultById 的 DB fallback） */
-export function loadCollabHistoryById(id: string): Record<string, unknown> | undefined {
-  const db = getDatabase();
-  const results = db.exec("SELECT * FROM collab_history WHERE id = ? LIMIT 1", [id]);
-  if (!results.length || !results[0].values.length) return undefined;
-  const row: Record<string, unknown> = {};
-  results[0].columns.forEach((col: string, i: number) => { row[col] = results[0].values[0][i]; });
-  return row;
-}
+// 已迁移至 persistence/sqlite/collab-repo.ts（批 2c）
 
 // ─── I-2: Subagent Runs Persistence ────────────────────────────
 
@@ -1182,40 +982,8 @@ export function archiveSubagentRun(id: string): void {
 }
 
 // ─── Evolution Tables Cleanup ────────────────────────────────
-
-/**
- * Purge old evolution_cases that exceed either the maximum count or the
- * retention window.
- *
- * @param maxRows  Keep at most this many rows (default 500)
- * @param retentionDays  Delete rows older than this many days (default 30)
- * @returns Number of rows deleted
- */
-export function purgeEvolutionCases(maxRows = 500, retentionDays = 30): number {
-  const db = getDatabase();
-  const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-
-  // 1. Delete rows older than retention window
-  db.run("DELETE FROM evolution_cases WHERE timestamp < ?", [cutoff]);
-
-  // 2. Keep only the newest maxRows
-  db.run(
-    `DELETE FROM evolution_cases WHERE id NOT IN (
-       SELECT id FROM evolution_cases ORDER BY timestamp DESC LIMIT ?
-     )`,
-    [maxRows],
-  );
-
-  const countRes = db.exec("SELECT changes()");
-  const deleted = countRes.length ? (countRes[0].values[0][0] as number) : 0;
-  if (deleted > 0) scheduleSave();
-  return deleted;
-}
-
-/**
- * Purge old skill_proposals that are no longer relevant.
- * 已迁移至 persistence/sqlite/skill-store.ts（批 2a）
- */
+// 已迁移至 persistence/sqlite/maintenance-repo.ts（批 2c，purgeEvolutionCases）。
+// skill_proposals 清理随批 2a 归入 skill-store.ts（purgeSkillProposals）。
 
 // ─── Credential / Channel Persistence ───────────────────
 // 已迁移至 persistence/sqlite/{credential-store,channel-store}.ts（批 2a）
