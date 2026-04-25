@@ -53,3 +53,27 @@ export {
   deleteCredentialFromDB,
 } from "./credential-store.js";
 export { saveChannel, loadChannels, deleteChannel } from "./channel-store.js";
+
+// ── 批 2b：中等独立块（Core Blocks / Audit / Config Store / Video Jobs / Provider Templates）──
+export type { CoreBlockRow } from "./core-block-repo.js";
+export { saveCoreBlock, loadCoreBlocks } from "./core-block-repo.js";
+export {
+  sanitizeForAudit,
+  logConfigChange,
+  queryConfigAuditLog,
+} from "./audit-repo.js";
+export { loadNudgeConfig, saveNudgeConfig } from "./config-store-repo.js";
+export type { VideoJobRow } from "./video-job-repo.js";
+export {
+  insertVideoJob,
+  updateVideoJob,
+  getVideoJob,
+  listVideoJobs,
+} from "./video-job-repo.js";
+export type { ProviderTemplateRow } from "./provider-template-repo.js";
+export {
+  getProviderTemplates,
+  insertProviderTemplate,
+  updateProviderTemplate,
+  deleteProviderTemplate,
+} from "./provider-template-repo.js";
