@@ -1,1140 +1,23 @@
 /**
- * SQLite Persistence Layer for Super Agent Platform.
+ * SQLite Persistence Layer (门面层 + 业务段过渡态).
  *
- * Uses sql.js (WASM-based SQLite) for zero-native-dependency persistence.
- * Provides:
- * - SQLiteBackend: MemoryBackend implementation for the memory system
- * - PersistenceManager: Unified persistence for agents, sessions, credentials, etc.
+ * CORE-P1-02 批 1 已完成：基础设施层（logger/constants/schema/migrations/client）
+ * 已拆分至 ./sqlite/ 子目录；此文件保留业务段（SQLiteBackend / Conversations /
+ * FTS / 各 repo CRUD），待批 2/3 进一步拆分为独立 repo 文件。
+ *
+ * 上游 25+ 处 `from "../persistence/sqlite.js"` 通过 `export * from "./sqlite/index.js"`
+ * 桶导出继续拿到基础设施层符号；业务段符号由本文件直接 export。
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type SqlJsDatabase = any;
-type SqlJsStatic = { Database: new (data?: ArrayLike<number> | Buffer | null) => SqlJsDatabase };
-async function loadSqlJs(): Promise<SqlJsStatic> {
-  const mod = await import("sql.js");
-  const init = mod.default ?? mod;
-  return init();
-}
-import * as fs from "node:fs";
-import * as path from "node:path";
-import pino from "pino";
+export * from "./sqlite/index.js";
 import { getContentText } from "../utils/content-helpers.js";
 import type { MemoryEntry, MemorySearchResult } from "../types/index.js";
 import type { MemoryBackend, MemoryFilter } from "../memory/manager.js";
 import type { EntityRow } from "../memory/entity-resolver.js";
-import { paths } from "../config/paths.js";
 import { getJsonlWriter } from "./jsonl-writer.js";
-
-const logger = pino({ name: "sqlite" });
-
-// ─── Schema Version ─────────────────────────────────────────
-// Bump this when adding migrations. Each version corresponds to a migrateVN() function.
-const CURRENT_SCHEMA_VERSION = 14;
-
-// ─── Database Singleton ──────────────────────────────────────
-// NOTE (P2-03): Module-level singleton pattern limits to one DB per process.
-// Future multi-tenant support would require refactoring to a DatabaseManager class.
-
-let _db: SqlJsDatabase | null = null;
-let _dbPath: string | null = null;
-let _SQL: SqlJsStatic | null = null;
-let _saveTimer: ReturnType<typeof setTimeout> | null = null;
-
-// ─── Schema Version Helpers ──────────────────────────────────
-
-/** Ensure the schema_version table exists (called before any migration). */
-function ensureSchemaVersionTable(db: SqlJsDatabase): void {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS schema_version (
-      version INTEGER PRIMARY KEY,
-      applied_at TEXT NOT NULL,
-      description TEXT
-    )
-  `);
-}
-
-/** Get the current schema version (0 if no version recorded yet). */
-function getSchemaVersion(db: SqlJsDatabase): number {
-  try {
-    const results = db.exec("SELECT MAX(version) FROM schema_version");
-    if (results.length && results[0].values.length && results[0].values[0][0] !== null) {
-      return results[0].values[0][0] as number;
-    }
-  } catch { /* table may not exist yet */ }
-  return 0;
-}
-
-/** Record a schema version after a successful migration. */
-function setSchemaVersion(db: SqlJsDatabase, version: number, description: string): void {
-  db.run(
-    "INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)",
-    [version, new Date().toISOString(), description]
-  );
-}
-
-/**
- * Run all pending schema migrations sequentially.
- * Each migrateVN function is idempotent (uses try/catch for ALTER TABLE).
- * Add new migrations here by bumping CURRENT_SCHEMA_VERSION and adding a migrateVN() call.
- */
-function runMigrations(db: SqlJsDatabase): void {
-  const currentVersion = getSchemaVersion(db);
-  if (currentVersion >= CURRENT_SCHEMA_VERSION) return;
-
-  logger.info({ from: currentVersion, to: CURRENT_SCHEMA_VERSION }, "Running schema migrations");
-
-  // ── v1: baseline (all existing CREATE TABLE IF NOT EXISTS) ──
-  // v1 is recorded after the initial table creation block.
-
-  // ── v2: Add api_key_iv column for AES encryption ──
-  if (currentVersion < 2) migrateV2(db);
-
-  // ── v3: Add modelOverride column for per-conversation model ──
-  if (currentVersion < 3) migrateV3(db);
-
-  // ── v4: FTS5 auto-maintenance triggers (Hermes messages_fts pattern) ──
-  if (currentVersion < 4) migrateV4(db);
-
-  // ── v5: Add trust_score / helpful_count columns to memories (Hermes trust scoring) ──
-  if (currentVersion < 5) migrateV5(db);
-
-  // ── v6: FTS5 全文索引（学 Hermes store.py facts_fts 模式） ──
-  if (currentVersion < 6) migrateV6(db);
-
-  // ── v7: 实体解析表（学 Hermes entities + fact_entities） ──
-  if (currentVersion < 7) migrateV7(db);
-
-  // ── v8: 嵌入类型标记列（HRR/Qwen/Simple 区分） ──
-  if (currentVersion < 8) migrateV8(db);
-
-  // ── v9: config_store 表（进化引擎 Nudge 配置持久化） ──
-  if (currentVersion < 9) migrateV9(db);
-
-  // ── v10: subagent_runs 表（I-2 孤儿回收 + 子代理持久化） ──
-  if (currentVersion < 10) migrateV10(db);
-
-  // ── v11: T1 记忆优先级（hello-agents 借鉴）──
-  // memories 表新增 priority / relevanceScore 两列，加联合索引
-  if (currentVersion < 11) migrateV11(db);
-
-  // ── v12: T6 知识图谱三元组表（hello-agents SemanticMemory 借鉴）──
-  // 新建 relations 表 + 三个索引（subject/object/unique triple）
-  if (currentVersion < 12) migrateV12(db);
-
-  // ── v13: T5 A2A Agent 注册表（跨进程 Agent 发现） ──
-  if (currentVersion < 13) migrateV13(db);
-
-  // ── v14: T5 A2A Task 持久化（Task 状态机 + 产物/历史） ──
-  if (currentVersion < 14) migrateV14(db);
-}
-
-/** v2: Add api_key_iv column to llm_providers for AES-256-CBC encryption. */
-function migrateV2(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    db.run("ALTER TABLE llm_providers ADD COLUMN api_key_iv TEXT DEFAULT ''");
-    setSchemaVersion(db, 2, "Add api_key_iv column for AES encryption");
-    db.run("COMMIT");
-    logger.info("Migration v2: Added api_key_iv column to llm_providers (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    // Column may already exist (idempotent), or table may not exist yet — just record the version
-    if (e.message?.includes("duplicate column") || e.message?.includes("no such table")) {
-      setSchemaVersion(db, 2, "Add api_key_iv column (skipped: table absent or column exists)");
-      logger.info("Migration v2: skipped (table absent or column already exists), version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v2 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/** v3: Add modelOverride column to conversations for per-session model selection. */
-function migrateV3(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    db.run("ALTER TABLE conversations ADD COLUMN modelOverride TEXT");
-    setSchemaVersion(db, 3, "Add modelOverride column for per-conversation model override");
-    db.run("COMMIT");
-    logger.info("Migration v3: Added modelOverride column to conversations (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    if (e.message?.includes("duplicate column")) {
-      setSchemaVersion(db, 3, "Add modelOverride column (already existed)");
-      logger.info("Migration v3: modelOverride column already exists, version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v3 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/**
- * v4: Add FTS5 auto-maintenance triggers for conv_messages and memories.
- * Follows Hermes messages_fts trigger pattern: INSERT/DELETE triggers
- * automatically keep FTS5 index in sync without manual indexing calls.
- */
-function migrateV4(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    // ── conv_messages FTS5 triggers ──
-    // Only create if FTS5 table exists (sql.js may or may not have FTS5 compiled)
-    const hasCmFts = db.exec(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='conv_messages_fts'"
-    );
-    if (hasCmFts.length > 0 && hasCmFts[0].values.length > 0) {
-      // P0-A10: 修复触发器列定义—conv_messages_fts 只有 content 列，不包含 conversationId
-      // INSERT trigger: auto-index new messages
-      db.run(`CREATE TRIGGER IF NOT EXISTS conv_msg_fts_ai AFTER INSERT ON conv_messages
-        BEGIN
-          INSERT INTO conv_messages_fts(rowid, content)
-          VALUES (NEW.id, NEW.content);
-        END`);
-      // DELETE trigger: auto-remove from FTS on delete
-      db.run(`CREATE TRIGGER IF NOT EXISTS conv_msg_fts_ad AFTER DELETE ON conv_messages
-        BEGIN
-          INSERT INTO conv_messages_fts(conv_messages_fts, rowid, content)
-          VALUES ('delete', OLD.id, OLD.content);
-        END`);
-      logger.info("Migration v4: Created conv_messages FTS5 triggers");
-    }
-
-    // ── memories FTS5 triggers ──
-    const hasMemFts = db.exec(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'"
-    );
-    if (hasMemFts.length > 0 && hasMemFts[0].values.length > 0) {
-      // INSERT trigger
-      db.run(`CREATE TRIGGER IF NOT EXISTS mem_fts_ai AFTER INSERT ON memories
-        BEGIN
-          INSERT OR REPLACE INTO memories_fts(id, agentId, content, type)
-          VALUES (NEW.id, NEW.agentId, NEW.content, NEW.type);
-        END`);
-      // UPDATE trigger
-      db.run(`CREATE TRIGGER IF NOT EXISTS mem_fts_au AFTER UPDATE ON memories
-        BEGIN
-          INSERT OR REPLACE INTO memories_fts(id, agentId, content, type)
-          VALUES (NEW.id, NEW.agentId, NEW.content, NEW.type);
-        END`);
-      // DELETE trigger
-      db.run(`CREATE TRIGGER IF NOT EXISTS mem_fts_ad AFTER DELETE ON memories
-        BEGIN
-          DELETE FROM memories_fts WHERE id = OLD.id;
-        END`);
-      logger.info("Migration v4: Created memories FTS5 triggers");
-    }
-
-    setSchemaVersion(db, 4, "Add FTS5 auto-maintenance triggers (Hermes pattern)");
-    db.run("COMMIT");
-    logger.info("Migration v4: FTS5 triggers committed");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    logger.error({ err: e.message }, "Migration v4 failed, rolled back");
-    // Non-fatal: FTS triggers are an optimization, not required
-    setSchemaVersion(db, 4, "FTS5 triggers migration failed (non-fatal)");
-  }
-}
-
-/** v5: Add trust_score and helpful_count columns to memories for trust scoring system (学 Hermes store.py). */
-function migrateV5(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    db.run("ALTER TABLE memories ADD COLUMN trust_score REAL DEFAULT 0.5");
-    db.run("ALTER TABLE memories ADD COLUMN helpful_count INTEGER DEFAULT 0");
-    db.run("ALTER TABLE memories ADD COLUMN retrieval_count INTEGER DEFAULT 0");
-    setSchemaVersion(db, 5, "Add trust_score, helpful_count, retrieval_count columns to memories");
-    db.run("COMMIT");
-    logger.info("Migration v5: Added trust scoring columns to memories (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    if (e.message?.includes("duplicate column")) {
-      setSchemaVersion(db, 5, "Trust scoring columns (skipped: already exist)");
-      logger.info("Migration v5: skipped (columns already exist), version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v5 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/**
- * v6: FTS5 全文索引与自动同步触发器（学 Hermes store.py memories_fts 模式）。
- * 注意：sql.js WASM 可能不含 FTS5 扩展，失败时自动跳过。
- */
-function migrateV6(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    // 尝试创建 FTS5 虚拟表 — 如果 sql.js 不支持会抛异常
-    db.run(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts_v6
-        USING fts5(content, content=memories, content_rowid=rowid)
-    `);
-
-    // 自动同步触发器（学 Hermes store.py facts_fts 模式）
-    db.run(`CREATE TRIGGER IF NOT EXISTS mem_ftsv6_ai AFTER INSERT ON memories BEGIN
-      INSERT INTO memories_fts_v6(rowid, content) VALUES (NEW.rowid, NEW.content);
-    END`);
-    db.run(`CREATE TRIGGER IF NOT EXISTS mem_ftsv6_ad AFTER DELETE ON memories BEGIN
-      INSERT INTO memories_fts_v6(memories_fts_v6, rowid, content)
-        VALUES ('delete', OLD.rowid, OLD.content);
-    END`);
-    db.run(`CREATE TRIGGER IF NOT EXISTS mem_ftsv6_au AFTER UPDATE OF content ON memories BEGIN
-      INSERT INTO memories_fts_v6(memories_fts_v6, rowid, content)
-        VALUES ('delete', OLD.rowid, OLD.content);
-      INSERT INTO memories_fts_v6(rowid, content) VALUES (NEW.rowid, NEW.content);
-    END`);
-
-    // 回填现有数据到 FTS5 索引
-    db.run(`INSERT INTO memories_fts_v6(rowid, content) SELECT rowid, content FROM memories`);
-
-    setSchemaVersion(db, 6, "Add memories_fts_v6 FTS5 index with auto-sync triggers");
-    db.run("COMMIT");
-    logger.info("Migration v6: FTS5 index created with auto-sync triggers (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    // FTS5 不可用是正常情况（sql.js WASM 可能不含该扩展），记录版本并继续
-    setSchemaVersion(db, 6, `FTS5 migration skipped: ${e.message?.slice(0, 100)}`);
-    logger.warn({ err: e.message }, "Migration v6: FTS5 not available, skipped (non-fatal)");
-  }
-}
-
-/** v7: 实体解析表（学 Hermes entities + fact_entities 关联模式） */
-function migrateV7(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    db.run(`
-      CREATE TABLE IF NOT EXISTS entities (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        entityType TEXT DEFAULT 'unknown',
-        aliases TEXT DEFAULT '[]',
-        createdAt TEXT NOT NULL
-      )
-    `);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name)`);
-
-    db.run(`
-      CREATE TABLE IF NOT EXISTS memory_entities (
-        memoryId TEXT REFERENCES memories(id) ON DELETE CASCADE,
-        entityId INTEGER REFERENCES entities(id) ON DELETE CASCADE,
-        PRIMARY KEY (memoryId, entityId)
-      )
-    `);
-
-    setSchemaVersion(db, 7, "Add entities and memory_entities tables for entity resolution");
-    db.run("COMMIT");
-    logger.info("Migration v7: Entity tables created (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    if (e.message?.includes("already exists")) {
-      setSchemaVersion(db, 7, "Entity tables (skipped: already exist)");
-      logger.info("Migration v7: skipped (tables already exist), version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v7 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/** v8: 添加 embedding_type 列用于区分 HRR/Qwen/Simple 向量类型 */
-function migrateV8(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    db.run("ALTER TABLE memories ADD COLUMN embedding_type TEXT DEFAULT 'simple'");
-    setSchemaVersion(db, 8, "Add embedding_type column to memories");
-    db.run("COMMIT");
-    logger.info("Migration v8: Added embedding_type column to memories (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    if (e.message?.includes("duplicate column")) {
-      setSchemaVersion(db, 8, "embedding_type column (skipped: already exists)");
-      logger.info("Migration v8: skipped (column already exists), version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v8 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/** v9: 通用配置存储表，用于 Nudge 配置等键值持久化（Phase B-2） */
-function migrateV9(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    db.run(`
-      CREATE TABLE IF NOT EXISTS config_store (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updatedAt TEXT NOT NULL
-      )
-    `);
-    setSchemaVersion(db, 9, "Add config_store table for key-value config persistence");
-    db.run("COMMIT");
-    logger.info("Migration v9: Created config_store table (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    if (e.message?.includes("already exists")) {
-      setSchemaVersion(db, 9, "config_store table (skipped: already exists)");
-      logger.info("Migration v9: skipped (table already exists), version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v9 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/**
- * v10: I-2 子代理运行记录表（孤儿回收 + 持久化）。
- * 用于 SubagentManager 将 spawn/complete/kill 状态持久化到 SQLite，
- * 进程重启后通过 reconcileOrphans() 恢复未完成的子代理记录。
- */
-function migrateV10(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    db.run(`
-      CREATE TABLE IF NOT EXISTS subagent_runs (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        parent_session_id TEXT NOT NULL,
-        task TEXT NOT NULL,
-        label TEXT,
-        depth INTEGER NOT NULL DEFAULT 1,
-        status TEXT NOT NULL CHECK(status IN ('running','success','error','timeout','killed','orphan_recovered','archived')),
-        created_at TEXT NOT NULL,
-        completed_at TEXT,
-        result TEXT,
-        error TEXT
-      )
-    `);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_subagent_runs_status ON subagent_runs(status)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent ON subagent_runs(parent_session_id)`);
-    setSchemaVersion(db, 10, "Add subagent_runs table for orphan recovery (I-2)");
-    db.run("COMMIT");
-    logger.info("Migration v10: Created subagent_runs table (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    if (e.message?.includes("already exists")) {
-      setSchemaVersion(db, 10, "subagent_runs table (skipped: already exists)");
-      logger.info("Migration v10: skipped (table already exists), version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v10 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/**
- * v11: T1 记忆优先级字段（参考 hello-agents NoteTool 分类）。
- * - priority TEXT  CHECK 枚举（blocker / action / task_state / conclusion / normal）默认 normal
- * - relevanceScore REAL  与 trustScore 解耦的预留评分，默认 0.5
- * - 联合索引 idx_memories_priority 加速按 agentId+priority 过滤
- * 幂等实现：重复运行不报错（duplicate column 走 skipped 分支）。
- */
-function migrateV11(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    // SQLite ALTER TABLE 仅支持 ADD COLUMN，CHECK 约束随列一同创建
-    db.run(
-      "ALTER TABLE memories ADD COLUMN priority TEXT " +
-      "CHECK(priority IN ('blocker','action','task_state','conclusion','normal')) " +
-      "DEFAULT 'normal'"
-    );
-    db.run("ALTER TABLE memories ADD COLUMN relevanceScore REAL DEFAULT 0.5");
-    // 加联合索引（检索时常以 agentId 为主过滤 + priority 排序）
-    db.run("CREATE INDEX IF NOT EXISTS idx_memories_priority ON memories(agentId, priority)");
-    setSchemaVersion(db, 11, "Add priority + relevanceScore columns to memories (T1)");
-    db.run("COMMIT");
-    logger.info("Migration v11: Added priority/relevanceScore columns to memories (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    if (e.message?.includes("duplicate column")) {
-      // 列已存在（复跑场景），仅补索引并记录版本
-      try {
-        db.run("CREATE INDEX IF NOT EXISTS idx_memories_priority ON memories(agentId, priority)");
-      } catch { /* index may also exist */ }
-      setSchemaVersion(db, 11, "Priority columns (skipped: already exist)");
-      logger.info("Migration v11: skipped (columns already exist), version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v11 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/**
- * v12: T6 知识图谱三元组表 + 三个索引
- * 实体间关系建模（主体-谓词-客体），支持递归 CTE 子图查询。
- * 参考 hello-agents 第 8 章 SemanticMemory 设计。
- */
-function migrateV12(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    db.run(`
-      CREATE TABLE IF NOT EXISTS relations (
-        id TEXT PRIMARY KEY,
-        subjectId INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-        predicate TEXT NOT NULL,
-        objectId INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-        confidence REAL NOT NULL DEFAULT 0.5 CHECK(confidence BETWEEN 0 AND 1),
-        source TEXT NOT NULL,
-        createdAt TEXT NOT NULL,
-        metadata TEXT DEFAULT '{}'
-      )
-    `);
-    // 主体+谓词 索引：快速查找某实体的所有出边
-    db.run(`CREATE INDEX IF NOT EXISTS idx_relations_subject ON relations(subjectId, predicate)`);
-    // 客体+谓词 索引：快速查找某实体的所有入边
-    db.run(`CREATE INDEX IF NOT EXISTS idx_relations_object ON relations(objectId, predicate)`);
-    // 三元组唯一索引：防止重复插入（upsert 用）
-    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_relations_triple ON relations(subjectId, predicate, objectId)`);
-
-    setSchemaVersion(db, 12, "Add relations table for knowledge graph triples (T6)");
-    db.run("COMMIT");
-    logger.info("Migration v12: Created relations table with 3 indexes (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    if (e.message?.includes("already exists")) {
-      setSchemaVersion(db, 12, "relations table (skipped: already exists)");
-      logger.info("Migration v12: skipped (table already exists), version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v12 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/**
- * v13: T5 A2A Agent 注册表
- * 跨进程 Agent 发现与注册。支持 online/offline/draining 三态 + 心跳 TTL 过期。
- * 参考 Spec §5.3 Task 5.2 + §7.2 Agent Card 标准。
- */
-function migrateV13(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    db.run(`
-      CREATE TABLE IF NOT EXISTS agent_registry (
-        agentId TEXT PRIMARY KEY,
-        card TEXT NOT NULL,
-        endpoint TEXT NOT NULL,
-        lastHeartbeat TEXT NOT NULL,
-        ttlMs INTEGER NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('online','offline','draining'))
-      )
-    `);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_agent_registry_status ON agent_registry(status)`);
-
-    setSchemaVersion(db, 13, "Add agent_registry table for A2A agent discovery (T5)");
-    db.run("COMMIT");
-    logger.info("Migration v13: Created agent_registry table with status index (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    if (e.message?.includes("already exists")) {
-      setSchemaVersion(db, 13, "agent_registry table (skipped: already exists)");
-      logger.info("Migration v13: skipped (table already exists), version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v13 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/**
- * v14: T5 A2A Task 持久化
- * Task 状态机 8 态 + 完整 JSON payload（artifacts + history）。
- * 参考 Spec §7.3 Task 7.3 + a2a.proto Task message。
- */
-function migrateV14(db: SqlJsDatabase): void {
-  db.run("BEGIN TRANSACTION");
-  try {
-    db.run(`
-      CREATE TABLE IF NOT EXISTS a2a_tasks (
-        id TEXT PRIMARY KEY,
-        contextId TEXT NOT NULL,
-        state TEXT NOT NULL CHECK(state IN
-          ('submitted','working','input-required','auth-required',
-           'completed','failed','canceled','rejected')),
-        payload TEXT NOT NULL,
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL
-      )
-    `);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_a2a_tasks_context ON a2a_tasks(contextId)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_a2a_tasks_state ON a2a_tasks(state)`);
-
-    setSchemaVersion(db, 14, "Add a2a_tasks table for A2A task persistence (T5)");
-    db.run("COMMIT");
-    logger.info("Migration v14: Created a2a_tasks table with 2 indexes (committed)");
-  } catch (e: any) {
-    db.run("ROLLBACK");
-    if (e.message?.includes("already exists")) {
-      setSchemaVersion(db, 14, "a2a_tasks table (skipped: already exists)");
-      logger.info("Migration v14: skipped (table already exists), version recorded");
-    } else {
-      logger.error({ err: e.message }, "Migration v14 failed, rolled back");
-      throw e;
-    }
-  }
-}
-
-/**
- * Initialize the SQLite database. Call once at startup.
- * @param dbPath File path for the database (e.g. "./data/super-agent.db")
- */
-export async function initDatabase(dbPath?: string): Promise<SqlJsDatabase> {
-  if (_db) return _db;
-
-  _SQL = await loadSqlJs();
-  _dbPath = dbPath ?? process.env.SA_DB_PATH ?? paths.db();
-
-  // Ensure directory exists
-  const dir = path.dirname(_dbPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  // Load existing database or create new (with .bak fallback)
-  if (fs.existsSync(_dbPath)) {
-    try {
-      const fileBuffer = fs.readFileSync(_dbPath);
-      _db = new _SQL.Database(fileBuffer);
-    } catch (loadErr) {
-      logger.error({ err: loadErr }, "Failed to load database, trying .bak fallback");
-      const bakPath = _dbPath + ".bak";
-      if (fs.existsSync(bakPath)) {
-        try {
-          _db = new _SQL.Database(fs.readFileSync(bakPath));
-          logger.info("Database restored from .bak backup");
-        } catch (bakErr) {
-          logger.error({ err: bakErr }, "Failed to load .bak, creating fresh database");
-          _db = new _SQL.Database();
-        }
-      } else {
-        _db = new _SQL.Database();
-      }
-    }
-  } else {
-    _db = new _SQL.Database();
-  }
-
-  // ── Schema version table (must exist before migrations) ──
-  ensureSchemaVersionTable(_db);
-
-  // Create tables (wrapped in transaction for atomicity — P1-03)
-  _db.run("BEGIN TRANSACTION");
-  try {
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS memories (
-      id TEXT PRIMARY KEY,
-      agentId TEXT NOT NULL,
-      userId TEXT,
-      content TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('core','recall','archival')),
-      embedding BLOB,
-      metadata TEXT DEFAULT '{}',
-      createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
-    )
-  `);
-
-  _db.run(`CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agentId)`);
-  _db.run(`CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)`);
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS agents (
-      id TEXT PRIMARY KEY,
-      config TEXT NOT NULL,
-      createdAt TEXT NOT NULL
-    )
-  `);
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      agentId TEXT NOT NULL,
-      userId TEXT,
-      messages TEXT DEFAULT '[]',
-      createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
-    )
-  `);
-
-  _db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agentId)`);
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS credentials (
-      name TEXT PRIMARY KEY,
-      encryptedValue TEXT NOT NULL,
-      iv TEXT NOT NULL,
-      allowedAgents TEXT DEFAULT '[]',
-      allowedTools TEXT DEFAULT '[]',
-      createdAt TEXT NOT NULL,
-      lastAccessedAt TEXT,
-      accessCount INTEGER DEFAULT 0
-    )
-  `);
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS security_policies (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      config TEXT NOT NULL,
-      createdAt TEXT NOT NULL
-    )
-  `);
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS audit_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp TEXT NOT NULL,
-      action TEXT NOT NULL,
-      agentId TEXT,
-      toolName TEXT,
-      outcome TEXT,
-      details TEXT DEFAULT '{}'
-    )
-  `);
-
-  _db.run(`CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(timestamp)`);
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS evolution_cases (
-      id TEXT PRIMARY KEY,
-      agentId TEXT,
-      sessionId TEXT,
-      userMessage TEXT,
-      agentResponse TEXT,
-      success INTEGER NOT NULL DEFAULT 1,
-      score REAL,
-      failureReason TEXT,
-      failureCategory TEXT,
-      timestamp TEXT NOT NULL,
-      metadata TEXT DEFAULT '{}'
-    )
-  `);
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS skill_proposals (
-      id TEXT PRIMARY KEY,
-      skillName TEXT NOT NULL,
-      action TEXT NOT NULL,
-      description TEXT,
-      analysis TEXT DEFAULT '{}',
-      basedOnCases TEXT DEFAULT '[]',
-      status TEXT NOT NULL DEFAULT 'pending',
-      createdAt TEXT NOT NULL
-    )
-  `);
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS evolution_snapshots (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      stageIndex INTEGER NOT NULL,
-      avgScore REAL,
-      proposalCount INTEGER DEFAULT 0,
-      activeProposals TEXT DEFAULT '[]',
-      timestamp TEXT NOT NULL
-    )
-  `);
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS core_blocks (
-      agentId TEXT NOT NULL,
-      label TEXT NOT NULL,
-      description TEXT DEFAULT '',
-      value TEXT DEFAULT '',
-      limitSize INTEGER DEFAULT 2000,
-      readOnly INTEGER DEFAULT 0,
-      PRIMARY KEY (agentId, label)
-    )
-  `);
-
-  // ─── Cron Jobs Tables ──────────────────────────────────────
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS cron_jobs (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      expression TEXT NOT NULL,
-      naturalLanguage TEXT,
-      agentId TEXT NOT NULL,
-      message TEXT NOT NULL,
-      deliveryChannel TEXT,
-      deliveryChatId TEXT,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
-      maxRetries INTEGER NOT NULL DEFAULT 1,
-      createdAt TEXT NOT NULL,
-      lastRunAt TEXT,
-      nextRunAt TEXT
-    )
-  `);
-
-  // [v3 Task 3-8a] 新增调度类型字段（ALTER TABLE ADD COLUMN 仅对已有表有效）
-  try { _db.run(`ALTER TABLE cron_jobs ADD COLUMN scheduleType TEXT DEFAULT 'cron'`); } catch {}
-  try { _db.run(`ALTER TABLE cron_jobs ADD COLUMN runAt TEXT`); } catch {}
-  try { _db.run(`ALTER TABLE cron_jobs ADD COLUMN intervalMs INTEGER`); } catch {}
-  try { _db.run(`ALTER TABLE cron_jobs ADD COLUMN timeoutSeconds INTEGER`); } catch {}
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS cron_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      jobId TEXT NOT NULL,
-      startedAt TEXT NOT NULL,
-      finishedAt TEXT,
-      status TEXT NOT NULL DEFAULT 'running',
-      response TEXT,
-      error TEXT,
-      deliveryStatus TEXT
-    )
-  `);
-
-  _db.run(`CREATE INDEX IF NOT EXISTS idx_cron_history_job ON cron_history(jobId)`);
-
-  // ─── Installed Skills Table ────────────────────────────────
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS installed_skills (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      source TEXT NOT NULL DEFAULT 'local',
-      sourceUrl TEXT,
-      version TEXT DEFAULT '1.0.0',
-      format TEXT NOT NULL DEFAULT 'super-agent',
-      installedAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL,
-      metadata TEXT DEFAULT '{}'
-    )
-  `);
-
-  // ─── MCP Servers Table ─────────────────────────────────────
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS mcp_servers (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      transport TEXT NOT NULL DEFAULT 'stdio',
-      command TEXT,
-      args TEXT DEFAULT '[]',
-      url TEXT,
-      env TEXT DEFAULT '{}',
-      auth TEXT DEFAULT NULL,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      createdAt TEXT NOT NULL
-    )
-  `);
-
-  // ─── Collaboration History Table ───────────────────────────
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS collab_history (
-      id TEXT PRIMARY KEY,
-      type TEXT NOT NULL CHECK(type IN ('crew','groupchat')),
-      name TEXT NOT NULL,
-      status TEXT NOT NULL,
-      result TEXT NOT NULL,
-      durationMs INTEGER NOT NULL DEFAULT 0,
-      createdAt TEXT NOT NULL
-    )
-  `);
-  _db.run(`CREATE INDEX IF NOT EXISTS idx_collab_history_type ON collab_history(type)`);
-  _db.run(`CREATE INDEX IF NOT EXISTS idx_collab_history_ts ON collab_history(createdAt)`);
-
-  // ─── Credentials Table (B-17) ───────────────────────────────
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS credentials (
-      name TEXT PRIMARY KEY,
-      encrypted_value TEXT NOT NULL,
-      iv TEXT NOT NULL,
-      description TEXT,
-      allowed_agents TEXT DEFAULT '[]',
-      allowed_tools TEXT DEFAULT '[]',
-      createdAt TEXT NOT NULL
-    )
-  `);
-
-  // ─── Channels Table (B-18) ──────────────────────────────────
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS channels (
-      id TEXT PRIMARY KEY,
-      config TEXT NOT NULL DEFAULT '{}',
-      status TEXT NOT NULL DEFAULT 'configuring',
-      createdAt TEXT NOT NULL
-    )
-  `);
-
-  // ─── Conversations & Messages Tables ────────────────────────
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY,
-      agentId TEXT NOT NULL,
-      title TEXT,
-      createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL,
-      messageCount INTEGER DEFAULT 0,
-      lastMessagePreview TEXT,
-      lastMessageRole TEXT,
-      metadata TEXT DEFAULT '{}'
-    )
-  `);
-  _db.run(`CREATE INDEX IF NOT EXISTS idx_conv_agent ON conversations(agentId)`);
-  _db.run(`CREATE INDEX IF NOT EXISTS idx_conv_updated ON conversations(updatedAt DESC)`);
-
-  _db.run(`
-    CREATE TABLE IF NOT EXISTS conv_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      conversationId TEXT NOT NULL,
-      role TEXT NOT NULL,
-      content TEXT,
-      toolCallId TEXT,
-      toolCalls TEXT,
-      toolName TEXT,
-      timestamp TEXT NOT NULL,
-      tokenCount INTEGER
-    )
-  `);
-  _db.run(`CREATE INDEX IF NOT EXISTS idx_cmsg_conv ON conv_messages(conversationId, timestamp)`);
-
-  // ─── FTS5 Full-Text Search ─────────────────────────────────
-  // FTS5 for memories full-text search
-  try {
-    _db.run(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-        id UNINDEXED, agentId, content, type,
-        tokenize='unicode61'
-      )
-    `);
-  } catch (e: any) {
-    logger.warn({ err: e.message }, "FTS5 not available in this sql.js build — full-text search will use LIKE fallback");
-  }
-
-  // FTS5 for session messages search
-  try {
-    _db.run(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
-        sessionId UNINDEXED, agentId, content,
-        tokenize='unicode61'
-      )
-    `);
-  } catch (e: any) {
-    logger.warn({ err: e.message }, "FTS5 sessions table not available");
-  }
-
-  // FTS5 for conversation messages search
-  try {
-    _db.run(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS conv_messages_fts USING fts5(
-        content,
-        content=conv_messages,
-        content_rowid=id,
-        tokenize='unicode61'
-      )
-    `);
-    _db.run(`
-      CREATE TRIGGER IF NOT EXISTS conv_fts_insert AFTER INSERT ON conv_messages BEGIN
-        INSERT INTO conv_messages_fts(rowid, content) VALUES (new.id, new.content);
-      END
-    `);
-    _db.run(`
-      CREATE TRIGGER IF NOT EXISTS conv_fts_delete AFTER DELETE ON conv_messages BEGIN
-        INSERT INTO conv_messages_fts(conv_messages_fts, rowid, content) VALUES('delete', old.id, old.content);
-      END
-    `);
-  } catch (e: any) {
-    logger.warn({ err: e.message }, "FTS5 conv_messages table not available");
-  }
-
-  _db.run("COMMIT");
-  } catch (err) {
-    _db.run("ROLLBACK");
-    throw err;
-  }
-
-  // ── Record baseline schema version if this is a fresh DB ──
-  if (getSchemaVersion(_db) < 1) {
-    setSchemaVersion(_db, 1, "Baseline: all initial CREATE TABLE IF NOT EXISTS");
-    logger.info("Schema version set to 1 (baseline)");
-  }
-
-  // ── Run any pending migrations (v2, v3, …) ──
-  runMigrations(_db);
-
-  // ── Cleanup old clobbered backups ──
-  cleanupOldBackups();
-
-  // ── Register graceful shutdown handlers ──
-  registerShutdownHandlers();
-
-  // Persist to disk
-  saveDatabase();
-
-  return _db;
-}
-
-/** Get the current database instance (must call initDatabase first). */
-export function getDatabase(): SqlJsDatabase {
-  if (!_db) throw new Error("Database not initialized. Call initDatabase() first.");
-  return _db;
-}
-
-/** Persist the in-memory database to disk (immediate) with backup + health check.
- * Uses atomic write pattern (Hermes atomic_json_write): write to tmp → rename to target.
- * On Windows, rename may fail if target exists, so we fall back to copyFileSync.
- * Retry with random jitter on file I/O failures (Hermes WAL retry pattern).
- */
-
-// Retry constants (adapted from Hermes: MAX_WRITE_RETRIES=15, jitter 20-150ms)
-const MAX_SAVE_RETRIES = 5;
-const INITIAL_RETRY_MS = 50;
-const MAX_RETRY_MS = 300;
-
-export function saveDatabase(): void {
-  if (!_db || !_dbPath) return;
-  const data = _db.export();
-  const buffer = Buffer.from(data);
-  const dir = path.dirname(_dbPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  // ── Backup & health check (OpenClaw pattern) ──
-  if (fs.existsSync(_dbPath)) {
-    const oldSize = fs.statSync(_dbPath).size;
-    // Health check: flag if new data is >50% smaller than old (potential corruption)
-    if (oldSize > 0 && buffer.length < oldSize * 0.5) {
-      const clobberedPath = path.join(paths.backups(), `super-agent.db.clobbered.${Date.now()}`);
-      logger.warn({ oldSize, newSize: buffer.length, clobberedPath },
-        "Database size dropped >50%! Saving clobbered snapshot before overwrite");
-      try { fs.copyFileSync(_dbPath, clobberedPath); } catch { /* best-effort */ }
-    }
-    // Rotate backup: current → .bak
-    const bakPath = _dbPath + ".bak";
-    try { fs.copyFileSync(_dbPath, bakPath); } catch { /* best-effort */ }
-  }
-
-  // ── Atomic write with retry (Hermes pattern) ──
-  const tmpPath = _dbPath + ".tmp";
-  let attempt = 0;
-  while (true) {
-    try {
-      fs.writeFileSync(tmpPath, buffer);
-      try {
-        fs.renameSync(tmpPath, _dbPath);
-      } catch {
-        // Windows fallback: renameSync fails if target exists on some FS
-        fs.copyFileSync(tmpPath, _dbPath);
-        try { fs.unlinkSync(tmpPath); } catch { /* best-effort cleanup */ }
-      }
-      return; // success
-    } catch (err) {
-      attempt++;
-      if (attempt >= MAX_SAVE_RETRIES) {
-        logger.error({ attempt, err }, "saveDatabase failed after all retries");
-        throw err;
-      }
-      const jitter = INITIAL_RETRY_MS + Math.random() * (MAX_RETRY_MS - INITIAL_RETRY_MS);
-      logger.warn({ attempt, jitter: Math.round(jitter) }, "saveDatabase retry after I/O error");
-      // B-13: 用 Atomics.wait 替代 busy-wait 自旋，避免阻塞主线程 CPU
-      const sharedBuf = new SharedArrayBuffer(4);
-      const sharedArr = new Int32Array(sharedBuf);
-      Atomics.wait(sharedArr, 0, 0, Math.round(jitter));
-    }
-  }
-}
-
-/**
- * Schedule a debounced save (P1-01). Merges rapid writes into a single disk flush.
- * @param delayMs Debounce delay in ms (default 1000)
- */
-export function scheduleSave(delayMs = 1000): void {
-  if (_saveTimer) clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(() => {
-    saveDatabase();
-    _saveTimer = null;
-  }, delayMs);
-}
-
-/** Flush any pending scheduled save immediately. */
-export function flushPendingSave(): void {
-  if (_saveTimer) {
-    clearTimeout(_saveTimer);
-    _saveTimer = null;
-    saveDatabase();
-  }
-}
-
-/** Close the database — flush pending saves and release resources. */
-export function closeDatabase(): void {
-  if (_db) {
-    flushPendingSave();
-    saveDatabase();
-    _db.close();
-    _db = null;
-    _dbPath = null;
-    // ISSUE-5 修复：重置 FTS5 缓存，确保下次 initDatabase 后重新检测
-    _fts5Cache = null;
-  }
-}
-
-/**
- * Clean up old .clobbered.* backup snapshots older than `retentionDays`.
- * Call periodically or at startup.
- */
-export function cleanupOldBackups(retentionDays = 7): number {
-  const backupsDir = paths.backups();
-  const cutoff = Date.now() - retentionDays * 86_400_000;
-  let cleaned = 0;
-
-  try {
-    if (!fs.existsSync(backupsDir)) return 0;
-    const files = fs.readdirSync(backupsDir);
-    for (const file of files) {
-      if (!file.includes(".clobbered.")) continue;
-      // Extract timestamp from filename: "super-agent.db.clobbered.1713100000000"
-      const tsStr = file.split(".clobbered.")[1];
-      const ts = parseInt(tsStr, 10);
-      if (!isNaN(ts) && ts < cutoff) {
-        try {
-          fs.unlinkSync(path.join(backupsDir, file));
-          cleaned++;
-        } catch { /* best-effort */ }
-      }
-    }
-    if (cleaned > 0) {
-      logger.info({ cleaned, retentionDays }, "Cleaned up old clobbered backups");
-    }
-  } catch { /* ignore directory read errors */ }
-  return cleaned;
-}
-
-// ─── Graceful Shutdown Signal Handlers ───────────────────────
-// Ensure pending writes are flushed before process exits.
-
-let _signalHandlersRegistered = false;
-
-export function registerShutdownHandlers(): void {
-  if (_signalHandlersRegistered) return;
-  _signalHandlersRegistered = true;
-
-  // Hermes atexit pattern: only flush data, do NOT call process.exit().
-  // Let Fastify or the framework control the actual exit flow.
-  const shutdown = (signal: string) => {
-    logger.info({ signal }, "Received signal, flushing database");
-    flushPendingSave();
-    // Flush JSONL session index
-    try { getJsonlWriter().flush(); } catch { /* best-effort */ }
-    if (_db) {
-      saveDatabase();
-      // Do NOT close DB or call process.exit — framework handles graceful shutdown
-    }
-  };
-
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-
-  // Final safety net: flush before Node.js exits naturally
-  process.on("beforeExit", () => {
-    if (_db) {
-      flushPendingSave();
-      saveDatabase();
-    }
-  });
-}
+import { logger } from "./sqlite/logger.js";
+import { getDatabase, scheduleSave } from "./sqlite/client.js";
 
 // ─── SQLiteBackend: MemoryBackend Implementation ────────────
 
@@ -2688,4 +1571,213 @@ export function saveNudgeConfig(config: Record<string, unknown>): void {
     ["nudge_config", JSON.stringify(config), new Date().toISOString()]
   );
   scheduleSave();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Video Jobs CRUD（ShortVideoCrew 视频任务持久化）
+// 表结构见 migrations.ts v15（基础字段）+ v16（agent_providers / template_id 扩列）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * video_jobs 行类型。
+ * - 必需字段：id/status/input_json/cost_estimate_cny/cost_limit_cny/created_at/updated_at
+ * - 可选字段：progress_json/output_json/error/workspace_dir/cost_actual_cny/concurrency_slot
+ * - 扩展字段（v16）：agent_providers / agent_provider_template_id
+ */
+export interface VideoJobRow {
+  id: string;
+  status: string;
+  input_json: string;
+  progress_json?: string | null;
+  output_json?: string | null;
+  error?: string | null;
+  workspace_dir?: string | null;
+  cost_estimate_cny: number;
+  cost_actual_cny?: number | null;
+  cost_limit_cny: number;
+  concurrency_slot?: number | null;
+  created_at: number;
+  updated_at: number;
+  agent_providers?: string | null;
+  agent_provider_template_id?: string | null;
+}
+
+/** 视频任务行内部反序列化（SQL.js 的 values 是数组形式） */
+function rowToVideoJob(cols: string[], vals: unknown[]): VideoJobRow {
+  const obj: Record<string, unknown> = {};
+  for (let i = 0; i < cols.length; i++) obj[cols[i]] = vals[i];
+  return obj as unknown as VideoJobRow;
+}
+
+/** 插入视频任务行 */
+export function insertVideoJob(row: VideoJobRow): void {
+  const db = getDatabase();
+  db.run(
+    `INSERT OR REPLACE INTO video_jobs (
+      id, status, input_json, progress_json, output_json, error,
+      workspace_dir, cost_estimate_cny, cost_actual_cny, cost_limit_cny,
+      concurrency_slot, created_at, updated_at,
+      agent_providers, agent_provider_template_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      row.id,
+      row.status,
+      row.input_json,
+      row.progress_json ?? null,
+      row.output_json ?? null,
+      row.error ?? null,
+      row.workspace_dir ?? null,
+      row.cost_estimate_cny,
+      row.cost_actual_cny ?? null,
+      row.cost_limit_cny,
+      row.concurrency_slot ?? null,
+      row.created_at,
+      row.updated_at,
+      row.agent_providers ?? null,
+      row.agent_provider_template_id ?? null,
+    ],
+  );
+  scheduleSave();
+}
+
+/** 部分更新视频任务行（只更新 patch 中提供的字段） */
+export function updateVideoJob(id: string, patch: Partial<VideoJobRow>): void {
+  const keys = Object.keys(patch).filter((k) => k !== "id") as (keyof VideoJobRow)[];
+  if (keys.length === 0) return;
+  const db = getDatabase();
+  const sets = keys.map((k) => `${String(k)} = ?`).join(", ");
+  const params = keys.map((k) => {
+    const v = (patch as Record<string, unknown>)[k as string];
+    return v === undefined ? null : (v as string | number | null);
+  });
+  params.push(id);
+  db.run(`UPDATE video_jobs SET ${sets} WHERE id = ?`, params);
+  scheduleSave();
+}
+
+/** 按 id 获取单条视频任务；不存在返回 null */
+export function getVideoJob(id: string): VideoJobRow | null {
+  const db = getDatabase();
+  const res = db.exec("SELECT * FROM video_jobs WHERE id = ?", [id]);
+  if (!res.length || !res[0].values.length) return null;
+  return rowToVideoJob(res[0].columns, res[0].values[0]);
+}
+
+/** 列表查询：支持 status 过滤 + 分页（按 created_at DESC） */
+export function listVideoJobs(opts: {
+  status?: string;
+  limit?: number;
+  offset?: number;
+} = {}): VideoJobRow[] {
+  const db = getDatabase();
+  const { status, limit = 20, offset = 0 } = opts;
+  let sql = "SELECT * FROM video_jobs";
+  const params: (string | number)[] = [];
+  if (status) {
+    sql += " WHERE status = ?";
+    params.push(status);
+  }
+  sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+  params.push(limit, offset);
+  const res = db.exec(sql, params);
+  if (!res.length) return [];
+  return res[0].values.map((row: unknown[]) => rowToVideoJob(res[0].columns, row));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Provider Templates CRUD（视频 Agent 模型配置模板）
+// 表结构见 migrations.ts v16：id/name/description/providers_json/is_preset/created_at
+// 系统预设 is_preset=1（migrations 内建 4 条），用户模板 is_preset=0
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** agent_provider_templates 行类型 */
+export interface ProviderTemplateRow {
+  id: string;
+  name: string;
+  description: string | null;
+  providers_json: string;
+  is_preset: number;
+  created_at: number;
+}
+
+function rowToProviderTemplate(cols: string[], vals: unknown[]): ProviderTemplateRow {
+  const obj: Record<string, unknown> = {};
+  for (let i = 0; i < cols.length; i++) obj[cols[i]] = vals[i];
+  return obj as unknown as ProviderTemplateRow;
+}
+
+/** 列表所有模板（系统预设优先，按 created_at DESC） */
+export function getProviderTemplates(): ProviderTemplateRow[] {
+  const db = getDatabase();
+  const res = db.exec(
+    "SELECT * FROM agent_provider_templates ORDER BY is_preset DESC, created_at DESC",
+  );
+  if (!res.length) return [];
+  return res[0].values.map((row: unknown[]) => rowToProviderTemplate(res[0].columns, row));
+}
+
+/** 插入用户模板（系统预设由 migrations 写入，不应走此函数） */
+export function insertProviderTemplate(row: ProviderTemplateRow): void {
+  const db = getDatabase();
+  db.run(
+    `INSERT INTO agent_provider_templates (
+      id, name, description, providers_json, is_preset, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      row.id,
+      row.name,
+      row.description ?? null,
+      row.providers_json,
+      row.is_preset,
+      row.created_at,
+    ],
+  );
+  scheduleSave();
+}
+
+/**
+ * 更新用户模板（系统预设 is_preset=1 受 WHERE 拦截，返回 false）。
+ * patch 可选字段：name / description / providers_json，至少提供一个。
+ */
+export function updateProviderTemplate(
+  id: string,
+  patch: { name?: string; description?: string; providers_json?: string },
+): boolean {
+  const keys = Object.keys(patch).filter(
+    (k) => (patch as Record<string, unknown>)[k] !== undefined,
+  );
+  if (keys.length === 0) return false;
+  const db = getDatabase();
+  const sets = keys.map((k) => `${k} = ?`).join(", ");
+  const params: (string | number | null)[] = keys.map(
+    (k) => (patch as Record<string, unknown>)[k] as string,
+  );
+  params.push(id);
+  db.run(
+    `UPDATE agent_provider_templates SET ${sets} WHERE id = ? AND is_preset = 0`,
+    params,
+  );
+  // sql.js 无 changes()，通过回查判断是否生效
+  const check = db.exec(
+    "SELECT id FROM agent_provider_templates WHERE id = ? AND is_preset = 0",
+    [id],
+  );
+  const hit = check.length > 0 && check[0].values.length > 0;
+  if (hit) scheduleSave();
+  return hit;
+}
+
+/** 删除用户模板（系统预设 is_preset=1 受 WHERE 拦截，返回 false） */
+export function deleteProviderTemplate(id: string): boolean {
+  const db = getDatabase();
+  // 先查是否存在且非预设
+  const pre = db.exec(
+    "SELECT id FROM agent_provider_templates WHERE id = ? AND is_preset = 0",
+    [id],
+  );
+  const exists = pre.length > 0 && pre[0].values.length > 0;
+  if (!exists) return false;
+  db.run("DELETE FROM agent_provider_templates WHERE id = ? AND is_preset = 0", [id]);
+  scheduleSave();
+  return true;
 }
