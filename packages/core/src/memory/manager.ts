@@ -833,11 +833,19 @@ export class MemoryManager {
   /**
    * 运行时更新 embedder 的 API Key（设置页面保存千问 Key 后热生效）。
    * 仅当 embedder 为 QwenEmbedding 时有效，其余类型静默忽略。
+   *
+   * CORE-P1-05 备注：启动时若无 Key，embedder 会被初始化为 HRRProvider，
+   * 此方法对 HRR 实例 noop。调用方应根据返回值判断是否需要提示用户重启服务
+   * 以切换到 QwenEmbedding。
+   *
+   * @returns true 表示 Key 已热更新；false 表示当前 embedder 不支持热更新（需重启）。
    */
-  updateEmbedderApiKey(apiKey: string): void {
+  updateEmbedderApiKey(apiKey: string): boolean {
     if ("updateApiKey" in this.embedder && typeof (this.embedder as any).updateApiKey === "function") {
       (this.embedder as any).updateApiKey(apiKey);
+      return true;
     }
+    return false;
   }
 
   /**

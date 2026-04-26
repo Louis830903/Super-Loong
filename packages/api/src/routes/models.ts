@@ -9,13 +9,21 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { getModelCatalog, getProviderById, getModelById, LLMProvider, logConfigChange, saveAgentConfig } from "@super-agent/core";
+import {
+  getModelCatalog,
+  getProviderById,
+  getModelById,
+  LLMProvider,
+  logConfigChange,
+  saveAgentConfig,
+  // SEC-P0-04 · M1：统一使用 core 的 maskApiKey，删除本地重复实现。
+  // SEC-P0-04 · E1：PUT /providers/:id 也走脱敏哨兵，阻止前端回写污染。
+  maskApiKey,
+  isMaskedApiKey,
+} from "@super-agent/core";
 import type { AppContext } from "../context.js";
-
-function maskApiKey(key: string): string {
-  if (!key || key.length < 8) return key ? "***" : "";
-  return key.slice(0, 3) + "***..." + key.slice(-3);
-}
+// SEC-P0-06：PUT / DELETE 需 RBAC 鉴权，对齐 /api/ws/broadcast 等同项目端点风格。
+import { requirePermission } from "../auth/index.js";
 
 export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
   // ── GET /api/models/catalog ─────────────────────────────────
@@ -49,8 +57,11 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   // ── PUT /api/models/providers/:id ───────────────────────────
+  // SEC-P0-06：增加 requirePermission("*") 防止未鉴权写入；
+  //            与 /api/ws/broadcast / /api/auth/keys 同级安全等级。
   app.put<{ Params: { id: string }; Body: { apiKey?: string; baseUrl?: string; isEnabled?: boolean; selectedModel?: string } }>(
     "/api/models/providers/:id",
+    { preHandler: requirePermission("*") },
     async (request, reply) => {
       const { id } = request.params;
       const body = request.body as any;
@@ -61,26 +72,47 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
         return reply.status(404).send({ error: "Unknown provider" });
       }
 
+      // SEC-P0-04 · E1 脱敏哨兵：前端 GET 到的是脱敏 key，整体回传时不能覆盖原值。
+      const existingRecord = ctx.providerStore.get(id);
+      const existingKeyMasked = existingRecord?.apiKey ? maskApiKey(existingRecord.apiKey) : undefined;
+      const incomingKeyRaw = typeof body.apiKey === "string" ? body.apiKey : "";
+      const effectiveApiKey =
+        incomingKeyRaw && !isMaskedApiKey(incomingKeyRaw, existingKeyMasked)
+          ? incomingKeyRaw
+          : body.apiKey === "" ? "" : undefined; // 显式空串视为"清空 key"，undefined 则保持原值
+
       const record = ctx.providerStore.upsert(id, {
-        apiKey: body.apiKey,
+        apiKey: effectiveApiKey,
         baseUrl: body.baseUrl,
         isEnabled: body.isEnabled,
         selectedModel: body.selectedModel,
       });
 
+      // SEC-P0-06 · 审计加固：记录变更前 baseUrl，便于追溯误改。
       logConfigChange("config.provider.upsert", {
         providerId: id,
         selectedModel: body.selectedModel,
         baseUrl: body.baseUrl,
+        previousBaseUrl: existingRecord?.baseUrl,
         isEnabled: body.isEnabled,
-        keyChanged: body.apiKey !== undefined,
+        keyChanged: effectiveApiKey !== undefined,
+        keyRejectedAsMasked: incomingKeyRaw !== "" && effectiveApiKey === undefined && body.apiKey !== "",
       });
 
       // 千问 provider 的 API Key 同时用于 QwenEmbedding 向量检索
-      // 保存后热更新 MemoryManager 中的 embedder，无需重启即生效
-      if (id === "qwen" && body.apiKey) {
-        ctx.memoryManager.updateEmbedderApiKey(body.apiKey);
-        app.log.info("QwenEmbedding API Key hot-reloaded from settings page");
+      // CORE-P1-05：若启动时已有 Key（embedder 为 QwenEmbedding），保存后热更新无需重启；
+      //             若启动时无 Key（embedder 为 HRRProvider），updateEmbedderApiKey 返回 false，
+      //             需提示用户重启服务以切换到 QwenEmbedding。
+      if (id === "qwen" && effectiveApiKey) {
+        const hotReloaded = ctx.memoryManager.updateEmbedderApiKey(effectiveApiKey);
+        if (hotReloaded) {
+          app.log.info("QwenEmbedding API Key hot-reloaded from settings page");
+        } else {
+          app.log.warn(
+            "千问 API Key 已保存，但当前 embedder 为 HRRProvider（启动时未配置 Key）。" +
+            "需重启服务后方可切换为 QwenEmbedding 高级语义检索。",
+          );
+        }
       }
 
       // If this provider now has a valid config, update the default agent's LLM settings
@@ -124,8 +156,10 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
   );
 
   // ── DELETE /api/models/providers/:id/key ────────────────────
+  // SEC-P0-06：同样需要 RBAC 保护，避免未鉴权清空 key 造成服务中断。
   app.delete<{ Params: { id: string } }>(
     "/api/models/providers/:id/key",
+    { preHandler: requirePermission("*") },
     async (request, reply) => {
       const ok = ctx.providerStore.clearKey(request.params.id);
       if (!ok) {
@@ -137,8 +171,18 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
   );
 
   // ── POST /api/models/providers/:id/test ─────────────────────
+  // API-P1-01 / SEC：此前该端点无鉴权、无限速，任何客户端可触发对外 LLM 调用
+  // 造成 apiKey 侧信道消耗；现加固三层：
+  //   1) preHandler: requirePermission("*")  RBAC 限管理员调用
+  //   2) rateLimit 5 req/min  防暴力扫描/配额耗尽
+  //   3) catch 块改为 throw，由全局 registerErrorHandler 按 NODE_ENV 脱敏输出，
+  //      不再在响应里直出 err.message（API-P1-03 规范）
   app.post<{ Params: { id: string }; Body: { model?: string; apiKey?: string; baseUrl?: string } }>(
     "/api/models/providers/:id/test",
+    {
+      preHandler: requirePermission("*"),
+      config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+    },
     async (request, reply) => {
       const { id } = request.params;
       const body = request.body as any;
@@ -184,10 +228,12 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
           response: result.content?.slice(0, 100) ?? "",
           usage: result.usage,
         };
-      } catch (err: any) {
+      } catch (err) {
+        // API-P1-03：详细错误仅进日志，对外统一 502 不回显内部栈
+        app.log.error({ providerId: id, modelId, err }, "Provider connectivity test failed");
         return reply.status(502).send({
           success: false,
-          error: err.message || "Connection failed",
+          error: "Connection failed",
         });
       }
     }
