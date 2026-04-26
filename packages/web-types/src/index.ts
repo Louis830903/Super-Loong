@@ -32,4 +32,4 @@ export type VideoAgentId = (typeof VIDEO_AGENT_IDS)[keyof typeof VIDEO_AGENT_IDS
 
 // ─── API Wire Types（CTR-P1-01：前端 API 契约单一数据源）───
 // 所有 interface 从 ./api-types 子模块 re-export，保持此 index.ts 简洁。
-export * from "./api-types.js";
+export * from "./api-types";
