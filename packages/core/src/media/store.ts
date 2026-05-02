@@ -10,7 +10,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import crypto from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { resolveHome } from "../config/index.js";
 import {
   MEDIA_STORE_DIR,
@@ -108,7 +108,7 @@ export async function saveMediaBuffer(
   await cleanExpiredMedia().catch(() => {});
 
   const dir = resolveSubdir(subdir);
-  const baseId = crypto.randomUUID();
+  const baseId = randomUUID();
 
   // 推断扩展名: 优先从原始文件名取，其次从 MIME 推断
   const ext = originalFilename

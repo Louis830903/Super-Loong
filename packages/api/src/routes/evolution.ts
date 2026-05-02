@@ -160,7 +160,9 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
       });
       return reply.send(result);
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message ?? "Review 执行失败" });
+      // API-P1-03：内部栈仅进日志，对外通用文案
+      app.log.error({ route: "/api/evolution/review", err }, "Review 执行失败");
+      return reply.status(500).send({ error: "Review 执行失败" });
     }
   });
 
@@ -183,7 +185,8 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
       });
       return reply.send(result);
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message ?? "Flush 执行失败" });
+      app.log.error({ route: "/api/evolution/flush", err }, "Flush 执行失败");
+      return reply.status(500).send({ error: "Flush 执行失败" });
     }
   });
 
@@ -277,7 +280,8 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
       const results = await ctx.sessionSearch.search(query, { sessionFilter, roleFilter: roleFilter as any, limit });
       return reply.send({ results, count: results.length });
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message ?? "搜索失败" });
+      app.log.error({ route: "/api/evolution/search", err }, "搜索失败");
+      return reply.status(500).send({ error: "搜索失败" });
     }
   });
 
@@ -296,7 +300,8 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
       const result = await ctx.knowledgeExtractor.extractFromCases(cases);
       return reply.send(result);
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message ?? "知识提取失败" });
+      app.log.error({ route: "/api/evolution/extract", err }, "知识提取失败");
+      return reply.status(500).send({ error: "知识提取失败" });
     }
   });
 
@@ -316,7 +321,8 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
       });
       return reply.send(report);
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message ?? "Insights 生成失败" });
+      app.log.error({ route: "/api/evolution/insights", err }, "Insights 生成失败");
+      return reply.status(500).send({ error: "Insights 生成失败" });
     }
   });
 
@@ -338,7 +344,8 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
       const result = await ctx.verificationPipeline.verify(proposal);
       return reply.send(result);
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message ?? "验证执行失败" });
+      app.log.error({ route: "/api/evolution/verify", err }, "验证执行失败");
+      return reply.status(500).send({ error: "验证执行失败" });
     }
   });
 

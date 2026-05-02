@@ -10,6 +10,7 @@
 
 import type { FastifyInstance } from "fastify";
 import websocket from "@fastify/websocket";
+import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import type { PlatformEventType, PlatformEvent } from "@super-agent/core";
 import {
@@ -92,6 +93,13 @@ interface WsClient {
 
 const clients = new Map<string, WsClient>();
 
+// SEC-P0-07：WebSocket 并发连接上限，默认 500。超过时新连接直接 1013 拒绝。
+const MAX_WS_CLIENTS = (() => {
+  const raw = process.env.MAX_WS_CLIENTS;
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 500;
+})();
+
 // ─── Register WebSocket Server ───────────────────────────────
 
 export async function registerWebSocket(app: FastifyInstance, ctx: AppContext): Promise<void> {
@@ -118,17 +126,67 @@ export async function registerWebSocket(app: FastifyInstance, ctx: AppContext): 
 
   // WebSocket endpoint
   app.get("/ws", { websocket: true }, (socket: WebSocket, request) => {
-    const clientId = crypto.randomUUID();
+    // ── SEC-P0-07 · JWT 鉴权（仅在 AUTH_ENABLED=true 时强制） ──
+    // 令牌来源：?token=xxx 或 Authorization: Bearer xxx。
+    // 任一验证失败 → 发送 error 事件 + 4001 关闭。
+    const authEnabled = process.env.AUTH_ENABLED === "true";
+    const url = new URL(request.url ?? "/", `http://${request.headers.host || "localhost"}`);
+    const tokenFromQuery = url.searchParams.get("token") ?? "";
+    const authHeader = (request.headers["authorization"] as string | undefined) || "";
+    const tokenFromHeader = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    const token = tokenFromQuery || tokenFromHeader;
+
+    // 解码出的 role，默认 viewer；AUTH 关闭时视为 admin（保留兼容）。
+    let jwtRole: string = authEnabled ? "viewer" : "admin";
+
+    if (authEnabled) {
+      if (!token) {
+        app.log.warn("WebSocket rejected: missing token");
+        send(socket, { type: "error", error: "Unauthorized: missing authentication token" });
+        socket.close(4001, "Unauthorized");
+        return;
+      }
+      try {
+        const decoded = (app as unknown as { jwt: { verify: (t: string) => unknown } }).jwt.verify(token);
+        const payload = decoded as { role?: string } | null;
+        if (!payload) {
+          send(socket, { type: "error", error: "Unauthorized: invalid token" });
+          socket.close(4001, "Unauthorized");
+          return;
+        }
+        jwtRole = payload.role ?? "viewer";
+      } catch (err) {
+        app.log.warn({ err }, "WebSocket rejected: JWT verify failed");
+        send(socket, { type: "error", error: "Unauthorized: invalid token" });
+        socket.close(4001, "Unauthorized");
+        return;
+      }
+    }
+
+    // ── SEC-P0-07 · 连接上限检查 ──
+    if (clients.size >= MAX_WS_CLIENTS) {
+      app.log.warn({ total: clients.size, max: MAX_WS_CLIENTS }, "WebSocket refused: max clients reached");
+      send(socket, { type: "error", error: "Service temporarily unavailable: too many connections" });
+      socket.close(1013, "Too many connections");
+      return;
+    }
+
+    const clientId = randomUUID();
+    // ── SEC-P0-07 · 按 role 决定默认订阅（E3 前端配套） ──
+    //   admin / operator：保留 ["*"]，保证既有 dashboard 不受影响。
+    //   viewer / agent  ：空集，须前端显式 subscribe 目标主题，
+    //                      避免把全平台事件外泄给低权限角色。
+    const defaultTopics = (jwtRole === "admin" || jwtRole === "operator") ? ["*"] : [];
     const client: WsClient = {
       id: clientId,
       socket,
-      topics: new Set(["*"]),
+      topics: new Set<string>(defaultTopics),
       connectedAt: new Date(),
       lastPingAt: new Date(),
     };
     clients.set(clientId, client);
 
-    app.log.info({ clientId, total: clients.size }, "WebSocket client connected");
+    app.log.info({ clientId, role: jwtRole, total: clients.size }, "WebSocket client connected");
 
     // Send welcome message
     send(socket, {

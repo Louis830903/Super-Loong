@@ -81,3 +81,165 @@ export async function apiFetch<T = unknown>(
   }
   return res.json();
 }
+
+// ─── API Fetch Raw（非 JSON 场景统一认证层）─────────────────
+//
+// 返回原始 Response，不强制解析 JSON。
+// 统一处理：
+// 1. Authorization 头自动附加（从 localStorage 读 token）
+// 2. Content-Type 仅在有 body 时添加
+// 3. 401 自动清理过期 token 并提示
+// 4. 网络错误（服务不可达）统一 toast
+//
+// 非 401 的 HTTP 错误由调用方自行处理（便于读 blob / stream / SSE）。
+export async function apiFetchRaw(
+  path: string,
+  options?: RequestInit,
+): Promise<Response> {
+  const hasBody = options?.body !== undefined && options?.body !== null;
+  const token = typeof window !== "undefined"
+    ? localStorage.getItem("super-agent.auth-token")
+    : null;
+
+  const headers: HeadersInit = {
+    ...(hasBody ? { "Content-Type": "application/json" } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options?.headers,
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  } catch (e: any) {
+    // 透传 AbortError，调用方可区分主动中断和网络错误
+    if (e?.name === "AbortError") throw e;
+    const message = e?.message?.includes("fetch")
+      ? "无法连接到服务器，请检查网络或服务是否启动"
+      : (e?.message || "网络请求失败");
+    showToast(message, "error");
+    throw new Error(message);
+  }
+
+  if (res.status === 401 && token) {
+    localStorage.removeItem("super-agent.auth-token");
+    showToast("认证已过期，请重新登录", "error");
+    throw new Error("认证已过期");
+  }
+
+  return res;
+}
+
+// ─── 授权下载 ─────────────────────────────────────────────
+//
+// [WEB-P1-01] 替代 `<a href={...} download>` 模式。
+// 浏览器 <a> 下载无法附加 Authorization 头，在启用鉴权的后端会被 401 拦截。
+// 本函数：走 fetch 携 token → blob → 临时 URL → 触发下载 → 延后 revoke。
+export async function downloadAuthorized(
+  path: string,
+  filename: string,
+): Promise<void> {
+  const res = await apiFetchRaw(path);
+  if (!res.ok) {
+    // 尝试解析服务器返回的错误体（API-P1-03 脱敏后为通用文案）
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    const msg = err.error || err.detail || `下载失败 (${res.status})`;
+    showToast(msg, "error");
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    // 部分浏览器要求 anchor 已入 DOM 才触发下载
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    // 浏览器下载启动后再释放，避免某些浏览器下载中断
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+}
+
+// ─── SSE 流式读取（替代 EventSource）──────────────────────
+//
+// [WEB-P1-02] EventSource 原生不能附加 Authorization 头，JWT 鉴权端点无法连接。
+// 本函数：用 fetch + ReadableStream 读 text/event-stream，自动带 token，
+// 支持断线重连与主动中断；onEvent 收到已 JSON.parse 的 payload。
+export interface SseOptions<T = any> {
+  onEvent: (data: T) => void;
+  onOpen?: () => void;
+  onError?: (err: unknown) => void;
+  /** 断线重连间隔（ms），默认 3000；传 0 则不重连 */
+  reconnectDelayMs?: number;
+}
+
+export function apiFetchSse<T = any>(
+  path: string,
+  opts: SseOptions<T>,
+): () => void {
+  const reconnectDelay = opts.reconnectDelayMs ?? 3000;
+  let controller: AbortController | null = null;
+  let stopped = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const connect = async () => {
+    if (stopped) return;
+    controller = new AbortController();
+    try {
+      const res = await apiFetchRaw(path, {
+        headers: { Accept: "text/event-stream" },
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) {
+        throw new Error(`SSE 连接失败 (${res.status})`);
+      }
+      opts.onOpen?.();
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (!stopped) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE 事件以空行（\n\n）分隔
+        let idx: number;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const chunk = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          for (const rawLine of chunk.split("\n")) {
+            if (!rawLine.startsWith("data: ")) continue;
+            const data = rawLine.slice(6);
+            if (data === "[DONE]") continue;
+            try {
+              opts.onEvent(JSON.parse(data) as T);
+            } catch {
+              /* 非 JSON 行静默忽略 */
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      if (stopped || err?.name === "AbortError") return;
+      opts.onError?.(err);
+      if (reconnectDelay > 0) {
+        reconnectTimer = setTimeout(connect, reconnectDelay);
+      }
+    }
+  };
+
+  void connect();
+
+  // 返回取消函数：主动中断 + 阻止重连
+  return () => {
+    stopped = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    controller?.abort();
+  };
+}

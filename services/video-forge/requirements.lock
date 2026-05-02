@@ -1,0 +1,37 @@
+# Video-Forge Python 依赖锁定文件
+#
+# 来源：从 Pixelle-Video/pyproject.toml 裁剪而来
+# 裁剪规则（Spec v1.4 §4.1 决策 D2）：
+#   - 剔除 openai（LLM 由 super-agent 侧管理）
+#   - 剔除 streamlit（Web UI 不需要）
+#   - 剔除 fastmcp（MCP 集成不需要）
+#   - 保留 beautifulsoup4（media adapter 内部解析页面仍需要）
+#
+# 安装方式：uv pip install -r requirements.lock
+
+# ── 框架层 ──
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0.0
+python-multipart>=0.0.12
+
+# ── 多媒体处理 ──
+ffmpeg-python>=0.2.0
+moviepy==1.0.3
+pillow>=10.0.0,<12
+
+# ── 音视频生成 ──
+edge-tts==7.2.7
+playwright>=1.58.0
+
+# ── ComfyUI / RunningHub 桥接 ──
+comfykit>=0.1.12
+
+# ── 网络与数据 ──
+httpx>=0.28.1
+beautifulsoup4>=4.14.2
+
+# ── 工具库 ──
+loguru>=0.7.0
+pyyaml>=6.0.0
+certifi>=2025.10.5

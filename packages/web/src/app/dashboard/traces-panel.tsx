@@ -11,8 +11,8 @@
  * - 按状态/操作过滤
  */
 
-import { useEffect, useState, useRef, useCallback } from "react";
-import { API_BASE } from "@/lib/utils";
+import { useEffect, useState, useCallback } from "react";
+import { apiFetch, apiFetchSse } from "@/lib/utils";
 
 // ─── 类型定义 ────────────────────────────────────
 
@@ -49,18 +49,15 @@ export function TracesPanel() {
   const [connected, setConnected] = useState(false);
   const [tracingEnabled, setTracingEnabled] = useState(false); // 后端追踪开关状态
   const [toggling, setToggling] = useState(false); // 开关操作中
-  const evtSourceRef = useRef<EventSource | null>(null);
 
   // 加载历史 Trace 列表
   const loadTraces = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/traces`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.traces) setTraces(data.traces);
-        // 后端返回 enabled 字段表示追踪是否启用
-        if (data.enabled === false) setTracingEnabled(false);
-      }
+      // [WEB-P1-04] 统一走 apiFetch，自动注入 Authorization
+      const data = await apiFetch<{ traces?: TraceItem[]; enabled?: boolean }>("/api/traces");
+      if (data.traces) setTraces(data.traces);
+      // 后端返回 enabled 字段表示追踪是否启用
+      if (data.enabled === false) setTracingEnabled(false);
     } catch {
       // API 未启用追踪或不可达
     }
@@ -70,35 +67,29 @@ export function TracesPanel() {
   useEffect(() => {
     loadTraces();
 
-    const evt = new EventSource(`${API_BASE}/api/traces/live`);
-    evtSourceRef.current = evt;
-
-    evt.onopen = () => setConnected(true);
-    evt.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
+    // [WEB-P1-02] 原生 EventSource 无法带 Authorization 头，改用 apiFetchSse
+    const stop = apiFetchSse<any>("/api/traces/live", {
+      onOpen: () => setConnected(true),
+      onEvent: (msg) => {
         // 处理连接确认消息（含追踪启用状态）
-        if (msg.type === "connected") {
+        if (msg?.type === "connected") {
           setConnected(true);
           setTracingEnabled(msg.enabled === true);
           return;
         }
         // 心跳消息携带最新追踪状态（支持动态开关同步）
-        if (msg.type === "heartbeat") {
+        if (msg?.type === "heartbeat") {
           setTracingEnabled(msg.enabled === true);
           return;
         }
-        if (msg.type === "span") {
+        if (msg?.type === "span") {
           setLiveSpans((prev) => [...prev.slice(-200), msg]);
         }
-      } catch {}
-    };
-    evt.onerror = () => setConnected(false);
+      },
+      onError: () => setConnected(false),
+    });
 
-    return () => {
-      evt.close();
-      evtSourceRef.current = null;
-    };
+    return () => { stop(); };
   }, [loadTraces]);
 
   // 加载单条 Trace 详情
@@ -106,11 +97,9 @@ export function TracesPanel() {
     setSelectedTrace(traceId);
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/traces/${traceId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setTraceSpans(data.spans || []);
-      }
+      // [WEB-P1-04] 统一 apiFetch
+      const data = await apiFetch<{ spans?: Span[] }>(`/api/traces/${traceId}`);
+      setTraceSpans(data.spans || []);
     } catch {
       setTraceSpans([]);
     }
@@ -121,18 +110,17 @@ export function TracesPanel() {
   const toggleTracing = async () => {
     setToggling(true);
     try {
-      const res = await fetch(`${API_BASE}/api/traces/toggle`, {
+      // [WEB-P1-04] 统一 apiFetch
+      const data = await apiFetch<{ enabled: boolean }>("/api/traces/toggle", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: !tracingEnabled }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setTracingEnabled(data.enabled);
-        // 开启后刷新数据
-        if (data.enabled) setTimeout(loadTraces, 500);
-      }
-    } catch {}
+      setTracingEnabled(data.enabled);
+      // 开启后刷新数据
+      if (data.enabled) setTimeout(loadTraces, 500);
+    } catch {
+      /* showToast 已在 apiFetch 内部触发 */
+    }
     setToggling(false);
   };
 

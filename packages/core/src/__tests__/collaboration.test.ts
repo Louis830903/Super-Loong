@@ -234,6 +234,7 @@ describe("CollaborationOrchestrator history management", () => {
 
     for (let i = 0; i < 5; i++) {
       history.push({
+        type: "crew",
         crewId: `crew_${i}`,
         name: `Crew ${i}`,
         process: "sequential",
@@ -245,6 +246,7 @@ describe("CollaborationOrchestrator history management", () => {
     }
     for (let i = 0; i < 3; i++) {
       history.push({
+        type: "groupchat",
         chatId: `gchat_${i}`,
         name: `GroupChat ${i}`,
         status: "completed",
@@ -274,10 +276,12 @@ describe("CollaborationOrchestrator history management", () => {
     const history = (orchestrator as any).runHistory as Array<CrewResult | GroupChatResult>;
 
     history.push({
+      type: "crew",
       crewId: "c1", name: "C1", process: "sequential", status: "completed",
       taskOutputs: [], finalOutput: "", totalDurationMs: 100,
     } as CrewResult);
     history.push({
+      type: "groupchat",
       chatId: "g1", name: "G1", status: "completed",
       messages: [], turns: 3, totalDurationMs: 200,
     } as GroupChatResult);

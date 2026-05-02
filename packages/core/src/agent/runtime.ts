@@ -15,6 +15,10 @@ import pino from "pino";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { LLMProvider } from "../llm/provider.js";
 import type { LLMToolDef } from "../llm/provider.js";
+import {
+  partitionToolCallsByJsonValidity,
+  buildInvalidToolCallRejectMessage,
+} from "../llm/tool-call-validator.js";
 import type {
   AgentConfig,
   AgentState,
@@ -27,6 +31,11 @@ import type {
   ToolResult,
 } from "../types/index.js";
 import type { SecurityManager } from "../security/sandbox.js";
+import {
+  CODE_EXEC_TOOL_NAMES,
+  checkCodeExecAllowed,
+  isBuiltinByMetadata,
+} from "../security/code-exec-guard.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { SkillLoader } from "../skills/loader.js";
 import { PromptEngine } from "../prompt/engine.js";
@@ -89,7 +98,10 @@ export interface AgentRuntimeOptions {
 
 export class AgentRuntime {
   readonly id: string;
-  private config: AgentConfig;
+  // SEC-P0-04：外部（API 路由、审计、Fork 逻辑）已长期按 public 读这个字段；
+  // 内部 updateConfig 会整体覆写，不适用 readonly，所以直接声明为 public。
+  // 写入走 AgentManager.updateAgent → runtime.updateConfig 的受控通道。
+  config: AgentConfig;
   private llm: LLMProvider;
   private tools: Map<string, ToolDefinition>;
   private sessions: Map<string, Session>;
@@ -393,42 +405,71 @@ export class AgentRuntime {
     return Array.from(this.sessions.values());
   }
 
-  // P0-A9: per-session 并发锁实现（带 60s 超时保护）
-  /** 等待指定 session 的前一个请求完成，超时后强制放行 */
-  private async acquireSessionLock(sessionId: string): Promise<void> {
-    const existing = this._sessionLocks.get(sessionId);
-    if (existing) {
-      const LOCK_TIMEOUT_MS = 60_000;
-      try {
-        await Promise.race([
-          existing,
-          new Promise<never>((_, reject) =>
-            setTimeout(
-              () => reject(new Error(`Session lock timeout (${LOCK_TIMEOUT_MS}ms) for ${sessionId}`)),
-              LOCK_TIMEOUT_MS,
-            ),
-          ),
-        ]);
-      } catch (err) {
-        logger.warn(
-          { sessionId, error: err instanceof Error ? err.message : String(err) },
-          "Session lock wait failed or timed out, proceeding to avoid deadlock",
-        );
-      }
-    }
-  }
+  // ─────────────────────────────────────────────────────────────────
+  // [CORE-P1-01] Session 级互斥锁 — 链式 Promise mutex
+  //
+  // 【问题背景】
+  //   原实现把"读 → 等待 → 写"拆成 acquireSessionLock + createSessionLock
+  //   两步。存在 race window：两个并发请求同 tick 都 get 到 undefined，都
+  //   进入创建分支并 set，后者覆盖前者，锁完全失效。
+  //
+  // 【修复原理】
+  //   把同一 sessionId 的所有请求串成一条 Promise 链，无条件排队：
+  //     prev = tail ?? resolve
+  //     next = new Promise  (后续请求需等待它完成)
+  //     tail ← prev.then(() => next)   // 同步 tick 内原子替换
+  //   后来的请求读到的永远是"前一个完成后再执行"的组合 Promise，无 race。
+  //
+  // 【超时保护】
+  //   若前一把锁因 bug 泄漏未释放，默认 60s 后强制放行，避免永远卡住。
+  //
+  // 【清理】
+  //   release 时仅当当前 tail 仍是自己才 delete，防止误删后续请求的锁。
+  // ─────────────────────────────────────────────────────────────────
+  /**
+   * 获取 session 级互斥锁，返回 release 函数。
+   * 使用方式：
+   *   const release = await this.acquireSessionLock(sessionId);
+   *   try { ... 业务 ... } finally { release(); }
+   */
+  private async acquireSessionLock(sessionId: string): Promise<() => void> {
+    // 取出当前 tail（前一个请求的完成 Promise）；无则用立即 resolve
+    const prev = (this._sessionLocks.get(sessionId) as Promise<void> | undefined) ?? Promise.resolve();
 
-  /** 创建新的 session 锁，返回释放函数 */
-  private createSessionLock(sessionId: string): () => void {
-    let releaseFn: () => void;
-    const lockPromise = new Promise<void>((resolve) => {
-      releaseFn = resolve;
+    // 当前请求的 next：调用 release() 后才 resolve，通知后续请求可以继续
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    this._sessionLocks.set(sessionId, lockPromise);
+
+    // 关键：同一同步 tick 内把 tail 替换为"prev 完成后接 next"，保证
+    // 之后进入本函数的并发请求拿到的 prev 已经是我们这个组合 Promise，
+    // 排在 next 之后，不再有 race。
+    const newTail = prev.then(() => next);
+    this._sessionLocks.set(sessionId, newTail);
+
+    // 60s 超时兜底：前一把锁泄漏时强制放行，避免永远排队（非常规路径，打 warn）
+    const LOCK_TIMEOUT_MS = 60_000;
+    const timeoutPromise = new Promise<void>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Session lock timeout (${LOCK_TIMEOUT_MS}ms) for ${sessionId}`)),
+        LOCK_TIMEOUT_MS,
+      ),
+    );
+
+    try {
+      await Promise.race([prev, timeoutPromise]);
+    } catch (err) {
+      logger.warn(
+        { sessionId, error: err instanceof Error ? err.message : String(err) },
+        "Session lock wait failed or timed out, proceeding to avoid deadlock",
+      );
+    }
+
     return () => {
-      releaseFn();
-      // 如果当前锁仍然是我们创建的那个，清理它
-      if (this._sessionLocks.get(sessionId) === lockPromise) {
+      release();
+      // 仅当自己仍是 tail 才 delete（否则会误删后续请求的锁引用）
+      if (this._sessionLocks.get(sessionId) === newTail) {
         this._sessionLocks.delete(sessionId);
       }
     };
@@ -449,9 +490,8 @@ export class AgentRuntime {
   ): Promise<{ sessionId: string; response: string; toolCalls: string[]; attachments: Attachment[] }> {
     const session = this.getSession(sessionId);
 
-    // P0-A9: per-session 并发锁—等待前一个请求完成后再进入
-    await this.acquireSessionLock(session.id);
-    const lockRelease = this.createSessionLock(session.id);
+    // [CORE-P1-01] per-session 并发锁—链式 mutex，一次性获取 release
+    const lockRelease = await this.acquireSessionLock(session.id);
 
     this._status = "running";
     this._lastActivity = new Date();
@@ -547,20 +587,50 @@ export class AgentRuntime {
 
         // If there are tool calls, execute them
         if (response.toolCalls?.length) {
-          // Add assistant message with tool calls
+          // P0-Qwen400-FIX: 预校验 tool_calls 的 arguments 是否为合法 JSON。
+          // 破损 tool_call 绝对不能推入 session.messages，否则下轮重发给 Qwen
+          // 会触发 400 InvalidParameter 死循环（见审查报告）。
+          const { valid: validToolCalls, invalid: invalidToolCalls } =
+            partitionToolCallsByJsonValidity(response.toolCalls);
+
+          if (invalidToolCalls.length > 0) {
+            logger.warn(
+              {
+                agentId: this.id,
+                sessionId: session.id,
+                invalidCount: invalidToolCalls.length,
+                validCount: validToolCalls.length,
+                invalidTools: invalidToolCalls.map((i) => i.toolCall.function.name),
+                firstError: invalidToolCalls[0]?.error,
+              },
+              "Filtered out tool_calls with invalid JSON arguments to prevent Qwen 400 loop",
+            );
+            // 以 user 消息形式反馈给 LLM（而非塞回破损 assistant.toolCalls）
+            // 这样对话历史保持可序列化，下轮 LLM 调用不会再触发服务端 400。
+            const rejectText = buildInvalidToolCallRejectMessage(invalidToolCalls);
+            session.messages.push({ role: "user", content: rejectText });
+            this.persistMessage(session.id, "user", rejectText);
+          }
+
+          // 如果全部破损，直接进入下一轮 LLM 调用，不执行任何工具
+          if (validToolCalls.length === 0) {
+            continue;
+          }
+
+          // Add assistant message with (valid) tool calls
           session.messages.push({
             role: "assistant",
             content: response.content ?? "",
-            toolCalls: response.toolCalls,
+            toolCalls: validToolCalls,
             reasoningContent: response.reasoningContent,
           });
           this.persistMessage(session.id, "assistant", response.content ?? "", {
-            toolCalls: JSON.stringify(response.toolCalls),
+            toolCalls: JSON.stringify(validToolCalls),
             ...(response.reasoningContent ? { reasoningContent: response.reasoningContent } : {}),
           });
 
           // Execute each tool call
-          for (const toolCall of response.toolCalls) {
+          for (const toolCall of validToolCalls) {
             const toolName = toolCall.function.name;
             calledTools.push(toolName);
             options?.onToolCall?.(toolName, toolCall.function.arguments);
@@ -680,9 +750,8 @@ export class AgentRuntime {
   ): AsyncGenerator<{ type: string; [key: string]: unknown }, void, unknown> {
     const session = this.getSession(sessionId);
 
-    // P0-A9: per-session 并发锁
-    await this.acquireSessionLock(session.id);
-    const lockRelease = this.createSessionLock(session.id);
+    // [CORE-P1-01] per-session 并发锁—链式 mutex
+    const lockRelease = await this.acquireSessionLock(session.id);
 
     this._status = "running";
     this._lastActivity = new Date();
@@ -824,19 +893,45 @@ export class AgentRuntime {
             yield { type: "content", content: response.content };
           }
 
+          // P0-Qwen400-FIX: 预校验 tool_calls 的 arguments（与 chat() 保持一致）。
+          const { valid: validToolCalls, invalid: invalidToolCalls } =
+            partitionToolCallsByJsonValidity(response.toolCalls);
+
+          if (invalidToolCalls.length > 0) {
+            logger.warn(
+              {
+                agentId: this.id,
+                sessionId: session.id,
+                invalidCount: invalidToolCalls.length,
+                validCount: validToolCalls.length,
+                invalidTools: invalidToolCalls.map((i) => i.toolCall.function.name),
+                firstError: invalidToolCalls[0]?.error,
+              },
+              "Filtered out tool_calls with invalid JSON arguments to prevent Qwen 400 loop (stream)",
+            );
+            const rejectText = buildInvalidToolCallRejectMessage(invalidToolCalls);
+            session.messages.push({ role: "user", content: rejectText });
+            this.persistMessage(session.id, "user", rejectText);
+          }
+
+          // 全部破损时跳过工具执行，直接进入下一轮 LLM 调用
+          if (validToolCalls.length === 0) {
+            continue;
+          }
+
           session.messages.push({
             role: "assistant",
             content: response.content ?? "",
-            toolCalls: response.toolCalls,
+            toolCalls: validToolCalls,
             reasoningContent: response.reasoningContent,
           });
           this.persistMessage(session.id, "assistant", response.content ?? "", {
-            toolCalls: JSON.stringify(response.toolCalls),
+            toolCalls: JSON.stringify(validToolCalls),
             ...(response.reasoningContent ? { reasoningContent: response.reasoningContent } : {}),
           });
 
           // Execute each tool call
-          for (const toolCall of response.toolCalls) {
+          for (const toolCall of validToolCalls) {
             const toolName = toolCall.function.name;
             calledTools.push(toolName); // Phase A-1: 跟踪工具名
 
@@ -1184,6 +1279,55 @@ export class AgentRuntime {
         sandboxLevel = perm.sandboxLevel;
       }
 
+      // SEC-P0-03: 代码执行工具集中拦截（方案 B 最小侵入）
+      // 在 checkPermission 之后、参数解析之前做一次补充判定，避免用户自定义
+      // Agent 通过默认 policy（defaultSandbox=none）绕过沙箱直接 spawn 宿主进程。
+      // 判据：工具名 ∈ {run_python, run_javascript, run_shell} 时：
+      //   - 内置系统级 Agent（metadata.isBuiltin=true）走白名单
+      //   - 否则必须 sandboxLevel≠none 或环境变量显式开启
+      //   - 若 sandboxLevel=none 但环境变量开启，就地提升到 process 级
+      if (CODE_EXEC_TOOL_NAMES.has(name)) {
+        const isBuiltin = isBuiltinByMetadata(this.config.metadata);
+        const decision = checkCodeExecAllowed({
+          toolName: name,
+          isBuiltinAgent: isBuiltin,
+          sandboxLevel,
+        });
+        if (!decision.allowed) {
+          if (this.securityManager) {
+            this.securityManager.recordExecution(name, this.id, "denied");
+          }
+          logger.warn(
+            { agentId: this.id, tool: name, sandboxLevel },
+            "Code execution denied by SEC-P0-03 guard",
+          );
+          return {
+            success: false,
+            output: decision.reason ?? "Code execution denied",
+            error: "Permission denied (code-exec guard)",
+          };
+        }
+        // 环境变量提升场景：sandboxLevel=none → process，走 ProcessSandbox 分支
+        if (decision.effectiveSandboxLevel !== sandboxLevel) {
+          logger.info(
+            {
+              agentId: this.id,
+              tool: name,
+              from: sandboxLevel,
+              to: decision.effectiveSandboxLevel,
+            },
+            "Code execution sandboxLevel auto-upgraded by env",
+          );
+          sandboxLevel = decision.effectiveSandboxLevel;
+        }
+        if (decision.viaWhitelist) {
+          logger.debug(
+            { agentId: this.id, tool: name },
+            "Code execution allowed via builtin-agent whitelist",
+          );
+        }
+      }
+
       // P2-09: Parse args separately with clear error message
       let args: unknown;
       try {
@@ -1431,6 +1575,7 @@ export class AgentRuntime {
    * 记录交互到进化引擎（学 Hermes run_agent.py:7660-7676）。
    * 安全包裹：进化引擎故障不影响正常对话。
    */
+
   /**
    * T2: 处理工具执行后的反思钩子。
    *

@@ -9,12 +9,13 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ZodError } from "zod";
+import { randomUUID } from "node:crypto";
 
 // ─── Request ID ──────────────────────────────────────────────
 
 export async function registerRequestId(app: FastifyInstance): Promise<void> {
   app.addHook("onRequest", async (request: FastifyRequest) => {
-    const rid = (request.headers["x-request-id"] as string) ?? crypto.randomUUID();
+    const rid = (request.headers["x-request-id"] as string) ?? randomUUID();
     (request as any).requestId = rid;
   });
 

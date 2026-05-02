@@ -20,6 +20,14 @@ export { resolveHome, resetResolvedHome, paths, ensureDirectories } from "./conf
 export { AgentRuntime, AgentManager } from "./agent/index.js";
 export type { AgentRuntimeOptions } from "./agent/index.js";
 
+// Agent 状态脱敏（SEC-P0-04：零信任 apiKey 保护）
+export {
+  sanitizeAgentState,
+  sanitizeAgentStates,
+  maskApiKey,
+  isMaskedApiKey,
+} from "./agent/sanitize.js";
+
 // Builtin Expert Agents（211 个内置专家 Agent）
 export { builtinAgentCatalog, DEPT_LABELS, DEPARTMENTS, ensureBuiltinAgents } from "./builtin-agents/index.js";
 export type { BuiltinAgentEntry } from "./builtin-agents/index.js";
@@ -205,6 +213,27 @@ export { InMemoryAgentRegistry, SqliteAgentRegistry } from "./collaboration/agen
 export type { IAgentRegistry, AgentRegistryEntry, DiscoverFilter } from "./collaboration/agent-registry.js";
 export { A2AClient, A2AClientError } from "./collaboration/a2a-client.js";
 export type { A2AAuthConfig } from "./collaboration/a2a-client.js";
+
+// Video Crew Schemas & Prompts (Phase 2)
+export {
+  ScriptSchema, ImagePromptsSchema, StoryboardSchema,
+  buildGuardrail, scriptGuardrail, imagePromptsGuardrail, storyboardGuardrail,
+} from "./collaboration/video-crew-schemas.js";
+export {
+  WRITER_AGENT_PROMPT, DESIGNER_AGENT_PROMPT, STORYBOARD_AGENT_PROMPT,
+  VIDEO_AGENT_PROMPT, VOICE_AGENT_PROMPT, EDITOR_AGENT_PROMPT,
+} from "./collaboration/video-crew-prompts.js";
+export {
+  buildShortVideoCrew, buildShortVideoAgents, validateVideoCrewModel,
+  VIDEO_AGENT_IDS, VIDEO_TASK_IDS,
+} from "./collaboration/video-crew-presets.js";
+export type { ShortVideoCrewParams } from "./collaboration/video-crew-presets.js";
+export {
+  PRESET_BALANCED, PRESET_CHEAP, PRESET_ZH_BEST, PRESET_LOCAL,
+  PROVIDER_PRESETS,
+} from "./collaboration/video-crew-provider-presets.js";
+export type { AgentProviderOverride, ProviderPreset } from "./collaboration/video-crew-provider-presets.js";
+export { applyPerAgentProvider, applyAllAgentProviders } from "./collaboration/crew-executor-provider.js";
 export { PushNotificationDispatcher } from "./collaboration/a2a-push.js";
 export type { PushDispatcherOptions } from "./collaboration/a2a-push.js";
 export { RemoteAgentProxy } from "./collaboration/remote-agent-proxy.js";
@@ -273,6 +302,7 @@ export {
   initDatabase,
   getDatabase,
   saveDatabase,
+  saveDatabaseSync,
   closeDatabase,
   SQLiteBackend,
   saveCoreBlock,
@@ -327,6 +357,16 @@ export {
   // Config store (Phase B-2: Nudge 配置持久化)
   loadNudgeConfig,
   saveNudgeConfig,
+  // Video Jobs CRUD (Phase 2: 视频任务持久化)
+  insertVideoJob,
+  updateVideoJob,
+  getVideoJob,
+  listVideoJobs,
+  // Agent Provider Templates CRUD
+  insertProviderTemplate,
+  getProviderTemplates,
+  deleteProviderTemplate,
+  updateProviderTemplate,
   // Conversation persistence
   createConversation,
   getConversation,
@@ -341,6 +381,7 @@ export {
   cleanupOldBackups,
   registerShutdownHandlers,
   flushPendingSave,
+  flushPendingSaveSync,
   // Config change audit
   logConfigChange,
   queryConfigAuditLog,
@@ -348,6 +389,7 @@ export {
   sanitizeForAudit,
 } from "./persistence/sqlite.js";
 export type { ConversationRecord, ConvMessageRecord } from "./persistence/sqlite.js";
+export type { VideoJobRow, ProviderTemplateRow } from "./persistence/sqlite.js";
 
 // JSONL Session Writer
 export { JsonlWriter, getJsonlWriter } from "./persistence/jsonl-writer.js";
@@ -456,3 +498,47 @@ export {
   instrumentRuntime, instrumentLLM, instrumentSecurity, instrumentMemory, instrumentPrompt, traceToolExec,
 } from "./tracing/index.js";
 export type { Span, SpanEvent, TraceContext, SpanStatus, SpanCallback, TraceListItem } from "./tracing/index.js";
+
+// Runtime — 视频微服务环境自举（video-forge bootstrap）
+export {
+  ensureVideoForgeDeps,
+  detectPython,
+  detectFfmpeg,
+  downloadFfmpeg,
+  ensureUvVenv,
+  buildSpawnEnv,
+  PythonNotFoundError,
+  FfmpegDownloadError,
+  VenvSetupError,
+} from "./runtime/index.js";
+export type { VideoForgeDepsResult, BootstrapOptions } from "./runtime/index.js";
+
+// Services — video-forge HTTP 客户端
+export {
+  forgeImage,
+  forgeVideoSubmit,
+  forgeVideoStatus,
+  forgeTts,
+  forgeComposeFrame,
+  forgeConcat,
+  forgeAddBgm,
+  forgeAnalyseImage,
+  forgeHealthCheck,
+  estimateCost,
+  VideoForgeRequestError,
+} from "./services/video-forge-client.js";
+export type {
+  VideoForgeError,
+  ForgeImageResult,
+  ForgeVideoSubmitResult,
+  ForgeVideoJobStatus,
+  ForgeTtsResult,
+  ForgeComposeResult,
+  ForgeConcatResult,
+  ForgeBgmResult,
+  ForgeAnalyseResult,
+  CostEstimate,
+} from "./services/video-forge-client.js";
+
+// Tools — video-forge 原子工具
+export { videoForgeTools } from "./tools/video-forge.js";

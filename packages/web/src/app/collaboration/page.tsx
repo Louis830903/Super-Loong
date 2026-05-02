@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch, API_BASE } from "@/lib/utils";
+import { apiFetch, API_BASE, apiFetchSse, downloadAuthorized } from "@/lib/utils";
 import { useAgents } from "@/hooks/useAgents";
 import {
   Users, Play, Loader2, CheckCircle, XCircle, ArrowRight,
@@ -56,14 +56,26 @@ function AttachmentList({ attachments }: { attachments?: AttachmentItem[] }) {
       </h6>
       {attachments.map((att, i) => {
         const displayName = att.filename ?? (att.path ? baseName(att.path) : att.url ?? "file");
-        const downloadUrl = att.path
-          ? `${API_BASE}/api/collab/attachment?path=${encodeURIComponent(att.path)}`
+        // [WEB-P1-01] 内部附件走授权 fetch+blob；外链直接渲染浏览器原生下载
+        const isInternal = Boolean(att.path);
+        const href = isInternal
+          ? `${API_BASE}/api/collab/attachment?path=${encodeURIComponent(att.path!)}`
           : att.url ?? "#";
+        const onClick = isInternal
+          ? (e: React.MouseEvent<HTMLAnchorElement>) => {
+              e.preventDefault();
+              downloadAuthorized(
+                `/api/collab/attachment?path=${encodeURIComponent(att.path!)}`,
+                displayName,
+              ).catch(() => { /* showToast 已在内部触发 */ });
+            }
+          : undefined;
         return (
           <a
             key={i}
-            href={downloadUrl}
+            href={href}
             download={displayName}
+            onClick={onClick}
             className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-300 hover:border-blue-700 hover:text-blue-400 transition-colors"
           >
             <FileText className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
@@ -403,62 +415,42 @@ export default function CollaborationPage() {
   refreshHistoryRef.current = refreshHistory;
 
   useEffect(() => {
-    const url = `${API_BASE}/api/collab/events`;
-    let es: EventSource | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    // [WEB-P1-02] 原 EventSource 无法携带 Authorization 头，改用 apiFetchSse：
+    // fetch + ReadableStream 读 text/event-stream，自动注入 JWT，断线 3s 重连。
+    const stop = apiFetchSse<any>("/api/collab/events", {
+      onEvent: (event) => {
+        const eventType = event?.type as string;
 
-    const connect = () => {
-      try {
-        es = new EventSource(url);
+        // 任务开始/完成/消息 → 更新实时进度
+        if (eventType === "task:start") {
+          setLiveProgress((prev) => ({
+            ...prev,
+            [event.crewId]: `执行任务 ${event.taskId}...`,
+          }));
+        } else if (eventType === "task:complete") {
+          setLiveProgress((prev) => ({
+            ...prev,
+            [event.crewId]: `任务 ${event.taskId} 完成`,
+          }));
+        } else if (eventType === "groupchat:message") {
+          setLiveProgress((prev) => ({
+            ...prev,
+            [event.chatId]: `[${event.message?.agentName}] ${(event.message?.content ?? "").slice(0, 60)}`,
+          }));
+        }
 
-        es.onmessage = (e) => {
-          try {
-            const event = JSON.parse(e.data);
-            const eventType = event.type as string;
+        // crew/groupchat 完成 → 清除进度 + 刷新历史
+        if (eventType === "crew:complete" || eventType === "crew:error" ||
+            eventType === "groupchat:complete") {
+          const id = event.crewId ?? event.chatId;
+          if (id) setLiveProgress((prev) => { const p = { ...prev }; delete p[id]; return p; });
+          refreshHistoryRef.current();
+        }
+      },
+      // onError 交由内部 3s 重连处理，无需在此弹 toast 骚扰用户
+    });
 
-            // 任务开始/完成/消息 → 更新实时进度
-            if (eventType === "task:start") {
-              setLiveProgress((prev) => ({
-                ...prev,
-                [event.crewId]: `执行任务 ${event.taskId}...`,
-              }));
-            } else if (eventType === "task:complete") {
-              setLiveProgress((prev) => ({
-                ...prev,
-                [event.crewId]: `任务 ${event.taskId} 完成`,
-              }));
-            } else if (eventType === "groupchat:message") {
-              setLiveProgress((prev) => ({
-                ...prev,
-                [event.chatId]: `[${event.message?.agentName}] ${(event.message?.content ?? "").slice(0, 60)}`,
-              }));
-            }
-
-            // crew/groupchat 完成 → 清除进度 + 刷新历史
-            if (eventType === "crew:complete" || eventType === "crew:error" ||
-                eventType === "groupchat:complete") {
-              const id = event.crewId ?? event.chatId;
-              if (id) setLiveProgress((prev) => { const p = { ...prev }; delete p[id]; return p; });
-              refreshHistoryRef.current();
-            }
-          } catch { /* JSON 解析失败，静默忽略 */ }
-        };
-
-        es.onerror = () => {
-          es?.close();
-          es = null;
-          // P2: 3 秒后尝试重连
-          reconnectTimer = setTimeout(connect, 3000);
-        };
-      } catch { /* EventSource 创建失败（如 SSR 环境），静默忽略 */ }
-    };
-
-    connect();
-
-    return () => {
-      es?.close();
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-    };
+    return () => { stop(); };
   }, []);
 
   // ─── Agent 选择切换 ──────────────────────────────────────
@@ -1165,13 +1157,20 @@ export default function CollaborationPage() {
           {/* 下载按钮组（有 workspaceDir 时显示） */}
           {selectedResult.workspaceDir && (
             <div className="flex gap-2 mb-1">
-              <a
-                href={`${API_BASE}/api/collab/download/${getItemId(selectedResult)}`}
-                download
+              <button
+                type="button"
+                onClick={() => {
+                  // [WEB-P1-01] 走授权下载（fetch+blob），保证携带 Authorization 头
+                  const zipName = `${selectedResult.name || getItemId(selectedResult)}.zip`;
+                  downloadAuthorized(
+                    `/api/collab/download/${getItemId(selectedResult)}`,
+                    zipName,
+                  ).catch(() => { /* showToast 已在内部触发 */ });
+                }}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 transition-colors"
               >
                 <Download className="h-3.5 w-3.5" /> 下载全部(ZIP)
-              </a>
+              </button>
             </div>
           )}
 

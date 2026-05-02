@@ -13,7 +13,7 @@
  */
 
 import pino from "pino";
-import crypto from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { getDatabase, scheduleSave } from "../persistence/sqlite.js";
 import type { EntityRow } from "./entity-resolver.js";
 import { extractRelations } from "./relation-extractor.js";
@@ -73,7 +73,7 @@ export class KnowledgeGraph {
 
   /** 添加三元组，返回生成的 id */
   addTriple(input: TripleInput): string {
-    const id = `rel_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const id = `rel_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const now = new Date().toISOString();
     this.db.run(
       `INSERT INTO relations (id, subjectId, predicate, objectId, confidence, source, createdAt, metadata)
@@ -99,7 +99,7 @@ export class KnowledgeGraph {
    * 利用 idx_relations_triple 唯一索引做冲突检测。
    */
   upsertTriple(input: TripleInput): void {
-    const id = `rel_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    const id = `rel_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const now = new Date().toISOString();
     this.db.run(
       `INSERT INTO relations (id, subjectId, predicate, objectId, confidence, source, createdAt, metadata)

@@ -132,7 +132,8 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
       });
     } catch (err: any) {
       app.log.error({ err }, "Voice transcription failed");
-      return reply.status(500).send({ error: err.message });
+      // API-P1-03：内部栈仅进日志
+      return reply.status(500).send({ error: "Voice transcription failed" });
     }
   });
 
@@ -186,7 +187,9 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
       reply.header("Content-Length", audioBuffer.length);
       return reply.send(audioBuffer);
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
+      app.log.error({ err }, "Voice synthesis failed");
+      // API-P1-03：内部栈仅进日志
+      return reply.status(500).send({ error: "Voice synthesis failed" });
     }
   });
 

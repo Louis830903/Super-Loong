@@ -74,6 +74,7 @@ export async function getAllBuiltinTools(): Promise<ToolDefinition[]> {
     { name: "data-transform", load: () => import("./data-transform.js").then(m => m.dataTransformTools) },
     { name: "media",          load: () => import("./media.js").then(m => m.mediaTools) },
     { name: "vision",         load: () => import("./vision.js").then(m => m.visionTools) },
+    { name: "video-forge",    load: () => import("./video-forge.js").then(m => m.videoForgeTools) },
   ];
 
   // ── SysOps 系统操作工具 (Feature Flag 控制) ──

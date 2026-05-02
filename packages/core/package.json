@@ -19,6 +19,7 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
+    "@super-agent/web-types": "workspace:*",
     "chokidar": "^4.0.0",
     "cron-parser": "^5.5.0",
     "eventemitter3": "^5.0.1",

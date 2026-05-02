@@ -89,7 +89,9 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
 
       return reply.status(201).send({ id, name, status: "registered" });
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
+      // API-P1-03：内部栈仅进日志
+      app.log.error({ route: "/api/mcp/servers", err }, "MCP server registration failed");
+      return reply.status(500).send({ error: "MCP server registration failed" });
     }
   });
 
@@ -121,7 +123,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
       }
       return { status: "removed", removedTools: removedToolNames.length };
     } catch (err: any) {
-      return reply.status(404).send({ error: err.message });
+      app.log.error({ route: "DELETE /api/mcp/servers/:id", id: request.params.id, err }, "MCP server removal failed");
+      return reply.status(404).send({ error: "MCP server not found" });
     }
   });
 
@@ -142,7 +145,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
       const result = await registry.callTool(serverId, toolName, args ?? {});
       return { result };
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
+      app.log.error({ route: "/api/mcp/tools/call", serverId, toolName, err }, "MCP tool call failed");
+      return reply.status(500).send({ error: "MCP tool call failed" });
     }
   });
 
@@ -162,7 +166,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
       const results = await ctx.mcpMarketplace.search(query, limit);
       return { servers: results, count: results.length };
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
+      app.log.error({ route: "/api/mcp/marketplace/search", query, err }, "MCP marketplace search failed");
+      return reply.status(500).send({ error: "MCP marketplace search failed" });
     }
   });
 
@@ -261,8 +266,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
         connectError,
       });
     } catch (err: any) {
-      app.log.error({ error: err.message }, "MCP marketplace install failed");
-      return reply.status(500).send({ error: err.message });
+      app.log.error({ route: "/api/mcp/marketplace/install", err }, "MCP marketplace install failed");
+      return reply.status(500).send({ error: "MCP marketplace install failed" });
     }
   });
 
@@ -329,7 +334,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
       await server.start();
       return reply.send({ status: "running", info: server.getInfo() });
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
+      app.log.error({ route: "/api/mcp/server/start", err }, "MCP Server start failed");
+      return reply.status(500).send({ error: "MCP Server start failed" });
     }
   });
 
@@ -341,7 +347,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
       }
       return reply.send({ status: "stopped" });
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
+      app.log.error({ route: "/api/mcp/server/stop", err }, "MCP Server stop failed");
+      return reply.status(500).send({ error: "MCP Server stop failed" });
     }
   });
 
@@ -363,7 +370,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
       const server = await getMCPServer();
       return reply.send({ tools: server.getToolDefinitions() });
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
+      app.log.error({ route: "/api/mcp/server/tools", err }, "MCP Server list tools failed");
+      return reply.status(500).send({ error: "MCP Server list tools failed" });
     }
   });
 
@@ -378,7 +386,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
       const result = await server.handleToolCall(toolName, args ?? {});
       return reply.send(result);
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
+      app.log.error({ route: request.url, toolName, err }, "MCP Server tool call failed");
+      return reply.status(500).send({ error: "MCP Server tool call failed" });
     }
   });
 

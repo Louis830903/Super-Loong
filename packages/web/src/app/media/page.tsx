@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { apiFetch } from "@/lib/utils";
+import { apiFetch, downloadAuthorized } from "@/lib/utils";
 import {
   Image as ImageIcon, Upload, Download, Trash2, RefreshCw,
   Search, FileText, Film, Music, File, Loader2, X,
@@ -95,11 +95,13 @@ export default function MediaPage() {
     reader.readAsDataURL(file);
   };
 
-  const handleDownload = (id: string, filename: string) => {
-    const a = document.createElement("a");
-    a.href = `/api/media/${id}/download`;
-    a.download = filename;
-    a.click();
+  const handleDownload = async (id: string, filename: string) => {
+    // [WEB-P1-01] 走 fetch+blob 下载，保证携带 Authorization 头
+    try {
+      await downloadAuthorized(`/api/media/${id}/download`, filename);
+    } catch {
+      /* showToast 已在 downloadAuthorized 内部触发 */
+    }
   };
 
   const handleDelete = async (id: string) => {

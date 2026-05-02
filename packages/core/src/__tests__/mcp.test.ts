@@ -17,8 +17,8 @@ beforeAll(async () => {
   await initDatabase(TEST_DB_PATH);
 });
 
-afterAll(() => {
-  closeDatabase();
+afterAll(async () => {
+  await closeDatabase();
   if (fs.existsSync(TEST_DB_PATH)) fs.unlinkSync(TEST_DB_PATH);
 });
 

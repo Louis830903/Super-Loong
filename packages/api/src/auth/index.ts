@@ -11,6 +11,7 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fastifyJwt from "@fastify/jwt";
+import { randomUUID } from "node:crypto";
 import pino from "pino";
 import type { AppContext } from "../context.js";
 import { safeEqualSecret } from "./secret-equal.js";
@@ -102,7 +103,7 @@ class ApiKeyStore {
   }
 
   create(name: string, role: Role): ApiKeyRecord {
-    const key = `sk-${crypto.randomUUID().replace(/-/g, "")}`;
+    const key = `sk-${randomUUID().replace(/-/g, "")}`;
     const record: ApiKeyRecord = {
       key,
       name,

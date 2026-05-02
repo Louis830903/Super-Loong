@@ -180,11 +180,22 @@ export class AgentManager extends EventEmitter<AgentManagerEvents> {
       memoryEnabled: config.memoryEnabled ?? true,
       maxToolIterations: config.maxToolIterations ?? 25,
       metadata: config.metadata ?? {},
+      toolPolicy: config.toolPolicy, // P0-Qwen400-ROOT: 透传工具注入策略
     };
 
     const runtime = new AgentRuntime({
       config: fullConfig,
-      tools: Array.from(this.globalTools.values()),
+      // P0-Qwen400-ROOT: 根据 toolPolicy 决定注入哪些工具。
+      // "configured-only"：仅注入 config.tools 白名单中匹配的全局工具定义；
+      //   tools=[] 时 Agent 无任何工具 → LLM 不会产生 tool_calls → 杜绝 JSON 破损。
+      // "all"（默认）：保持向后兼容，注入所有全局工具。
+      tools: fullConfig.toolPolicy === "configured-only"
+        ? (fullConfig.tools.length > 0
+            ? Array.from(this.globalTools.values()).filter(
+                (t) => fullConfig.tools.includes(t.name),
+              )
+            : [])
+        : Array.from(this.globalTools.values()),
       securityManager: this.securityManager,
       memoryManager: this.memoryManager,
       skillLoader: this.skillLoader,

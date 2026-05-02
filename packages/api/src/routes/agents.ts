@@ -9,8 +9,84 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { AgentConfigSchema, saveAgentConfig, deleteAgentConfig, logConfigChange, sanitizeForAudit } from "@super-agent/core";
+import {
+  AgentConfigSchema,
+  saveAgentConfig,
+  deleteAgentConfig,
+  logConfigChange,
+  sanitizeForAudit,
+  getProviderById,
+  getModelById,
+  sanitizeAgentState,
+  sanitizeAgentStates,
+  maskApiKey,
+  isMaskedApiKey,
+} from "@super-agent/core";
 import type { AppContext } from "../context.js";
+
+/**
+ * 按 providerId 从 providerStore + 模型目录合并 llmProvider 配置。
+ *
+ * 前端只携带 { type, providerId, model } 的骨架，apiKey / baseUrl / supportsReasoning
+ * 由后端根据 providerId 查库 + 查目录自动补齐，避免 API Key 明文暴露给前端。
+ *
+ * 逻辑对齐 models.ts PUT /api/models/providers/:id 里同步 defaultAgent 的那段
+ * （L93-101），保证"设置页"与"Agent 管理页"两条入口的合并规则一致。
+ *
+ * 请求体中显式提供的字段（apiKey/baseUrl/temperature/maxTokens）保持优先，
+ * 方便高级用户针对单个 Agent 覆盖默认配置。
+ */
+function mergeLLMProviderConfig(
+  llm: Record<string, unknown> | undefined,
+  ctx: AppContext,
+): Record<string, unknown> | undefined {
+  if (!llm || typeof llm !== "object") return llm;
+  const providerId = typeof llm.providerId === "string" ? llm.providerId : undefined;
+  if (!providerId) return llm; // 官方 type（openai/anthropic/ollama/custom）无需合并
+
+  const providerDef = getProviderById(providerId);
+  if (!providerDef) return llm; // 未知 providerId 交由后续 schema 校验或运行时报错
+
+  const record = ctx.providerStore.get(providerId);
+  const model = typeof llm.model === "string" && llm.model ? llm.model : record?.selectedModel;
+  const modelDef = model ? getModelById(providerId, model) : undefined;
+
+  // SEC-P0-04 · E1 脱敏哨兵：前端 GET 到掩码 apiKey，若整体回传会污染 DB。
+  // 规则：incoming 非空且不是脱敏串，才视为用户新填；否则回退 record 原 key。
+  const recordKeyMasked = record?.apiKey ? maskApiKey(record.apiKey) : undefined;
+  const incomingApiKeyRaw = typeof llm.apiKey === "string" ? llm.apiKey : "";
+  const incomingApiKey =
+    incomingApiKeyRaw && !isMaskedApiKey(incomingApiKeyRaw, recordKeyMasked)
+      ? incomingApiKeyRaw
+      : undefined;
+
+  const merged: Record<string, unknown> = {
+    type: typeof llm.type === "string" ? llm.type : "openai",
+    model,
+    // apiKey / baseUrl 用 || 而非 ??，与 models.ts L91 的 `record.baseUrl || providerDef.baseUrl`
+    // 保持一致，避免 providerStore 里存了空串（非 null/undefined）时跳不过 fallback 导致
+    // schema 的 z.string().url() 校验失败（"Invalid url"）。
+    apiKey: incomingApiKey || record?.apiKey || undefined,
+    baseUrl: (typeof llm.baseUrl === "string" && llm.baseUrl) || record?.baseUrl || providerDef.baseUrl,
+    providerId,
+    supportsReasoning:
+      typeof llm.supportsReasoning === "boolean"
+        ? llm.supportsReasoning
+        : modelDef?.supportsReasoning ?? false,
+  };
+
+  // temperature：请求体优先 → 模型固定温度 → 不设置（走 LLMProvider 默认）
+  if (llm.temperature !== undefined) {
+    merged.temperature = llm.temperature;
+  } else if (modelDef?.fixedTemperature !== undefined) {
+    merged.temperature = modelDef.fixedTemperature;
+  }
+  if (llm.maxTokens !== undefined) {
+    merged.maxTokens = llm.maxTokens;
+  }
+
+  return merged;
+}
 
 export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
   // P1-2: List agents — 支持 type/department/分页 查询参数
@@ -56,12 +132,30 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
       agents = agents.slice(parsedOffset, parsedOffset + parsedLimit);
     }
 
-    return { agents, total, limit: parsedLimit, offset: parsedOffset };
+    return {
+      // SEC-P0-04：列表响应走逐项 sanitize，彻底屏蔽 apiKey 原文。
+      // listAgents() 返回 AgentState[]（而非 AgentRuntime[]），所以直接 map 脱敏。
+      agents: sanitizeAgentStates(agents),
+      total,
+      limit: parsedLimit,
+      offset: parsedOffset,
+    };
   });
 
   // Create a new agent
   app.post("/api/agents", async (request, reply) => {
-    const parsed = AgentConfigSchema.safeParse(request.body);
+    // 先按 providerId 合并 apiKey/baseUrl/supportsReasoning，再交给 schema 校验。
+    // 前端（Agent 管理页）只发 { type:"openai", providerId, model } 骨架，
+    // apiKey/baseUrl 由后端从 providerStore + 模型目录补齐。
+    const rawBody = (request.body ?? {}) as Record<string, unknown>;
+    const merged = {
+      ...rawBody,
+      llmProvider: mergeLLMProviderConfig(
+        rawBody.llmProvider as Record<string, unknown> | undefined,
+        ctx,
+      ),
+    };
+    const parsed = AgentConfigSchema.safeParse(merged);
     if (!parsed.success) {
       return reply.status(400).send({
         error: "Invalid agent configuration",
@@ -71,9 +165,10 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
 
     const agent = ctx.agentManager.createAgent(parsed.data);
     // Persist to SQLite so the agent survives restarts
-    saveAgentConfig(agent.id, agent.config);
-    logConfigChange("config.agent.create", sanitizeForAudit({ agentId: agent.id, config: agent.config }), agent.id);
-    return reply.status(201).send({ agent: agent.state });
+    saveAgentConfig(agent.id, agent.config as unknown as Record<string, unknown>);
+    logConfigChange("config.agent.create", sanitizeForAudit({ agentId: agent.id, config: agent.config as unknown as Record<string, unknown> }), agent.id);
+    // SEC-P0-04：响应前脱敏，审计日志仍传原始 config（走 sanitizeForAudit）。
+    return reply.status(201).send({ agent: sanitizeAgentState(agent.state) });
   });
 
   // Get agent by ID
@@ -82,7 +177,8 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!agent) {
       return reply.status(404).send({ error: "Agent not found" });
     }
-    return { agent: agent.state };
+    // SEC-P0-04：响应前脱敏。
+    return { agent: sanitizeAgentState(agent.state) };
   });
 
   // Update agent（P0-1: 内置 Agent 禁止通过 API 直接修改）
@@ -92,7 +188,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!target) {
       return reply.status(404).send({ error: "Agent not found" });
     }
-    const targetMeta = (target.config as Record<string, unknown>)?.metadata as Record<string, unknown> | undefined;
+    const targetMeta = (target.config as unknown as Record<string, unknown>)?.metadata as Record<string, unknown> | undefined;
     if (targetMeta?.isBuiltin) {
       return reply.status(403).send({ error: "内置专家 Agent 不可直接修改，请 Fork 后编辑" });
     }
@@ -104,17 +200,26 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
         details: parsed.error.flatten(),
       });
     }
+    // 若本次 PUT 涉及 llmProvider，按 providerId 做同样的合并（与 POST 对齐）。
+    const patch = { ...parsed.data } as Record<string, unknown>;
+    if (patch.llmProvider !== undefined) {
+      patch.llmProvider = mergeLLMProviderConfig(
+        patch.llmProvider as Record<string, unknown> | undefined,
+        ctx,
+      );
+    }
     const agent = ctx.agentManager.updateAgent(
       request.params.id,
-      parsed.data as Record<string, unknown>
+      patch,
     );
     if (!agent) {
       return reply.status(404).send({ error: "Agent not found" });
     }
     // Persist updated config to SQLite
-    saveAgentConfig(agent.id, agent.config);
-    logConfigChange("config.agent.update", sanitizeForAudit({ agentId: agent.id, updates: parsed.data }), agent.id);
-    return { agent: agent.state };
+    saveAgentConfig(agent.id, agent.config as unknown as Record<string, unknown>);
+    logConfigChange("config.agent.update", sanitizeForAudit({ agentId: agent.id, updates: patch }), agent.id);
+    // SEC-P0-04：响应前脱敏。
+    return { agent: sanitizeAgentState(agent.state) };
   });
 
   // Delete agent（内置 Agent 禁止删除）
@@ -124,7 +229,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!agent) {
       return reply.status(404).send({ error: "Agent not found" });
     }
-    const meta = (agent.config as Record<string, unknown>)?.metadata as Record<string, unknown> | undefined;
+    const meta = (agent.config as unknown as Record<string, unknown>)?.metadata as Record<string, unknown> | undefined;
     if (meta?.isBuiltin) {
       return reply.status(403).send({ error: "内置专家 Agent 不可删除，可使用 Fork 创建自定义副本" });
     }
@@ -147,7 +252,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
       return reply.status(404).send({ error: "Agent not found" });
     }
 
-    const sourceConfig = source.config as Record<string, unknown>;
+    const sourceConfig = source.config as unknown as Record<string, unknown>;
     const sourceMeta = (sourceConfig.metadata as Record<string, unknown>) || {};
 
     // P0-4: 安全提取字段，对缺失字段使用合理默认值
@@ -178,7 +283,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     }
 
     try {
-      saveAgentConfig(forked.id, forked.config);
+      saveAgentConfig(forked.id, forked.config as unknown as Record<string, unknown>);
     } catch (err) {
       // 持久化失败，回滚内存中的 Agent
       app.log.error({ forkedId: forked.id, err }, "Fork saveAgentConfig failed, rolling back");
@@ -187,7 +292,8 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     }
 
     logConfigChange("config.agent.fork", sanitizeForAudit({ sourceId: source.id, forkedId: forked.id }), forked.id);
-    return reply.status(201).send({ agent: forked.state });
+    // SEC-P0-04：响应前脱敏。
+    return reply.status(201).send({ agent: sanitizeAgentState(forked.state) });
   });
 
   // P2-4: 查询某个 Agent 的所有 Fork 副本

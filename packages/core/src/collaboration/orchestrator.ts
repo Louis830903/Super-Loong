@@ -133,6 +133,33 @@ export interface CollabMessage {
 
 export type ProcessType = "sequential" | "hierarchical";
 
+/**
+ * P0-D: Code Node 上下文。
+ * Code Task 执行时 orchestrator 注入的只读上下文，避免 handler 直接访问内部状态。
+ */
+export interface CodeTaskContext {
+  /** 当前任务 ID */
+  taskId: string;
+  /** 所属 Crew ID */
+  crewId: string;
+  /** 上游 task 输出只读视图（key = taskId, value = output 字符串） */
+  outputMap: ReadonlyMap<string, string>;
+  /** 当前协作的工作空间目录（可能不存在） */
+  workspaceDir: string | undefined;
+  /** Crew 配置中的变量注入（对应 {{key}} 占位符的原值） */
+  inputs: Record<string, string> | undefined;
+  /** 中止信号，handler 在长任务中应当定期检查 */
+  signal: AbortSignal | undefined;
+}
+
+/** P0-D: Code Node 执行结果 */
+export interface CodeTaskResult {
+  /** 输出字符串（建议为 JSON），会经过 guardrail 校验并注入下游 outputMap */
+  output: string;
+  /** 可选的文件附件（图片、音频、视频等） */
+  attachments?: Attachment[];
+}
+
 export interface CrewTask {
   id: string;
   description: string;
@@ -151,6 +178,16 @@ export interface CrewTask {
   useSubagent?: boolean;
   /** E-2: 子代理超时（毫秒），默认等于 taskTimeoutMs */
   subagentTimeout?: number;
+  /**
+   * P0-D: 执行模式。"llm"（默认）走 agent.chat 由 LLM 执行；
+   * "code" 走 codeHandler 由确定性代码执行，适合循环调工具等机械任务。
+   */
+  executor?: "llm" | "code";
+  /**
+   * P0-D: Code Node 处理函数。executor === "code" 时必须提供。
+   * handler 内部应自行处理并发/重试等细节；抛错会被 orchestrator 按 maxRetries 重试。
+   */
+  codeHandler?: (ctx: CodeTaskContext) => Promise<CodeTaskResult>;
 }
 
 export interface CrewConfig {
@@ -362,8 +399,11 @@ export class CrewExecutor extends EventEmitter {
       if (signal?.aborted) throw new Error("Execution cancelled by user");
 
       const task = tasks[i];
-      // 判断是否可并行：async===true 且无 context 依赖
-      const canParallel = task.async === true && (!task.context || task.context.length === 0);
+      // 判断是否可并行：async===true 且无 context 依赖，或所有 context 依赖已在 outputMap 中解析完毕
+      const canParallel = task.async === true && (
+        !task.context || task.context.length === 0 ||
+        task.context.every(tid => outputMap.has(tid))
+      );
 
       if (!canParallel) {
         // 同步屏障：单独执行
@@ -378,7 +418,10 @@ export class CrewExecutor extends EventEmitter {
       const asyncGroup: CrewTask[] = [];
       while (i < tasks.length) {
         const t = tasks[i];
-        if (t.async === true && (!t.context || t.context.length === 0)) {
+        if (t.async === true && (
+          !t.context || t.context.length === 0 ||
+          t.context.every(tid => outputMap.has(tid))
+        )) {
           asyncGroup.push(t);
           i++;
         } else {
@@ -602,6 +645,14 @@ export class CrewExecutor extends EventEmitter {
     outputMap: Map<string, string>,
     signal?: AbortSignal,
   ): Promise<TaskOutput> {
+    // ─── P0-D: Code Node 执行分支 ─────────────────────────────────
+    // 当 task.executor === "code" 时，绕过 agent.chat 直接调用 codeHandler。
+    // 适用于循环调工具、数据拼接等机械任务（如短视频 T4~T7 的 TTS/图生/拼接）。
+    // 彻底消除 LLM 的不确定性（路径幻觉、遗漏调用、JSON 解析失败）。
+    if (task.executor === "code" && task.codeHandler) {
+      return this.executeCodeTask(task, config, crewId, outputMap, signal);
+    }
+
     // 防御性校验：agentId 可选后需先确认非空（正常情况下经过 autoAssign 后 agentId 已填充）
     if (!task.agentId) {
       throw new Error(`Task '${task.id}' has no agentId (auto-assign may have failed)`);
@@ -639,9 +690,16 @@ export class CrewExecutor extends EventEmitter {
       ? `\n\n## 📁 文件输出要求\n你的工作空间目录是: ${wsDir}\n请将所有产出文件保存到此目录。\n\n文件产出规范：\n- 文本报告/代码文件 → 使用 write_file 工具直接写入工作空间目录\n- 如需生成二进制文件（PPT/Word/Excel/PDF/图片），请使用 run_python 执行 Python 代码：\n  - PPT: python-pptx 库\n  - Word: python-docx 库\n  - Excel: openpyxl 库\n  - PDF: fpdf2 库\n  - 图片: pillow 库\n  生成后在最终回复中输出 MEDIA:/path/to/file 让系统自动收集为附件（无需再调 write_file）\n- 也可使用 image_generate 工具生成图片`
       : "";
 
-    const prompt = `${description}${contextStr}\n\nExpected output: ${task.expectedOutput}${workspaceHint}`;
+    let prompt = `${description}${contextStr}\n\nExpected output: ${task.expectedOutput}${workspaceHint}`;
 
     this.emit("task:start", { crewId, taskId: task.id, agentId: task.agentId });
+
+    // P1-LOG: 统一 task 级结构化日志 — 便于失败时秒级定位
+    // 字段约定 {crewId, taskId, agentId, phase, executor, durationMs?, retries?, error?}
+    logger.info(
+      { crewId, taskId: task.id, agentId: taskAgentId, phase: "start", executor: "agent" },
+      "Task started (agent.chat executor)",
+    );
 
     // E-2: 子代理分支 — 当 task.useSubagent 且有 subagentManager 时，
     // 通过 spawn 子代理执行任务，而非直接 agent.chat()
@@ -672,6 +730,18 @@ export class CrewExecutor extends EventEmitter {
       };
 
       this.emit("task:complete", { crewId, ...output });
+      logger.info(
+        {
+          crewId,
+          taskId: task.id,
+          agentId: taskAgentId,
+          phase: "complete",
+          executor: "subagent",
+          durationMs: output.durationMs,
+          retries: 0,
+        },
+        "Task completed (subagent executor)",
+      );
       return output;
     }
 
@@ -695,7 +765,20 @@ export class CrewExecutor extends EventEmitter {
           if (retries > maxRetries) {
             throw new Error(`Task '${task.id}' failed guardrail after ${maxRetries} retries: ${validation.feedback}`);
           }
-          logger.warn({ taskId: task.id, retries, feedback: validation.feedback }, "Task guardrail failed, retrying");
+          // 将 guardrail 反馈注入下次 prompt，让 LLM 知道哪里出错并修正
+          prompt += `\n\n[GUARDRAIL FEEDBACK] 你的上一次输出未通过校验：${validation.feedback}。请严格按照要求的 JSON 格式重新输出，修正上述问题。`;
+          logger.warn(
+            {
+              crewId,
+              taskId: task.id,
+              agentId: taskAgentId,
+              phase: "guardrail_failed",
+              executor: "agent",
+              retries,
+              feedback: validation.feedback,
+            },
+            "Task guardrail failed, retrying with feedback",
+          );
           continue;
         }
       }
@@ -711,6 +794,166 @@ export class CrewExecutor extends EventEmitter {
       };
 
       this.emit("task:complete", { crewId, ...output });
+      logger.info(
+        {
+          crewId,
+          taskId: task.id,
+          agentId: taskAgentId,
+          phase: "complete",
+          executor: "agent",
+          durationMs: output.durationMs,
+          retries,
+          hasAttachments: !!attachments?.length,
+        },
+        "Task completed (agent.chat executor)",
+      );
+      return output;
+    }
+
+    throw new Error(`Task '${task.id}' exhausted all retries`);
+  }
+
+  /**
+   * P0-D: 执行 Code Node 任务。
+   *
+   * 与 agent.chat 分支的核心区别：
+   * - 不经过 LLM，直接调用 task.codeHandler 完成工作
+   * - handler 抛错 → 按 maxRetries 重试（用于吸收网络抖动）
+   * - 仍复用 task.guardrail 做最终产出校验（双保险）
+   *
+   * 设计要点（低耦合）：
+   * - ctx 是只读视图，handler 不能改 outputMap
+   * - handler 自行处理内部并发（如 Promise.all 调 forge_tts）
+   * - attachments 交给 orchestrator 常规路径聚合，不重复实现
+   */
+  private async executeCodeTask(
+    task: CrewTask,
+    config: CrewConfig,
+    crewId: string,
+    outputMap: Map<string, string>,
+    signal?: AbortSignal,
+  ): Promise<TaskOutput> {
+    if (!task.codeHandler) {
+      throw new Error(`Task '${task.id}' is declared as code executor but codeHandler is missing`);
+    }
+
+    const maxRetries = config.maxRetries ?? 2;
+    // Code 任务不强制 agentId，但 TaskOutput 必填；未提供时用占位 ID 便于追踪
+    const agentIdForOutput = task.agentId ?? `code-node:${task.id}`;
+    const taskStart = Date.now();
+
+    const wsDir = this.getWorkspaceDir?.(crewId);
+    const ctx: CodeTaskContext = {
+      taskId: task.id,
+      crewId,
+      // 暴露只读视图，handler 无法污染编排器内部状态
+      outputMap: outputMap as ReadonlyMap<string, string>,
+      workspaceDir: wsDir,
+      inputs: config.inputs,
+      signal,
+    };
+
+    this.emit("task:start", { crewId, taskId: task.id, agentId: agentIdForOutput });
+    logger.info(
+      { crewId, taskId: task.id, agentId: agentIdForOutput, phase: "start", executor: "code" },
+      "Task started (code executor)",
+    );
+
+    let retries = 0;
+    while (retries <= maxRetries) {
+      if (signal?.aborted) throw new Error("Execution cancelled by user");
+
+      let result: CodeTaskResult;
+      try {
+        // handler 可能抛异常（网络错误、上游 JSON 解析失败等），
+        // 统一走下方重试逻辑，无需区分错误类型
+        const timeoutMs = config.taskTimeoutMs ?? 3_600_000;
+        result = await withTimeout(
+          task.codeHandler(ctx),
+          timeoutMs,
+          `Code task '${task.id}' handler`,
+        );
+      } catch (err) {
+        retries++;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (retries > maxRetries) {
+          logger.error(
+            {
+              crewId,
+              taskId: task.id,
+              agentId: agentIdForOutput,
+              phase: "failed",
+              executor: "code",
+              retries: retries - 1,
+              error: msg,
+            },
+            "Code task exhausted retries",
+          );
+          throw new Error(`Task '${task.id}' code handler failed after ${maxRetries} retries: ${msg}`);
+        }
+        logger.warn(
+          {
+            crewId,
+            taskId: task.id,
+            agentId: agentIdForOutput,
+            phase: "code_retry",
+            executor: "code",
+            retries,
+            error: msg,
+          },
+          "Code handler threw, retrying",
+        );
+        continue;
+      }
+
+      // guardrail 作为最后一道防线（即便 handler 是确定性代码，依然保留二次校验以防上游污染）
+      if (task.guardrail) {
+        const validation = task.guardrail(result.output);
+        if (!validation.valid) {
+          retries++;
+          if (retries > maxRetries) {
+            throw new Error(`Task '${task.id}' failed guardrail after ${maxRetries} retries: ${validation.feedback}`);
+          }
+          logger.warn(
+            {
+              crewId,
+              taskId: task.id,
+              agentId: agentIdForOutput,
+              phase: "guardrail_failed",
+              executor: "code",
+              retries,
+              feedback: validation.feedback,
+            },
+            "Code task guardrail failed, retrying",
+          );
+          continue;
+        }
+      }
+
+      const output: TaskOutput = {
+        taskId: task.id,
+        agentId: agentIdForOutput,
+        output: result.output,
+        retries,
+        durationMs: Date.now() - taskStart,
+        timestamp: new Date(),
+        attachments: result.attachments?.length ? result.attachments : undefined,
+      };
+
+      this.emit("task:complete", { crewId, ...output });
+      logger.info(
+        {
+          crewId,
+          taskId: task.id,
+          agentId: agentIdForOutput,
+          phase: "complete",
+          executor: "code",
+          durationMs: output.durationMs,
+          retries,
+          hasAttachments: !!result.attachments?.length,
+        },
+        "Task completed (code executor)",
+      );
       return output;
     }
 

@@ -304,6 +304,20 @@ export default function ChatPage() {
   // TTS 状态
   const [playingIdx, setPlayingIdx] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // [WEB-P1-03] TTS blob URL 生命周期：用 ref 跟踪当前 ObjectURL，
+  // 所有退出路径（pause/ended/error/unmount/切换播放）统一 revoke，避免内存泄漏。
+  const ttsUrlRef = useRef<string | null>(null);
+  // 组件卸载时兜底释放（路由切换 / 快速关闭 chat 页场景）
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+      audioRef.current = null;
+      if (ttsUrlRef.current) {
+        URL.revokeObjectURL(ttsUrlRef.current);
+        ttsUrlRef.current = null;
+      }
+    };
+  }, []);
   // 模型切换
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>>([]); 
@@ -638,9 +652,14 @@ export default function ChatPage() {
       try {
         // SSE 流式请求走 Next.js proxy（proxyTimeout 已设为 5 分钟）
         // 保留直连 fallback 以防代理超时：process.env.NEXT_PUBLIC_API_URL
+        // [WEB-P1-04] 手动注入 Authorization（相对路径不走 apiFetch，但需与后端鉴权对齐）
+        const token = typeof window !== "undefined" ? localStorage.getItem("super-agent.auth-token") : null;
         const res = await fetch(`/api/chat/stream`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({
             agentId: selectedAgent,
             message: messageContent,
@@ -859,12 +878,28 @@ export default function ChatPage() {
 
   // TTS 语音合成
   const handleTTS = useCallback(async (text: string, msgIdx: number) => {
-    // 如果正在播放同一条，停止
+    // [WEB-P1-03] 统一释放前一次 blob URL，避免任一退出路径遗漏
+    const revokePrevUrl = () => {
+      if (ttsUrlRef.current) {
+        URL.revokeObjectURL(ttsUrlRef.current);
+        ttsUrlRef.current = null;
+      }
+    };
+
+    // 如果正在播放同一条，停止并释放资源
     if (playingIdx === msgIdx) {
       audioRef.current?.pause();
+      audioRef.current = null;
+      revokePrevUrl();
       setPlayingIdx(null);
       return;
     }
+
+    // 切换到另一条前先释放上一次的 audio + url
+    audioRef.current?.pause();
+    audioRef.current = null;
+    revokePrevUrl();
+
     setPlayingIdx(msgIdx);
     try {
       // TTS 返回二进制 blob，不能用 apiFetch（它假定 JSON），但需要手动附加认证头
@@ -880,11 +915,22 @@ export default function ChatPage() {
       if (!res.ok) throw new Error("TTS 合成失败");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
+      ttsUrlRef.current = url;
       const audio = new Audio(url);
       audioRef.current = audio;
-      audio.onended = () => { setPlayingIdx(null); URL.revokeObjectURL(url); };
-      audio.play();
+      // 所有结束路径（正常/错误）统一回收
+      const cleanup = () => {
+        setPlayingIdx(null);
+        audioRef.current = null;
+        revokePrevUrl();
+      };
+      audio.onended = cleanup;
+      audio.onerror = cleanup;
+      await audio.play();
     } catch {
+      // play() 拒绝或网络失败：回收已创建的 url
+      revokePrevUrl();
+      audioRef.current = null;
       setPlayingIdx(null);
     }
   }, [playingIdx]);

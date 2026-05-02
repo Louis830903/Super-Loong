@@ -1,0 +1,23 @@
+{
+  "source": "runninghub",
+  "mode": "standard_api",
+  "endpoint": "/openapi/v2/alibaba/wan-2.5-preview/image-to-video",
+  "output_media": "video",
+  "requires_image_input": true,
+  "image_source_workflow": "runninghub/image_rhart_g2.json",
+  "defaults": {
+    "duration": "5",
+    "resolution": "1080p",
+    "promptExtend": true
+  },
+  "param_map": {
+    "prompt": "prompt",
+    "image_url": "imageUrl",
+    "audio_url": "audioUrl",
+    "negative_prompt": "negativePrompt",
+    "duration": "duration",
+    "resolution": "resolution",
+    "prompt_extend": "promptExtend",
+    "seed": "seed"
+  }
+}

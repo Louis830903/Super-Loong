@@ -4,14 +4,16 @@
  * Stores API keys (AES-256-CBC encrypted) and custom base URLs.
  * Supports CRUD operations and env-variable fallback.
  *
- * Set SA_ENCRYPTION_KEY env var for a stable encryption key in production.
- * Without it, a default key is used (safe for development but less secure).
+ * SEC-P0-02: 加密密钥由 security/encryption-key.ts 集中管理：
+ *   - 强制要求 SA_ENCRYPTION_KEY（长度 ≥32 且非弱密钥），否则启动崩溃
+ *   - 支持 SA_ENCRYPTION_KEY_LEGACY 过渡期，解密自动回退并在迁移阶段重加密
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import pino from "pino";
 import { getDatabase, scheduleSave } from "../persistence/sqlite.js";
 import { getModelCatalog } from "./model-catalog.js";
+import { getEncryptionKey, decryptWithFallback } from "../security/encryption-key.js";
 
 const logger = pino({ name: "provider-store" });
 
@@ -27,41 +29,42 @@ export interface ProviderRecord {
   updatedAt: string;
 }
 
-// ─── AES-256-CBC Encryption (replaces old base64 obfuscation) ──
+// ─── AES-256-CBC Encryption (key 由 encryption-key.ts 统一管理) ──
 
-const SA_KEY_FROM_ENV = process.env.SA_ENCRYPTION_KEY;
-const ENCRYPTION_KEY = createHash("sha256")
-  .update(SA_KEY_FROM_ENV ?? "super-agent-default-encryption-key-v1")
-  .digest();
-
-// Startup warning: alert if using default encryption key (Letta/Hermes pattern)
-if (!SA_KEY_FROM_ENV) {
-  logger.warn(
-    "\n============================================================\n" +
-    "  WARNING: SA_ENCRYPTION_KEY not set!\n" +
-    "  API keys are encrypted with a DEFAULT key from source code.\n" +
-    "  This is acceptable for development but INSECURE for production.\n" +
-    "  Set SA_ENCRYPTION_KEY to a random 32+ char string.\n" +
-    "============================================================"
-  );
-}
-
+/**
+ * 使用"当前新 key"加密明文。
+ * 注：这里每次调用 getEncryptionKey()，内部 sha256 开销可忽略，换取测试/热更新的灵活性。
+ */
 function encryptApiKey(text: string): { encrypted: string; iv: string } {
   if (!text) return { encrypted: "", iv: "" };
   const iv = randomBytes(16);
-  const cipher = createCipheriv("aes-256-cbc", ENCRYPTION_KEY, iv);
+  const cipher = createCipheriv("aes-256-cbc", getEncryptionKey(), iv);
   let encrypted = cipher.update(text, "utf8", "hex");
   encrypted += cipher.final("hex");
   return { encrypted, iv: iv.toString("hex") };
 }
 
-function decryptApiKey(encrypted: string, ivHex: string): string {
-  if (!encrypted || !ivHex) return "";
+/**
+ * 使用指定 key 执行 AES 解密（底层实现，供 fallback 机制复用）。
+ */
+function decryptApiKeyWithKey(encrypted: string, ivHex: string, key: Buffer): string {
   const iv = Buffer.from(ivHex, "hex");
-  const decipher = createDecipheriv("aes-256-cbc", ENCRYPTION_KEY, iv);
+  const decipher = createDecipheriv("aes-256-cbc", key, iv);
   let decrypted = decipher.update(encrypted, "hex", "utf8");
   decrypted += decipher.final("utf8");
   return decrypted;
+}
+
+/**
+ * 解密 API Key — 先试新 key，失败回退 legacy key。
+ * @returns plain 明文；usedLegacy=true 表示这条记录需要用新 key 重新加密写回
+ */
+function decryptApiKey(encrypted: string, ivHex: string): { plain: string; usedLegacy: boolean } {
+  if (!encrypted || !ivHex) return { plain: "", usedLegacy: false };
+  const { plaintext, usedLegacy } = decryptWithFallback((key) =>
+    decryptApiKeyWithKey(encrypted, ivHex, key),
+  );
+  return { plain: plaintext, usedLegacy };
 }
 
 // ─── Legacy base64 obfuscation (for migration only) ──
@@ -230,7 +233,10 @@ export class ProviderStore {
   /**
    * Decode an API key from database, handling both legacy base64 and new AES formats.
    * If iv is empty/null → legacy base64 obfuscation → decode and auto-migrate to AES.
-   * If iv is present → AES-256-CBC encrypted → decrypt.
+   * If iv is present → AES-256-CBC encrypted → decrypt（失败时自动回退 SA_ENCRYPTION_KEY_LEGACY）。
+   *
+   * 注：使用 legacy key 成功解密的记录不会在此处直接回写（read 路径保持纯粹），
+   * 统一由 migrateKeys() 在启动阶段一次性重加密。这里仅记录一条 debug 级日志。
    */
   private decodeApiKey(encodedKey: string | null, iv: string | null): string {
     if (!encodedKey) return "";
@@ -238,9 +244,13 @@ export class ProviderStore {
     // New AES format: iv is present and non-empty
     if (iv && iv.length > 0) {
       try {
-        return decryptApiKey(encodedKey, iv);
+        const { plain, usedLegacy } = decryptApiKey(encodedKey, iv);
+        if (usedLegacy) {
+          logger.debug("Provider API key decrypted via SA_ENCRYPTION_KEY_LEGACY; will be re-encrypted on next migrateKeys()");
+        }
+        return plain;
       } catch (err) {
-        logger.warn({ err }, "Failed to decrypt API key with AES, returning empty");
+        logger.warn({ err }, "Failed to decrypt API key with AES (even with legacy fallback), returning empty");
         return "";
       }
     }
@@ -257,40 +267,62 @@ export class ProviderStore {
   }
 
   /**
-   * Auto-migrate legacy base64 keys to AES encryption.
-   * Called once after init + syncFromEnv to upgrade existing records.
+   * Auto-migrate legacy records to the current SA_ENCRYPTION_KEY:
+   *   1) iv 为空的记录：旧 base64 混淆 → 新 AES 加密
+   *   2) iv 非空但新 key 解不开 / 需回退 LEGACY：用 legacy 解出明文后用新 key 重加密
+   * 每次迁移后执行一次 scheduleSave()，完成后用户可删除 SA_ENCRYPTION_KEY_LEGACY。
    */
   migrateKeys(): void {
     const db = getDatabase();
     const rows = db.exec("SELECT id, api_key, api_key_iv FROM llm_providers");
     if (!rows.length) return;
 
-    let migrated = 0;
+    let migratedFromBase64 = 0;
+    let migratedFromLegacyKey = 0;
     for (const row of rows[0].values) {
       const id = row[0] as string;
       const key = row[1] as string;
       const iv = row[2] as string;
 
-      // Skip empty keys or already-encrypted keys
-      if (!key || (iv && iv.length > 0)) continue;
+      if (!key) continue;
 
-      // Decode legacy base64 and re-encrypt with AES
+      if (iv && iv.length > 0) {
+        // AES 记录：只在需要回退 LEGACY 时才重加密（避免无意义写入）
+        try {
+          const { plain, usedLegacy } = decryptApiKey(key, iv);
+          if (!usedLegacy) continue; // 新 key 已能解密，无需迁移
+          const { encrypted, iv: newIv } = encryptApiKey(plain);
+          db.run(
+            "UPDATE llm_providers SET api_key = ?, api_key_iv = ?, updated_at = ? WHERE id = ?",
+            [encrypted, newIv, new Date().toISOString(), id],
+          );
+          migratedFromLegacyKey++;
+        } catch (err) {
+          logger.warn({ id, err }, "Failed to re-encrypt record during legacy-key migration");
+        }
+        continue;
+      }
+
+      // Legacy base64 format (iv 为空)
       try {
         const plainKey = isBase64(key) ? deobfuscateLegacy(key) : key;
         const { encrypted, iv: newIv } = encryptApiKey(plainKey);
         db.run(
           "UPDATE llm_providers SET api_key = ?, api_key_iv = ?, updated_at = ? WHERE id = ?",
-          [encrypted, newIv, new Date().toISOString(), id]
+          [encrypted, newIv, new Date().toISOString(), id],
         );
-        migrated++;
+        migratedFromBase64++;
       } catch (err) {
-        logger.warn({ id, err }, "Failed to migrate legacy API key");
+        logger.warn({ id, err }, "Failed to migrate legacy base64 API key");
       }
     }
 
-    if (migrated > 0) {
+    if (migratedFromBase64 > 0 || migratedFromLegacyKey > 0) {
       scheduleSave();
-      logger.info({ migrated }, "Migrated legacy base64 API keys to AES-256-CBC encryption");
+      logger.info(
+        { migratedFromBase64, migratedFromLegacyKey },
+        "[migration] Provider API keys re-encrypted with current SA_ENCRYPTION_KEY",
+      );
     }
   }
 

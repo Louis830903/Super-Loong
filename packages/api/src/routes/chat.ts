@@ -21,7 +21,7 @@
  * POST /v1/chat/completions  — OpenAI Chat Completions format
  */
 
-import crypto from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import {
   ChatMessageSchema,
@@ -122,7 +122,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
 
     // Auto-create a new conversation if no ID provided
     if (!convId) {
-      convId = `conv-${crypto.randomUUID()}`;
+      convId = `conv-${randomUUID()}`;
       try { createConversation(convId, agentId); } catch { /* may exist */ }
     }
 
@@ -332,7 +332,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!agentId) {
       return reply.status(400).send({ error: "agentId is required" });
     }
-    const id = `conv-${crypto.randomUUID()}`;
+    const id = `conv-${randomUUID()}`;
     const conversation = createConversation(id, agentId, (body.title as string) || undefined);
     return { conversation };
   });

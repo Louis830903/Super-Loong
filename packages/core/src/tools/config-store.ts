@@ -5,42 +5,64 @@
  * 浏览器自动化等外部服务的凭据和配置。
  *
  * 优先级链路：ConfigStore (设置页面) → 环境变量 (首次播种) → 默认值
+ *
+ * SEC-P0-02: 加密密钥由 security/encryption-key.ts 集中管理（与 provider-store 共用强校验 + LEGACY 过渡）。
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import pino from "pino";
 import { getDatabase, scheduleSave } from "../persistence/sqlite.js";
+import { getEncryptionKey, decryptWithFallback } from "../security/encryption-key.js";
 
 const logger = pino({ name: "config-store" });
 
 // ─── AES-256-CBC 加密（与 ProviderStore 共享密钥派生方式） ──
 
-const SA_KEY_FROM_ENV = process.env.SA_ENCRYPTION_KEY;
-const ENCRYPTION_KEY = createHash("sha256")
-  .update(SA_KEY_FROM_ENV ?? "super-agent-default-encryption-key-v1")
-  .digest();
-
 function encrypt(text: string): { encrypted: string; iv: string } {
   if (!text) return { encrypted: "", iv: "" };
   const iv = randomBytes(16);
-  const cipher = createCipheriv("aes-256-cbc", ENCRYPTION_KEY, iv);
+  const cipher = createCipheriv("aes-256-cbc", getEncryptionKey(), iv);
   let encrypted = cipher.update(text, "utf8", "hex");
   encrypted += cipher.final("hex");
   return { encrypted, iv: iv.toString("hex") };
 }
 
-function decrypt(encrypted: string, ivHex: string): string {
-  if (!encrypted || !ivHex) return "";
+/** 使用指定 key 执行 AES 解密（底层实现）。 */
+function decryptWithKey(encrypted: string, ivHex: string, key: Buffer): string {
+  const iv = Buffer.from(ivHex, "hex");
+  const decipher = createDecipheriv("aes-256-cbc", key, iv);
+  let decrypted = decipher.update(encrypted, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
+}
+
+/**
+ * 解密配置值 — 先试新 key，失败回退 legacy key。
+ * 供 migrateKeys 使用，需要区分是否走了 legacy 路径。
+ */
+function decryptWithStatus(encrypted: string, ivHex: string): { plain: string; usedLegacy: boolean } {
+  if (!encrypted || !ivHex) return { plain: "", usedLegacy: false };
   try {
-    const iv = Buffer.from(ivHex, "hex");
-    const decipher = createDecipheriv("aes-256-cbc", ENCRYPTION_KEY, iv);
-    let decrypted = decipher.update(encrypted, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted;
+    const { plaintext, usedLegacy } = decryptWithFallback((key) =>
+      decryptWithKey(encrypted, ivHex, key),
+    );
+    return { plain: plaintext, usedLegacy };
   } catch {
-    logger.warn("Failed to decrypt config value");
-    return "";
+    logger.warn("Failed to decrypt config value (even with legacy fallback)");
+    return { plain: "", usedLegacy: false };
   }
+}
+
+/**
+ * 读取路径的解密入口 — 只返回明文；若走了 legacy 分支则打 debug 日志，
+ * 统一由 migrateKeys 在启动阶段重加密写回。
+ */
+function decrypt(encrypted: string, ivHex: string): string {
+  const { plain, usedLegacy } = decryptWithStatus(encrypted, ivHex);
+  if (usedLegacy) {
+    logger.debug("Config value decrypted via SA_ENCRYPTION_KEY_LEGACY; will be re-encrypted on next migrateKeys()");
+  }
+  return plain;
 }
 
 /** 掩码敏感值：前3+后3 */
@@ -322,6 +344,44 @@ export class ConfigStore {
     const service = SERVICE_CATALOG.find(s => s.id === serviceId);
     return service?.keys.find(k => k.key === key);
   }
+
+  /**
+   * 启动期迁移 — 将用 SA_ENCRYPTION_KEY_LEGACY 能解开的敏感配置用当前新 key 重加密写回。
+   * 每次启动调用一次（幂等：新 key 能直接解密的记录跳过）。
+   */
+  migrateKeys(): void {
+    const db = getDatabase();
+    const rows = db.exec(
+      "SELECT service_id, config_key, config_value, config_iv, is_secret FROM service_configs WHERE is_secret = 1",
+    );
+    if (!rows.length) return;
+
+    const now = new Date().toISOString();
+    let migrated = 0;
+    for (const row of rows[0].values) {
+      const [serviceId, configKey, value, iv, isSecret] = row as [string, string, string, string, number];
+      if (!isSecret || !value || !iv) continue;
+
+      try {
+        const { plain, usedLegacy } = decryptWithStatus(value, iv);
+        if (!usedLegacy || !plain) continue; // 新 key 可解 or 全部解密失败，不做操作
+        const { encrypted, iv: newIv } = encrypt(plain);
+        db.run(
+          `UPDATE service_configs SET config_value = ?, config_iv = ?, updated_at = ?
+           WHERE service_id = ? AND config_key = ?`,
+          [encrypted, newIv, now, serviceId, configKey],
+        );
+        migrated++;
+      } catch (err) {
+        logger.warn({ serviceId, configKey, err }, "Failed to re-encrypt config during legacy-key migration");
+      }
+    }
+
+    if (migrated > 0) {
+      scheduleSave();
+      logger.info({ migrated }, "[migration] Service configs re-encrypted with current SA_ENCRYPTION_KEY");
+    }
+  }
 }
 
 // ─── 全局单例 ──────────────────────────────────────
@@ -334,6 +394,7 @@ export function initConfigStore(): ConfigStore {
     _instance = new ConfigStore();
     _instance.init();
     _instance.syncFromEnv();
+    _instance.migrateKeys();
   }
   return _instance;
 }

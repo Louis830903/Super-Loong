@@ -47,3 +47,19 @@ __pycache__/
 .DS_Store
 *.log
 Thumbs.db
+
+# ====== Video-Forge 运行时产物（便携版 ffmpeg + 调试快照）======
+# 注意：必须用 / 开头的绝对根匹配，否则会误伤 packages/core/src/runtime/（bootstrap.ts 所在目录）
+# /runtime/ 由 bootstrap.ts 按需下载 ffmpeg/ffprobe 便携版（数百 MB），并堆放 curl 响应快照
+/runtime/
+# 根级临时请求/响应文件（手工 curl / vitest 输出转储）
+tmp_*.json
+vitest_output.txt
+# 数据库带版本后缀的备份（*.bak 规则不覆盖 *.db.bak.pre-v2-fix 等派生文件）
+*.db.bak.*
+data/super-agent.db.bak.*
+# services/video-forge 子服务的本地数据目录（用户生成的临时媒体 + SQLite）
+services/video-forge/data/
+services/video-forge/output/
+services/video-forge/.venv/
+services/video-forge/__pycache__/

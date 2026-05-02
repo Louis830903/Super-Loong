@@ -20,6 +20,8 @@ export interface ModelDef {
   /** Fixed temperature required by the model (e.g. Kimi K2 only allows 1). */
   fixedTemperature?: number;
   tags: string[];
+  /** 模型价格（CNY / 1M tokens），Ollama 本地模型为 0 */
+  pricing?: { input: number; output: number; unit: "CNY/1M_tokens" };
 }
 
 export interface ProviderDef {
@@ -45,6 +47,7 @@ const moonshotModels: ModelDef[] = [
     supportsStreaming: true,
     fixedTemperature: 1,
     tags: ["flagship", "vision", "agent", "coding"],
+    pricing: { input: 1.1, output: 6.5, unit: "CNY/1M_tokens" },
   },
   {
     id: "kimi-k2.5",
@@ -56,6 +59,7 @@ const moonshotModels: ModelDef[] = [
     supportsStreaming: true,
     fixedTemperature: 1,
     tags: ["vision", "agent"],
+    pricing: { input: 4.0, output: 18.0, unit: "CNY/1M_tokens" },
   },
   {
     id: "moonshot-v1-128k",
@@ -66,6 +70,7 @@ const moonshotModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["general"],
+    pricing: { input: 60, output: 60, unit: "CNY/1M_tokens" },
   },
   {
     id: "moonshot-v1-32k",
@@ -76,6 +81,7 @@ const moonshotModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["general", "lightweight"],
+    pricing: { input: 24, output: 24, unit: "CNY/1M_tokens" },
   },
 ];
 
@@ -93,6 +99,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["flagship", "vision", "coding"],
+    pricing: { input: 5, output: 22, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-4.6V",
@@ -104,6 +111,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["vision", "reasoning"],
+    pricing: { input: 2, output: 6, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-4.6V-Flash",
@@ -115,6 +123,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["free", "vision"],
+    pricing: { input: 0, output: 0, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-4V-Flash",
@@ -126,6 +135,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["free", "vision", "lightweight"],
+    pricing: { input: 0, output: 0, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-4.1V-Thinking-FlashX",
@@ -137,6 +147,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["vision", "reasoning", "fast"],
+    pricing: { input: 1, output: 4, unit: "CNY/1M_tokens" },
   },
   // ── 文本模型（不支持图片）─────────────────────────
   {
@@ -149,6 +160,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["flagship", "coding"],
+    pricing: { input: 6, output: 24, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-5",
@@ -160,6 +172,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["agent", "planning"],
+    pricing: { input: 5, output: 20, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-5-Turbo",
@@ -171,6 +184,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["agent", "coding", "fast"],
+    pricing: { input: 5, output: 22, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-4.7",
@@ -182,6 +196,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["general"],
+    pricing: { input: 2, output: 6, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-4.7-FlashX",
@@ -193,6 +208,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["fast", "lightweight"],
+    pricing: { input: 0.5, output: 2, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-4.6",
@@ -204,6 +220,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["coding", "reasoning"],
+    pricing: { input: 2, output: 6, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-4-Long",
@@ -215,6 +232,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["long-context"],
+    pricing: { input: 1, output: 1, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-4.7-Flash",
@@ -226,6 +244,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["free", "fast"],
+    pricing: { input: 0, output: 0, unit: "CNY/1M_tokens" },
   },
   {
     id: "GLM-4-Flash-250414",
@@ -237,6 +256,7 @@ const zhipuModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["free"],
+    pricing: { input: 0, output: 0, unit: "CNY/1M_tokens" },
   },
 ];
 
@@ -252,6 +272,7 @@ const qwenModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["flagship", "latest"],
+    pricing: { input: 2.0, output: 6.0, unit: "CNY/1M_tokens" },
   },
   {
     id: "qwen3-max",
@@ -262,6 +283,7 @@ const qwenModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["flagship"],
+    pricing: { input: 2.0, output: 6.0, unit: "CNY/1M_tokens" },
   },
   {
     id: "qwen3.6-plus",
@@ -282,6 +304,7 @@ const qwenModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["balanced", "vision", "video"],
+    pricing: { input: 0.8, output: 2.0, unit: "CNY/1M_tokens" },
   },
   {
     id: "qwen3.5-flash",
@@ -292,6 +315,7 @@ const qwenModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["fast"],
+    pricing: { input: 0.15, output: 0.6, unit: "CNY/1M_tokens" },
   },
   {
     id: "qwen3.6-flash",
@@ -312,6 +336,7 @@ const qwenModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["general"],
+    pricing: { input: 0.8, output: 2.0, unit: "CNY/1M_tokens" },
   },
   {
     id: "qwen-turbo",
@@ -322,6 +347,7 @@ const qwenModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["lightweight"],
+    pricing: { input: 0.3, output: 0.6, unit: "CNY/1M_tokens" },
   },
   {
     id: "qwen3-coder-plus",
@@ -368,6 +394,7 @@ const deepseekModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["general", "functions"],
+    pricing: { input: 1.0, output: 2.0, unit: "CNY/1M_tokens" },
   },
   {
     id: "deepseek-reasoner",
@@ -379,6 +406,7 @@ const deepseekModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["reasoning"],
+    pricing: { input: 2.0, output: 8.0, unit: "CNY/1M_tokens" },
   },
 ];
 
@@ -394,6 +422,7 @@ const minimaxModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["flagship"],
+    pricing: { input: 2.1, output: 8.4, unit: "CNY/1M_tokens" },
   },
   {
     id: "MiniMax-M2.7-highspeed",
@@ -404,6 +433,7 @@ const minimaxModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["fast"],
+    pricing: { input: 4.2, output: 16.8, unit: "CNY/1M_tokens" },
   },
   {
     id: "MiniMax-M2.5",
@@ -414,6 +444,7 @@ const minimaxModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["coding"],
+    pricing: { input: 2.1, output: 8.4, unit: "CNY/1M_tokens" },
   },
   {
     id: "MiniMax-M2.5-highspeed",
@@ -424,6 +455,7 @@ const minimaxModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["fast"],
+    pricing: { input: 4.2, output: 16.8, unit: "CNY/1M_tokens" },
   },
   {
     id: "MiniMax-M2.1",
@@ -434,6 +466,7 @@ const minimaxModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["coding", "multilingual"],
+    pricing: { input: 2.1, output: 8.4, unit: "CNY/1M_tokens" },
   },
   {
     id: "MiniMax-M2",
@@ -444,6 +477,7 @@ const minimaxModels: ModelDef[] = [
     supportsReasoning: false,
     supportsStreaming: true,
     tags: ["agent"],
+    pricing: { input: 2.1, output: 8.4, unit: "CNY/1M_tokens" },
   },
 ];
 

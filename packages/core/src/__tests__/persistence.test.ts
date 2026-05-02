@@ -63,8 +63,8 @@ beforeAll(async () => {
   await initDatabase(TEST_DB_PATH);
 });
 
-afterAll(() => {
-  closeDatabase();
+afterAll(async () => {
+  await closeDatabase();
   if (fs.existsSync(TEST_DB_PATH)) fs.unlinkSync(TEST_DB_PATH);
 });
 
@@ -293,7 +293,7 @@ describe("Collaboration History Persistence", () => {
 
 // ─── Evolution Tables Cleanup ──────────────────────────────
 describe("Evolution Tables Cleanup", () => {
-  it("should purge old evolution cases by retention", () => {
+  it("should purge old evolution cases by retention", async () => {
     const db = getDatabase();
     // Insert an old case (90 days ago)
     const oldTs = new Date(Date.now() - 90 * 86_400_000).toISOString();
@@ -308,7 +308,7 @@ describe("Evolution Tables Cleanup", () => {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ["new-case-1", "a1", "s1", "msg", "resp", 0, new Date().toISOString()]
     );
-    saveDatabase();
+    await saveDatabase();
 
     purgeEvolutionCases(500, 30);
 
@@ -318,7 +318,7 @@ describe("Evolution Tables Cleanup", () => {
     expect(ids).not.toContain("old-case-1");
   });
 
-  it("should purge skill proposals by retention", () => {
+  it("should purge skill proposals by retention", async () => {
     const db = getDatabase();
     const oldTs = new Date(Date.now() - 90 * 86_400_000).toISOString();
     db.run(
@@ -331,7 +331,7 @@ describe("Evolution Tables Cleanup", () => {
        VALUES (?, ?, ?, ?, ?)`,
       ["new-prop-1", "new-skill", "create", "approved", new Date().toISOString()]
     );
-    saveDatabase();
+    await saveDatabase();
 
     purgeSkillProposals(300, 60);
 

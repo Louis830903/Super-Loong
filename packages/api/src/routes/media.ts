@@ -35,7 +35,9 @@ export async function mediaRoutes(app: FastifyInstance) {
    * GET /api/media
    * 列出所有媒体文件（扫描 inbound + outbound 目录）
    */
-  app.get("/api/media", async (_request, reply) => {
+  app.get("/api/media", async (request, reply) => {
+    // 可选过滤参数：?kind=video 只返回视频文件，?kind=image 只返回图片
+    const kind = (request.query as Record<string, string>).kind || "";
     const items: Array<{
       id: string;
       filename: string;
@@ -72,7 +74,12 @@ export async function mediaRoutes(app: FastifyInstance) {
 
     // 按创建时间倒序
     items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    return reply.send({ items });
+
+    // 可选类型过滤：kind=video 只返回 video/*，kind=image 只返回 image/*，kind=audio 只返回 audio/*
+    const filtered = kind
+      ? items.filter((item) => item.mimeType.startsWith(`${kind}/`))
+      : items;
+    return reply.send({ items: filtered });
   });
 
   /**
@@ -147,11 +154,17 @@ export async function mediaRoutes(app: FastifyInstance) {
         filename: filename ?? path.basename(saved.path),
       });
     } catch (err: any) {
-      const status = err.name === "MediaSecurityError" ? 400 : 500;
-      return reply.status(status).send({
-        error: err.message ?? "媒体上传失败",
-        code: err.code,
-      });
+      // API-P1-03：MediaSecurityError 为业务错误，消息受控可回显；其他（IO/依赖）仅日志，响应通用文案
+      const isSecErr = err?.name === "MediaSecurityError";
+      if (isSecErr) {
+        app.log.warn({ err, code: err?.code }, "Media upload rejected by security check");
+        return reply.status(400).send({
+          error: err.message ?? "媒体上传失败",
+          code: err.code,
+        });
+      }
+      app.log.error({ err }, "Media upload failed");
+      return reply.status(500).send({ error: "媒体上传失败" });
     }
   });
 

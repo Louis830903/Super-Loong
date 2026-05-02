@@ -11,6 +11,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { ChannelConfigSchema, saveChannel, loadChannels, deleteChannel as deleteChannelDB } from "@super-agent/core";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AppContext } from "../context.js";
 
@@ -57,7 +58,7 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
         details: parsed.error.flatten(),
       });
     }
-    const id = `ch_${crypto.randomUUID().slice(0, 8)}`;
+    const id = `ch_${randomUUID().slice(0, 8)}`;
     const channel = { id, config: parsed.data, status: "configuring" as const };
     channels.set(id, channel);
     // B-18: 持久化到 SQLite
@@ -86,7 +87,9 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!resp.ok) return reply.status(resp.status).send({ error: `Gateway ${resp.status}` });
       return await resp.json();
     } catch (e: any) {
-      return reply.status(502).send({ error: "IM Gateway unavailable", detail: e.message });
+      // API-P1-03：Gateway 异常仅进日志，响应体不回显内部错误详情
+      reply.log.warn({ path, err: e }, "IM Gateway proxyGET failed");
+      return reply.status(502).send({ error: "IM Gateway unavailable" });
     }
   };
 
@@ -114,8 +117,9 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!resp.ok) return reply.status(resp.status).send(data);
       return data;
     } catch (e: any) {
-      const detail = e.message || "unknown error";
-      return reply.status(502).send({ error: `IM Gateway unavailable: ${detail}`, detail });
+      // API-P1-03：Gateway 异常仅进日志，响应体不回显内部错误详情
+      reply.log.warn({ path, err: e }, "IM Gateway proxyPOST failed");
+      return reply.status(502).send({ error: "IM Gateway unavailable" });
     }
   };
 
@@ -127,7 +131,9 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!resp.ok) return { status: "offline", error: `Gateway returned ${resp.status}` };
       return await resp.json();
     } catch (e: any) {
-      return { status: "offline", error: e.message };
+      // API-P1-03：连接异常栈仅进日志，响应体给通用离线状态
+      app.log.warn({ err: e }, "IM Gateway health check failed");
+      return { status: "offline", error: "Gateway unreachable" };
     }
   });
 
@@ -250,9 +256,10 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
       const connectData: any = await connectRes.json();
       return reply.send({ status: "restarted", platform, connection: connectData });
     } catch (err: any) {
-      app.log.error({ platform, error: err.message }, "Reconnect failed during restart");
+      // API-P1-03：reconnect 异常栈仅进日志，响应体不拼接底层错误信息
+      app.log.error({ platform, err }, "Reconnect failed during restart");
       return reply.status(502).send({
-        error: `Restart failed: disconnect OK but reconnect failed — ${err.message}`,
+        error: "Restart failed: disconnect OK but reconnect failed",
       });
     }
   });

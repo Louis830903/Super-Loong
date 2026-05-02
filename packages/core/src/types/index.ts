@@ -24,6 +24,16 @@ export interface AgentConfig {
   memoryEnabled: boolean;
   maxToolIterations: number;
   metadata: Record<string, unknown>;
+  /**
+   * 工具注入策略：
+   * - "all"（默认）：注入所有全局工具，忽略 tools 白名单（向后兼容）
+   * - "configured-only"：仅注入 tools 数组中列出的工具名；tools=[] 时 Agent 无任何工具
+   *
+   * P0-Qwen400-ROOT: T1~T3 纯 LLM 创意生成 Agent 必须设为 "configured-only" + tools=[]，
+   * 否则 globalTools（含 write_file 等 118+ 工具）会泄露给 LLM，
+   * 导致其尝试用 write_file 写长内容 → JSON 破损 → Qwen 400 死循环。
+   */
+  toolPolicy?: "all" | "configured-only";
 }
 
 export interface AgentState {
@@ -334,7 +344,13 @@ export type PlatformEventType =
   | "skill:loaded"
   | "skill:updated"
   | "skill:removed"
-  | "memory:updated";
+  | "memory:updated"
+  // ✨ CTR-P1-02: 视频任务生命周期事件（4 枚举覆盖 created / progress / completed / failed，
+  //    cancelled 归 failed 由 phase 字段区分；前端按 "video:*" 前缀订阅即可）
+  | "video:created"
+  | "video:progress"
+  | "video:completed"
+  | "video:failed";
 
 export interface PlatformEvent {
   type: PlatformEventType;

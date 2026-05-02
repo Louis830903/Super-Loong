@@ -19,6 +19,7 @@ import {
   Sparkles,
   Image,
   Globe,
+  Video,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -36,6 +37,7 @@ const navigation = [
   { name: "进化引擎", href: "/evolution", icon: Sparkles },
   { name: "A2A 协议", href: "/a2a", icon: Globe },
   { name: "媒体管理", href: "/media", icon: Image },
+  { name: "视频工作室", href: "/video-studio", icon: Video },
   { name: "安全管理", href: "/security", icon: Shield },
   { name: "系统设置", href: "/settings", icon: Settings },
 ];

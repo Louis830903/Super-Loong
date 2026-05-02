@@ -107,7 +107,8 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
       await memoryManager.update(request.params.id, content, metadata);
       return { status: "updated", id: request.params.id };
     } catch (err: any) {
-      return reply.status(404).send({ error: err.message });
+      app.log.warn({ id: request.params.id, err }, "Memory update failed");
+      return reply.status(404).send({ error: "Memory update failed" });
     }
   });
 
@@ -157,7 +158,8 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
       );
       return block;
     } catch (err: any) {
-      return reply.status(400).send({ error: err.message });
+      app.log.warn({ agentId: request.params.agentId, label: request.params.label, err }, "Core block update failed");
+      return reply.status(400).send({ error: "Core block update failed" });
     }
   });
 
@@ -174,7 +176,8 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
       );
       return block;
     } catch (err: any) {
-      return reply.status(400).send({ error: err.message });
+      app.log.warn({ agentId: request.params.agentId, label: request.params.label, err }, "Core block append failed");
+      return reply.status(400).send({ error: "Core block append failed" });
     }
   });
 

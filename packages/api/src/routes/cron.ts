@@ -170,7 +170,9 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
       const response = await scheduler.executeNow(request.params.id);
       return { status: "executed", response };
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
+      // API-P1-03：内部栈仅进日志
+      app.log.error({ route: "/api/cron/jobs/:id/run", jobId: request.params.id, err }, "Cron job execution failed");
+      return reply.status(500).send({ error: "Cron job execution failed" });
     }
   });
 

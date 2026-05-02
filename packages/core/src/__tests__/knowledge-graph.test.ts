@@ -44,9 +44,9 @@ beforeAll(async () => {
   kg = new KnowledgeGraph();
 });
 
-afterAll(() => {
+afterAll(async () => {
   try {
-    closeDatabase();
+    await closeDatabase();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
     if (fs.existsSync(tmpDir)) fs.rmdirSync(tmpDir);
   } catch { /* cleanup best-effort */ }

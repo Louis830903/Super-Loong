@@ -8,13 +8,16 @@
  * - WebSocket real-time event streaming
  * - OpenAI-compatible /v1/chat/completions endpoint
  * - CORS support for the Web UI
+ *
+ * [Task 3i] forge_tts 字段名对齐触发 tsx watch reload (2026-04-29)
+ * [Task 3q] bootstrap URL 解码修复 %20 路径污染触发 reload (2026-04-29)
  */
 
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import dotenv from "dotenv";
 import path from "node:path";
-import crypto from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createAppContext } from "./context.js";
 import { closeDatabase, loadAllAgentConfigs, saveAgentConfig, setTracingEnabled, ensureBuiltinAgents, HeartbeatRunner, DEFAULT_HEARTBEAT_CONFIG } from "@super-agent/core";
 import { getProviderById, getModelById, getModelCatalog } from "@super-agent/core";
@@ -40,8 +43,11 @@ import { mediaRoutes } from "./routes/media.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { knowledgeGraphRoutes } from "./routes/knowledge-graph.js";
 import { a2aAdminRoutes } from "./routes/a2a-admin.js";
+import { videoRoutes } from "./routes/video.js";
+import { videoProviderTemplateRoutes } from "./routes/video-provider-templates.js";
 import { registerTracesRoutes } from "./routes/traces.js";
 import { GatewayLauncher } from "./gateway-launcher.js";
+import { VideoForgeSupervisor } from "./services/video-forge-supervisor.js";
 import { registerWellKnownRoute, a2aPlugin } from "./a2a/server.js";
 
 // Load .env from monorepo root (two levels up from packages/api/)
@@ -57,13 +63,33 @@ if (process.env.ENABLE_TRACING === "true") {
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 const HOST = process.env.HOST ?? "0.0.0.0";
 
+// 日志落盘目录：packages/api/logs/api-YYYY-MM-DD.log（按日分文件，便于诊断）
+// 历史曾经落盘过，后续被改成 pino-pretty 单 target 后停更；这里恢复同时写 stdout + file。
+const LOG_DIR = path.resolve(process.cwd(), "logs");
+const LOG_FILE = path.join(
+  LOG_DIR,
+  `api-${new Date().toISOString().slice(0, 10)}.log`,
+);
+
 async function main() {
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? "info",
       transport: {
-        target: "pino-pretty",
-        options: { colorize: true },
+        // 双 target：控制台保留彩色 pino-pretty，文件走 pino/file 结构化 JSON。
+        // 任一 target 内部异常不会阻塞另一个，兼顾可读性与可诊断性。
+        targets: [
+          {
+            target: "pino-pretty",
+            options: { colorize: true },
+            level: process.env.LOG_LEVEL ?? "info",
+          },
+          {
+            target: "pino/file",
+            options: { destination: LOG_FILE, mkdir: true },
+            level: process.env.LOG_LEVEL ?? "info",
+          },
+        ],
       },
     },
   });
@@ -108,7 +134,8 @@ async function main() {
   } catch (err) {
     app.log.error(err, "Failed to create application context");
     // P2-12: Close database on startup failure to release file locks
-    try { closeDatabase(); } catch { /* ignore */ }
+    // CORE-P0-08：closeDatabase 已 async，捕获失败避免阻塞启动错误上报
+    try { await closeDatabase(); } catch { /* ignore */ }
     process.exit(1);
   }
 
@@ -177,7 +204,7 @@ async function main() {
         }
 
         // 构建隔离会话 ID（A2A 请求不复用用户会话）
-        const sessionId = `a2a-${crypto.randomUUID()}`;
+        const sessionId = `a2a-${randomUUID()}`;
 
         // 调用已有 Runtime 的 chat() 方法
         // chat() 返回 { sessionId, response, toolCalls, attachments }
@@ -206,7 +233,7 @@ async function main() {
           return;
         }
 
-        const sessionId = `a2a-stream-${crypto.randomUUID()}`;
+        const sessionId = `a2a-stream-${randomUUID()}`;
 
         // 逐 chunk 输出 SSE 帧（server.ts 会自动追加 done 帧并关闭连接）
         for await (const chunk of runtime.chatStream(textParts, sessionId)) {
@@ -245,6 +272,8 @@ async function main() {
   await settingsRoutes(app, ctx);
   await knowledgeGraphRoutes(app, ctx);
   await a2aAdminRoutes(app, ctx);
+  await videoRoutes(app, ctx);
+  await videoProviderTemplateRoutes(app);
   await authRoutes(app);
   await registerTracesRoutes(app);
 
@@ -418,6 +447,7 @@ async function main() {
 
   // Start server
   const gatewayLauncher = new GatewayLauncher();
+  const videoForgeSupervisor = new VideoForgeSupervisor();
   try {
     await app.listen({ port: PORT, host: HOST });
     app.log.info(`Super Agent API running at http://${HOST}:${PORT}`);
@@ -428,6 +458,14 @@ async function main() {
     if (process.env.DISABLE_IM_GATEWAY !== "true") {
       await gatewayLauncher.start();
     }
+
+    // 启动 video-forge Python 微服务（bootstrap + spawn + 健康检查）
+    if (process.env.DISABLE_VIDEO_FORGE !== "true") {
+      // 不阻塞主流程：bootstrap 失败只警告，不影响其他功能
+      videoForgeSupervisor.start().catch((err) => {
+        app.log.warn({ err }, "video-forge 启动失败，视频相关功能不可用");
+      });
+    }
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -436,13 +474,15 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     app.log.info("Shutting down...");
-    // 先停 Gateway，再停核心模块
+    // 先停外部子进程，再停核心模块
+    await videoForgeSupervisor.stop();
     await gatewayLauncher.stop();
     ctx.skillLoader.stopWatching();
     ctx.agentManager.stopAll();
     ctx.cronScheduler.stop();
     await ctx.mcpRegistry.disconnectAll().catch(() => {});
-    closeDatabase();
+    // CORE-P0-08：closeDatabase 已 async，必须 await 确保在 app.close 前完成落盘
+    await closeDatabase();
     await app.close();
     process.exit(0);
   };

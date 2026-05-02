@@ -139,14 +139,20 @@ export default function AgentsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     // 构建嵌套结构，对齐后端 AgentConfig 格式
+    // 关键契约（后端 AgentConfigSchema）：llmProvider.type 仅接受
+    //   "openai" | "anthropic" | "ollama" | "custom"
+    // 国产厂商（moonshot/zhipu/qwen/deepseek/minimax/...）统一走 OpenAI 兼容协议，
+    // 用 type="openai" + providerId=<厂商id> 区分，由后端按 providerId 合并 apiKey/baseUrl。
+    const OFFICIAL_TYPES = ["openai", "anthropic", "ollama", "custom"] as const;
+    const isOfficial = (OFFICIAL_TYPES as readonly string[]).includes(form.provider);
+    const llmProvider: Record<string, unknown> = isOfficial
+      ? { type: form.provider, model: form.model }
+      : { type: "openai", providerId: form.provider, model: form.model };
     const payload = {
       name: form.name,
       description: form.description,
       systemPrompt: form.systemPrompt,
-      llmProvider: {
-        type: form.provider,
-        model: form.model,
-      },
+      llmProvider,
     };
     try {
       if (editAgent) {

@@ -7,6 +7,7 @@
 import OpenAI from "openai";
 import pino from "pino";
 import type { LLMMessage, LLMProviderConfig, LLMResponse, LLMToolCall } from "../types/index.js";
+import { partitionToolCallsByJsonValidity } from "./tool-call-validator.js";
 
 const logger = pino({ name: "llm-provider" });
 
@@ -43,6 +44,24 @@ export class LLMProvider {
 
   constructor(config: LLMProviderConfig) {
     this.config = config;
+
+    // [CORE-P1-03] Anthropic 原生 API 非 OpenAI 兼容格式
+    //
+    // 【问题】用 OpenAI SDK 调用 https://api.anthropic.com/v1/chat/completions
+    //   会 404（Anthropic 端点是 /v1/messages，协议也不一样）。
+    // 【修复】构造时即拦截，避免问题延迟到首次对话才暴露；
+    //   用户必须显式配置 OpenAI 兼容代理（如 OpenRouter）或切其他 provider。
+    if (config.type === "anthropic") {
+      const url = config.baseUrl ?? "";
+      if (!url || url.includes("anthropic.com")) {
+        throw new Error(
+          "Anthropic provider 不支持 OpenAI 兼容的 baseUrl 配置。" +
+            "请使用 OpenAI 兼容代理（如 OpenRouter: https://openrouter.ai/api/v1）" +
+            "或改用其他 OpenAI 兼容 provider。",
+        );
+      }
+    }
+
     this.client = new OpenAI({
       apiKey: config.apiKey ?? "dummy",
       baseURL: this.resolveBaseUrl(config),
@@ -74,11 +93,14 @@ export class LLMProvider {
       case "openai":
         return "https://api.openai.com/v1";
       case "anthropic":
-        // NOTE: The Anthropic native API is NOT OpenAI-compatible.
-        // To use Anthropic models, set baseUrl to an OpenAI-compatible proxy
-        // (e.g. OpenRouter: https://openrouter.ai/api/v1, or a local proxy).
-        // The default URL below will NOT work with the OpenAI SDK directly.
-        return "https://api.anthropic.com/v1";
+        // [CORE-P1-03] Anthropic 原生 API 非 OpenAI 兼容，不能直接喂给 OpenAI SDK。
+        // 用户必须显式配置 baseUrl 指向 OpenAI 兼容代理（如 OpenRouter:
+        // https://openrouter.ai/api/v1 或本地代理）。若缺省则立即抛错，
+        // 避免静默返回不可用端点导致运行期 "Connection error / 404 Not Found"。
+        throw new Error(
+          `Anthropic provider requires an OpenAI-compatible baseUrl (e.g. "https://openrouter.ai/api/v1"). ` +
+            `Please set LLMProviderConfig.baseUrl; the native "https://api.anthropic.com/v1" endpoint is NOT supported by the OpenAI SDK used internally.`,
+        );
       case "ollama":
         return "http://localhost:11434/v1";
       default:
@@ -137,10 +159,34 @@ export class LLMProvider {
       }
 
       if (m.role === "assistant" && m.toolCalls?.length) {
+        // P0-Qwen400-FIX: 双保险校验 — 即使上游 runtime 已过滤，
+        // 到达 provider 层时仍再扫一遍，任何破损 tool_call 直接丢弃，
+        // 确保发给 Qwen/OpenAI 的 payload 100% 合法，避免 400 InvalidParameter。
+        const { valid: safeToolCalls, invalid: droppedToolCalls } =
+          partitionToolCallsByJsonValidity(m.toolCalls);
+        for (const dropped of droppedToolCalls) {
+          logger.warn(
+            {
+              tool: dropped.toolCall.function.name,
+              toolCallId: dropped.toolCall.id,
+              error: dropped.error,
+            },
+            "Provider-layer safeguard dropped tool_call with invalid JSON arguments",
+          );
+        }
+
+        // 所有 tool_call 都破损时降级成纯 content 消息（避免 API 拒收 toolCalls=[]）
+        if (safeToolCalls.length === 0) {
+          return {
+            role: "assistant" as const,
+            content: m.content ?? "",
+          } as OpenAI.Chat.ChatCompletionMessageParam;
+        }
+
         const msg: Record<string, unknown> = {
           role: "assistant" as const,
           content: m.content,
-          tool_calls: m.toolCalls.map((tc) => ({
+          tool_calls: safeToolCalls.map((tc) => ({
             id: tc.id,
             type: "function" as const,
             function: {

@@ -120,8 +120,8 @@ describe("SQLiteBackend", () => {
     await initDatabase(DB_PATH);
   });
 
-  afterAll(() => {
-    closeDatabase();
+  afterAll(async () => {
+    await closeDatabase();
     if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
   });
 

@@ -1,0 +1,38 @@
+{
+  "2": {
+    "inputs": {
+      "prompt": [
+        "3",
+        0
+      ],
+      "model": "gemini-2.5-flash-image-preview",
+      "seed": 42
+    },
+    "class_type": "GeminiImageNode",
+    "_meta": {
+      "title": "Google Gemini Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "$prompt.value!"
+    }
+  },
+  "4": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}

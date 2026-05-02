@@ -1,0 +1,17 @@
+{
+  "source": "runninghub",
+  "mode": "standard_api",
+  "endpoint": "/openapi/v2/rhart-image-g-2-official/text-to-image",
+  "output_media": "image",
+  "defaults": {
+    "aspectRatio": "9:16",
+    "resolution": "2k",
+    "quality": "medium"
+  },
+  "param_map": {
+    "prompt": "prompt",
+    "aspect_ratio": "aspectRatio",
+    "resolution": "resolution",
+    "quality": "quality"
+  }
+}

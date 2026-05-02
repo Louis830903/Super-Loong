@@ -71,7 +71,7 @@ const isWin = process.platform === "win32";
 
 export const runPythonTool: ToolDefinition = {
   name: "run_python",
-  description: "Execute Python code and return the output. Use print() to produce output. To send generated files (charts, images, CSVs, etc.) to the user, save them with a known path, then call write_file to deliver or output MEDIA:/absolute/path.",
+  description: "Execute Python code and return the output. Use print() to produce output. To send generated files (charts, images, CSVs, etc.) to the user, save them with a known path, then call write_file to deliver or output MEDIA:/absolute/path.\n⚠️ Security: This tool is gated by securityManager.sandboxLevel. For user-defined agents, the default is \"none\" and invocation will be denied. Administrators can enable it via SUPER_AGENT_CODE_EXEC_ENABLED=true or SUPER_AGENT_SANDBOX_LEVEL=process|docker. Builtin system agents are allow-listed.",
   parameters: z.object({
     code: z.string().describe("Python code to execute"),
     timeout: z.number().default(30000).describe("Timeout in milliseconds"),
@@ -85,7 +85,7 @@ export const runPythonTool: ToolDefinition = {
 
 export const runJavaScriptTool: ToolDefinition = {
   name: "run_javascript",
-  description: "Execute JavaScript/Node.js code and return the output. Use console.log() to produce output. To send generated files to the user, save them with a known path, then call write_file to deliver or output MEDIA:/absolute/path.",
+  description: "Execute JavaScript/Node.js code and return the output. Use console.log() to produce output. To send generated files to the user, save them with a known path, then call write_file to deliver or output MEDIA:/absolute/path.\n⚠️ Security: This tool is gated by securityManager.sandboxLevel. For user-defined agents, the default is \"none\" and invocation will be denied. Administrators can enable it via SUPER_AGENT_CODE_EXEC_ENABLED=true or SUPER_AGENT_SANDBOX_LEVEL=process|docker. Builtin system agents are allow-listed.",
   parameters: z.object({
     code: z.string().describe("JavaScript code to execute"),
     timeout: z.number().default(30000).describe("Timeout in milliseconds"),
@@ -98,7 +98,7 @@ export const runJavaScriptTool: ToolDefinition = {
 
 export const runShellTool: ToolDefinition = {
   name: "run_shell",
-  description: "Execute a shell command on the host and return stdout/stderr. Check the Runtime section for OS and shell details. To send generated files to the user, note the output path, then call write_file to deliver or output MEDIA:/absolute/path.",
+  description: "Execute a shell command on the host and return stdout/stderr. Check the Runtime section for OS and shell details. To send generated files to the user, note the output path, then call write_file to deliver or output MEDIA:/absolute/path.\n⚠️ Security: This tool is gated by securityManager.sandboxLevel. For user-defined agents, the default is \"none\" and invocation will be denied. Administrators can enable it via SUPER_AGENT_CODE_EXEC_ENABLED=true or SUPER_AGENT_SANDBOX_LEVEL=process|docker. Builtin system agents are allow-listed.",
   parameters: z.object({
     command: z.string().describe("Shell command to execute (use syntax matching the host OS shell)"),
     timeout: z.number().default(30000).describe("Timeout in milliseconds"),

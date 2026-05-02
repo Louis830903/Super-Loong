@@ -440,10 +440,10 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
       const deliverResult = await resp.json() as Record<string, unknown>;
       return reply.send({ success: true, ...deliverResult });
     } catch (err: any) {
-      app.log.warn({ error: err.message }, "IM gateway unreachable");
+      // API-P1-03：IM 网关异常栈仅进日志，响应体移除 detail，避免暴露内部信息
+      app.log.warn({ err }, "IM gateway unreachable");
       return reply.status(503).send({
         error: "IM gateway unreachable",
-        detail: err.message,
       });
     }
   });
@@ -561,7 +561,9 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     try {
       await addDirToZip(realWsPath, zip, 0);
     } catch (err: any) {
-      return reply.status(413).send({ error: err.message });
+      // API-P1-03：ZIP 打包失败（大小超限或 IO 异常）仅日志，响应体给通用业务提示
+      app.log.warn({ err, workspaceDir: realWsPath }, "ZIP packaging failed");
+      return reply.status(413).send({ error: "ZIP 打包失败或超出大小限制" });
     }
 
     // 7. 生成 ZIP 流并流式返回（P2-2：避免全量加载到内存导致 OOM）

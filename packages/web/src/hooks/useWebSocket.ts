@@ -49,6 +49,15 @@ const MAX_RECONNECT_DELAY = 30_000;
 /** 初始重连间隔: 1 秒 */
 const INITIAL_RECONNECT_DELAY = 1_000;
 
+/**
+ * SEC-P0-07 · E3：从 localStorage 读取 JWT，与 apiFetch 共用同一 key。
+ * 返回空串表示未登录；AUTH 关闭时后端也接受空 token（见 ws/index.ts）。
+ */
+function getAuthToken(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem("super-agent.auth-token") || "";
+}
+
 // ─── Hook 实现 ─────────────────────────────────────────────
 
 export const useWebSocket = (options: UseWebSocketOptions): UseWebSocketReturn => {
@@ -111,7 +120,11 @@ export const useWebSocket = (options: UseWebSocketOptions): UseWebSocketReturn =
     cleanup();
 
     try {
-      const ws = new WebSocket(`${WS_BASE}/ws`);
+      // SEC-P0-07 · E3：把 JWT 通过 ?token= 传给后端。
+      // 空 token 时仍连（后端 AUTH_ENABLED=false 场景会放行），避免未登录态 dashboard 静默失效。
+      const token = getAuthToken();
+      const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+      const ws = new WebSocket(`${WS_BASE}/ws${qs}`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -151,10 +164,17 @@ export const useWebSocket = (options: UseWebSocketOptions): UseWebSocketReturn =
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (evt) => {
         if (!mountedRef.current) return;
         setConnected(false);
         cleanup();
+        // SEC-P0-07 · E3：4001 = 后端鉴权失败。不自动重连，抛全局事件让 App 处理登录态。
+        if (evt.code === 4001) {
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("sa:auth-expired"));
+          }
+          return;
+        }
         scheduleReconnect(connect);
       };
 

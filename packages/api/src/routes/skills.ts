@@ -99,7 +99,8 @@ export async function skillRoutes(app: FastifyInstance, ctx: AppContext) {
         ctx.skillLoader.loadAll();
         return { status: "uninstalled" };
       } catch (err: any) {
-        return reply.status(500).send({ error: err.message });
+        app.log.error({ id: request.params.id, err }, "Skill uninstall failed");
+        return reply.status(500).send({ error: "Skill uninstall failed" });
       }
     });
 

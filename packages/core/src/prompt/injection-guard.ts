@@ -43,7 +43,7 @@ const THREAT_PATTERNS: Array<[RegExp, string, ThreatCategory, ThreatSeverity]> =
 
   // Persistence (3 patterns) — SSH后门/配置访问（从旧 config_access 拆分）
   [/authorized_keys/i, "ssh_backdoor", "persistence", "critical"],
-  [/\$HOME\/\.ssh|~\/\.ssh/i, "ssh_access", "persistence", "high"],
+  [/\.ssh\//i, "ssh_access", "persistence", "high"],
   [/\.super-agent\/\.env|\.hermes\/\.env/i, "config_env_access", "persistence", "high"],
 
   // Obfuscation (3 patterns) — 内容隐藏/混淆执行

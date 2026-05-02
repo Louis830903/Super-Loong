@@ -120,8 +120,8 @@ describe("T1 Migration v11 idempotency", () => {
     await initDatabase(TEST_DB);
   });
 
-  afterAll(() => {
-    closeDatabase();
+  afterAll(async () => {
+    await closeDatabase();
     if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
   });
 

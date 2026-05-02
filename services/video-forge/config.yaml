@@ -1,0 +1,88 @@
+# Video-Forge 配置
+# 仅 ComfyUI/RunningHub + 模板配置，不含 LLM 段
+# ⚠️ 部署时请复制为 config.yaml 并填入实际密钥
+
+# ==================== ComfyUI / RunningHub ====================
+comfyui:
+  # Phase 1 仅使用 RunningHub 云端模式（附录 A1 拍板）
+  comfyui_url: http://127.0.0.1:8188  # selfhost 场景预留，Phase 1 不用
+  comfyui_api_key: ""
+
+  # RunningHub 配置（Phase 1 核心）
+  runninghub_api_key: "8a83e0e189e1423a8e8424714557e4dc"  # RunningHub API Key
+  runninghub_concurrent_limit: 1  # 并发上限（普通会员 1，高级可调至 5）
+
+  # TTS 配置
+  tts:
+    default_workflow: selfhost/tts_edge.json
+
+  # 图片生成配置
+  image:
+    default_workflow: runninghub/image_rhart_g2.json
+    prompt_prefix: ""
+
+  # 视频生成配置
+  video:
+    default_workflow: runninghub/video_wan2.5_preview.json
+    prompt_prefix: ""
+
+# ==================== 模板配置 ====================
+template:
+  # 默认帧模板（决定视频画幅和布局风格）
+  # 竖屏 1080x1920: image_default.html / image_modern.html / image_elegant.html
+  # 方形 1080x1080: image_minimal_framed.html
+  # 横屏 1920x1080: image_film.html / image_full.html
+  default_template: "1080x1920/image_default.html"
+
+# ==================== 成本估算 ====================
+pricing:
+  # 工作流单价表（CNY / 每次生成）
+  # 用于闸门 1 预算守卫：cost_estimate = scenes × unit_price
+  # 冗余系数 1.3x 已包含在价格中
+  #
+  # ── 视频生成（30-120s 耗时，RunningHub 按秒计费）──
+  runninghub/video_wan2.5_preview.json: 3.0    # Alibaba Wan 2.5 标准 API，约 3 元/5s
+  runninghub/video_wan2.1_fusionx.json: 1.5
+  runninghub/video_wan2.2.json: 1.8
+  runninghub/video_qwen_wan2.2.json: 2.0
+  runninghub/video_Z_image_wan2.2.json: 2.0
+  runninghub/i2v_LTX2.json: 1.2
+  #
+  # ── 图片生成（3-15s）──
+  runninghub/image_rhart_g2.json: 0.5          # RHArt G2 标准 API（9:16/2k/medium 约 0.5 元/张）
+  runninghub/image_flux.json: 0.3
+  runninghub/image_flux2.json: 0.3
+  runninghub/image_sdxl.json: 0.2
+  runninghub/image_sd3.5.json: 0.25
+  runninghub/image_qwen.json: 0.15
+  runninghub/image_qwen_chinese_cartoon.json: 0.15
+  runninghub/image_Z-image.json: 0.3
+  #
+  # ── TTS（本地/云端，极低成本）──
+  runninghub/tts_edge.json: 0.01
+  runninghub/tts_index2.json: 0.05
+  runninghub/tts_spark.json: 0.05
+  selfhost/tts_edge.json: 0.0  # 本地 Edge TTS 免费
+  #
+  # ── 分析/数字人（辅助能力）──
+  runninghub/analyse_image.json: 0.1
+  runninghub/video_understanding.json: 0.2
+  runninghub/digital_image.json: 0.5
+  runninghub/digital_customize.json: 0.8
+  runninghub/digital_combination.json: 1.0
+  runninghub/af_scail.json: 0.3
+  #
+  # 默认单价（未列出的工作流使用此值）
+  _default: 1.0
+
+# ==================== 预算守卫 ====================
+budget:
+  # 单个 VideoJob 的成本上限（CNY），超出需用户二次确认
+  single_job_limit_cny: 15.0
+  # 全局月度封顶（Phase 3 产品化后启用，0 = 不限）
+  monthly_cap_cny: 0
+
+# ==================== 并发控制 ====================
+concurrency:
+  # 全局并发上限（p-limit 信号量，Spec §4.5 闸门 2）
+  global_max: 2

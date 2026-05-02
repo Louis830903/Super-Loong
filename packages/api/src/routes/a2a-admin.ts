@@ -27,7 +27,9 @@ export async function a2aAdminRoutes(app: FastifyInstance, ctx: AppContext) {
       });
       return reply.send({ agents, enabled: true });
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message ?? "Registry query failed" });
+      // API-P1-03：内部栈仅进日志
+      app.log.error({ route: "/api/a2a/registry", err }, "Registry query failed");
+      return reply.status(500).send({ error: "Registry query failed" });
     }
   });
 
@@ -72,7 +74,8 @@ export async function a2aAdminRoutes(app: FastifyInstance, ctx: AppContext) {
         a2aEnabled: process.env.ENABLE_A2A === "true",
       });
     } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
+      app.log.error({ route: "/api/a2a/card", err }, "Agent card query failed");
+      return reply.status(500).send({ error: "Agent card query failed" });
     }
   });
 
