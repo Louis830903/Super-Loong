@@ -65,13 +65,13 @@ export async function serviceRoutes(app: FastifyInstance, ctx: AppContext) {
                   signal: AbortSignal.timeout(5000),
                 });
                 if (resp.ok) {
-                  console.log("[services] RunningHub API Key 已同步到 Python video-forge 服务（热更新）");
+                  app.log.info("[services] RunningHub API Key 已同步到 Python video-forge 服务（热更新）");
                 } else {
-                  console.warn("[services] Python video-forge 热更新返回非 200:", resp.status);
+                  app.log.warn("[services] Python video-forge 热更新返回非 200: %s", resp.status);
                 }
               } catch (err: any) {
                 // video-forge 可能未启动或不可达，不影响主流程
-                console.warn("[services] Python video-forge 热更新通知失败（服务可能未启动）:", err.message);
+                app.log.warn("[services] Python video-forge 热更新通知失败（服务可能未启动）: %s", err.message);
               }
             }
           }

@@ -10,7 +10,10 @@
 
 import { spawn, type ChildProcess } from "child_process";
 import path from "node:path";
+import pino from "pino";
 import { ensureGatewayDeps, type GatewayDepsResult } from "@super-agent/core";
+
+const logger = pino({ name: "gateway-launcher" });
 
 export class GatewayLauncher {
   private process: ChildProcess | null = null;
@@ -44,19 +47,19 @@ export class GatewayLauncher {
       // 失败不阻塞：降级到直接用系统 python，Gateway 可能因缺依赖而崩溃但不会影响 API 主流程
       try {
         this.deps = await ensureGatewayDeps({ gatewayDir: this.gatewayDir });
-        console.log(
+        logger.info(
           `[GatewayLauncher] venv 就绪 (python: ${this.deps.pythonVersion}, dir: ${this.deps.venvDir})`,
         );
       } catch (err) {
-        console.warn("[GatewayLauncher] 自举失败，回退到系统 python:", (err as Error).message);
+        logger.warn("[GatewayLauncher] 自举失败，回退到系统 python: %s", (err as Error).message);
         this.deps = null;
       }
 
       this._spawn();
       await this._waitForReady();
-      console.log(`[GatewayLauncher] IM Gateway started and ready (dir: ${this.gatewayDir})`);
+      logger.info(`[GatewayLauncher] IM Gateway started and ready (dir: ${this.gatewayDir})`);
     } catch (err) {
-      console.error("[GatewayLauncher] Failed to start IM Gateway:", err);
+      logger.error("[GatewayLauncher] Failed to start IM Gateway: %s", err);
       this.isRunning = false;
     }
   }
@@ -68,13 +71,13 @@ export class GatewayLauncher {
   async stop(): Promise<void> {
     this.isRunning = false;
     if (this.process) {
-      console.log("[GatewayLauncher] Stopping IM Gateway...");
+      logger.info("[GatewayLauncher] Stopping IM Gateway...");
       // 发送 SIGTERM，给 5 秒优雅关闭
       this.process.kill("SIGTERM");
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
           if (this.process) {
-            console.log("[GatewayLauncher] Force killing IM Gateway");
+            logger.info("[GatewayLauncher] Force killing IM Gateway");
             this.process.kill("SIGKILL");
           }
           resolve();
@@ -91,7 +94,7 @@ export class GatewayLauncher {
         }
       });
       this.process = null;
-      console.log("[GatewayLauncher] IM Gateway stopped");
+      logger.info("[GatewayLauncher] IM Gateway stopped");
     }
   }
 
@@ -129,20 +132,20 @@ export class GatewayLauncher {
     child.stdout?.on("data", (data: Buffer) => {
       const lines = data.toString().trim().split("\n");
       for (const line of lines) {
-        console.log(`[IM-Gateway] ${line}`);
+        logger.info(`[IM-Gateway] ${line}`);
       }
     });
 
     child.stderr?.on("data", (data: Buffer) => {
       const lines = data.toString().trim().split("\n");
       for (const line of lines) {
-        console.error(`[IM-Gateway] ${line}`);
+        logger.error(`[IM-Gateway] ${line}`);
       }
     });
 
     // 监听退出事件
     child.on("exit", (code, signal) => {
-      console.log(
+      logger.info(
         `[GatewayLauncher] IM Gateway exited (code=${code}, signal=${signal})`
       );
       this.process = null;
@@ -157,14 +160,14 @@ export class GatewayLauncher {
           1000 * Math.pow(2, this.restartAttempts - 1),
           30000
         );
-        console.log(
+        logger.info(
           `[GatewayLauncher] Restarting in ${delay}ms (attempt ${this.restartAttempts}/${this.maxRestarts})`
         );
         setTimeout(() => {
           if (this.isRunning) this._spawn();
         }, delay);
       } else {
-        console.error(
+        logger.error(
           `[GatewayLauncher] Max restart attempts (${this.maxRestarts}) reached. IM Gateway will not be restarted.`
         );
         this.isRunning = false;
@@ -172,7 +175,7 @@ export class GatewayLauncher {
     });
 
     child.on("error", (err) => {
-      console.error("[GatewayLauncher] Failed to spawn IM Gateway:", err);
+      logger.error("[GatewayLauncher] Failed to spawn IM Gateway: %s", err);
     });
 
     this.process = child;
@@ -191,7 +194,7 @@ export class GatewayLauncher {
           signal: AbortSignal.timeout(2000),
         });
         if (resp.ok) {
-          console.log("[GatewayLauncher] IM Gateway health check passed");
+          logger.info("[GatewayLauncher] IM Gateway health check passed");
           return;
         }
       } catch {
@@ -199,6 +202,6 @@ export class GatewayLauncher {
       }
       await new Promise((r) => setTimeout(r, intervalMs));
     }
-    console.warn(`[GatewayLauncher] Readiness check timed out after ${maxWaitMs}ms, proceeding anyway`);
+    logger.warn(`[GatewayLauncher] Readiness check timed out after ${maxWaitMs}ms, proceeding anyway`);
   }
 }

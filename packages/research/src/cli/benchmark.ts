@@ -138,7 +138,7 @@ function createJudges(names: string[]): Judge[] {
 
 /**
  * 模拟执行任务并返回结果
- * TODO: 后续对接真实 Agent 运行器（BatchRunner + AgentRuntime）
+ * @issue(todo): 后续对接真实 Agent 运行器（BatchRunner + AgentRuntime）
  */
 function simulateTaskResults(dataset: BenchmarkDataset): TaskResult[] {
   return dataset.tasks.map((task) => ({

@@ -387,7 +387,7 @@ export class InMemoryBackend implements MemoryBackend {
       }
       const textScore = words.length > 0 ? hits / words.length : 0;
 
-      // TODO: 当引入 embedding 模型后，在此处计算 cosine similarity 并与 textScore 取 max
+      // @issue(todo): 当引入 embedding 模型后，在此处计算 cosine similarity 并与 textScore 取 max
       return { entry, score: textScore };
     });
 

@@ -64,7 +64,7 @@ Super Agent 不是又一个 AI 聊天机器人——它是**全球唯一同时�
 ```mermaid
 graph TB
     subgraph 用户层["👤 用户接入层"]
-        WebUI["🌐 Web UI<br/>Next.js 16 · 21 页面"]
+        WebUI["🌐 Web UI<br/>Next.js 16 · 17 页面"]
         IM["💬 三大平台 IM<br/>飞书 · 钉钉 · 企业微信<br/>插件式热插拔架构"]
         API["🔌 API<br/>Fastify 5 · 22 路由"]
     end
@@ -223,7 +223,7 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 | 🔒 沙箱层级 | **3** | Process → Docker → SSH 自动降级 |
 | 📝 提示层级 | **10** | L1-L6 缓存 + L7-L10 动态注入 |
 | 💾 持久化表 | **13** | SQLite WASM，25 个 Store 文件 |
-| 📦 核心代码 | **~40K 行** | TypeScript (~35K) + Python (~5K) |
+| 📦 核心代码 | **~50K+ 行** | TypeScript + Python |
 
 > 这不是一个 Demo——这是**生产级智能体操作系统**。
 

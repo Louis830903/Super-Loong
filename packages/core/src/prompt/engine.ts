@@ -1,6 +1,9 @@
 /**
  * PromptEngine — 10-layer system prompt assembler with caching.
  *
+ * @version 2.1.0
+ * @last-modified 2026-05-03 — 审查：各层已核实存在，补充版本注释
+ *
  * Layers (L1-L6 stable prefix, L7-L10 dynamic per-turn):
  *  L1. Agent Identity (role/goal/backstory + systemPrompt)
  *  L2. Tool-Use Enforcement

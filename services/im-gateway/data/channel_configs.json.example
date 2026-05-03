@@ -1,0 +1,12 @@
+{
+  "feishu": {
+    "channel_id": "feishu",
+    "account_id": "default",
+    "credentials": {
+      "app_id": "YOUR_FEISHU_APP_ID",
+      "app_secret": "YOUR_FEISHU_APP_SECRET"
+    },
+    "settings": {},
+    "enabled": true
+  }
+}

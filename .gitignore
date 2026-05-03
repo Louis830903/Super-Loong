@@ -22,6 +22,9 @@ data/cache/
 data/logs/
 data/sessions/
 
+# IM 网关渠道凭据配置（含 app_id/app_secret 等敏感字段）
+services/im-gateway/data/*.json
+
 # ====== 会话记录（含用户聊天数据）======
 packages/api/data/sessions/
 data/sessions/
