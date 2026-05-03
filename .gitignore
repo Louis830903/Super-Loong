@@ -29,7 +29,6 @@ data/sessions/
 # ====== 个人测试文件 ======
 *.mp3
 *.png
-!assets/*.png
 *.xlsx
 test-api.mjs
 tsc_*.txt

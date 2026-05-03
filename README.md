@@ -79,16 +79,6 @@ graph TB
 
 ---
 
-## 📸 预览截图
-
-<p align="center">
-  <img src="assets/dashboard_screenshot.png" alt="Super Agent 控制台" width="45%" />
-  <img src="assets/chat_screenshot.png" alt="Super Agent 对话界面" width="45%" />
-</p>
-<p align="center"><em>左：控制面板 · 右：智能对话</em></p>
-
----
-
 ## 🚀 核心能力矩阵
 
 <table>
