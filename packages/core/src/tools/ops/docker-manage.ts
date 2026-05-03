@@ -13,6 +13,7 @@ import pino from "pino";
 import type { ToolDefinition, ToolContext, ToolResult } from "../../types/index.js";
 import { getPlatformInfo } from "../../platform/adapter.js";
 import { hasBinary } from "../../platform/cli-detector.js";
+import { buildIsolatedEnv } from "../../security/env-isolation.js";
 import { processOutput } from "../output-processor.js";
 import { checkCompoundCommand } from "../../security/command-guard.js";
 
@@ -41,6 +42,7 @@ async function runDockerCmd(args: string[], timeoutMs = 30_000): Promise<ToolRes
     const child = spawn(bin, args, {
       timeout: timeoutMs,
       stdio: ["ignore", "pipe", "pipe"],
+      env: buildIsolatedEnv(),  // 安全：过滤子进程环境变量，阻止敏感密钥泄漏
     });
 
     child.stdout?.on("data", (d: Buffer) => chunks.push(d));

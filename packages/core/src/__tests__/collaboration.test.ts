@@ -212,6 +212,7 @@ describe("CollaborationOrchestrator history management", () => {
 
     for (let i = 0; i < 150; i++) {
       history.push({
+        type: "crew",
         crewId: `crew_${i}`,
         name: `Crew ${i}`,
         process: "sequential",

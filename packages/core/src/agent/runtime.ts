@@ -121,6 +121,8 @@ export class AgentRuntime {
   private heartbeatRunner?: HeartbeatRunner;
   // T2: 会话内即时反思引擎（工具失败自愈）
   private reflection: ReflectionEngine;
+  // 知识库 Provider prefetch 引用（通过 orchestrator 调用 prefetchAll）
+  private memoryManager?: MemoryManager;
 
   constructor(options: AgentRuntimeOptions) {
     this.id = options.config.id;
@@ -132,6 +134,7 @@ export class AgentRuntime {
     this.persistEnabled = options.enablePersistence !== false;
     this._createdAt = new Date();
     this.manager = options.manager;
+    this.memoryManager = options.memoryManager;
 
     // Initialize Markdown memory files (Hermes MEMORY.md/USER.md/SOUL.md pattern)
     this.markdownMemory = new MarkdownMemory();
@@ -397,6 +400,10 @@ export class AgentRuntime {
 
   /** Delete a session. */
   deleteSession(sessionId: string): boolean {
+    // CORE-P1-02: 清理 session 对应的互斥锁，防止 Map 内存泄漏
+    // 正常情况下 release() 会在操作完成后清理锁，但若 session 被强制删除
+    // （如 timeout/force close），_sessionLocks 中的条目不会被自动清理
+    this._sessionLocks.delete(sessionId);
     return this.sessions.delete(sessionId);
   }
 
@@ -510,10 +517,22 @@ export class AgentRuntime {
     session.messages.push({ role: "user", content: userMessage });
     this.persistMessage(session.id, "user", userMessage);
 
+    // ─── 知识库 prefetch：基于用户消息预检索，注入 system prompt ───
+    let kbPrefetchBlock = "";
+    if (this.memoryManager?.orchestrator) {
+      try {
+        kbPrefetchBlock = await this.memoryManager.orchestrator.prefetchAll(userMessage);
+      } catch (err) {
+        logger.warn({ err }, "KB prefetch failed (non-fatal)");
+      }
+    }
+
     // Build system prompt via PromptEngine (10-layer architecture)
+    const systemContent = this.promptEngine.build(session, this.tools) +
+      (kbPrefetchBlock ? "\n\n" + kbPrefetchBlock : "");
     const systemMessage: LLMMessage = {
       role: "system",
-      content: this.promptEngine.build(session, this.tools),
+      content: systemContent,
     };
 
     // Build tool definitions for the LLM
@@ -791,7 +810,18 @@ export class AgentRuntime {
     }
     this.persistMessage(session.id, "user", userMessage);
 
-    const systemContent = this.promptEngine.build(session, this.tools);
+    // ─── 知识库 prefetch：基于用户消息预检索，注入 system prompt ───
+    let kbPrefetchBlock = "";
+    if (this.memoryManager?.orchestrator) {
+      try {
+        kbPrefetchBlock = await this.memoryManager.orchestrator.prefetchAll(userMessage);
+      } catch (err) {
+        logger.warn({ err }, "KB prefetch failed in chatStream (non-fatal)");
+      }
+    }
+
+    const systemContent = this.promptEngine.build(session, this.tools) +
+      (kbPrefetchBlock ? "\n\n" + kbPrefetchBlock : "");
     const systemMessage: LLMMessage = { role: "system", content: systemContent };
 
     const toolDefs = this.buildToolDefinitions();
@@ -1410,6 +1440,7 @@ export class AgentRuntime {
           return { success: true, output: dockerResult.output };
         }
         // Fallback to process sandbox if Docker not available
+        // P2 沙箱降级透明化：标注实际沙箱级别，消除安全预期落差
         logger.warn({ agentId: this.id, tool: name }, "Docker sandbox not available, falling back to process sandbox");
         const fallbackResult = await this.securityManager.sandbox.executeWithTimeout(
           () => tool.execute(args, context),
@@ -1420,6 +1451,8 @@ export class AgentRuntime {
           success: !fallbackResult.error,
           output: fallbackResult.error ?? "Tool completed (fallback from Docker to process sandbox)",
           error: fallbackResult.error,
+          _sandboxLevel: "process",
+          _sandboxNote: "Docker 不可用，已自动降级到进程隔离。如需容器隔离，请确保 Docker 已启动。",
         };
       }
 
@@ -1446,6 +1479,7 @@ export class AgentRuntime {
           return { success: true, output: sshResult.output };
         }
         // Fallback to process sandbox if SSH not configured
+        // P2 沙箱降级透明化：标注实际沙箱级别
         logger.warn({ agentId: this.id, tool: name }, "SSH sandbox not available, falling back to process sandbox");
         const fallbackResult = await this.securityManager.sandbox.executeWithTimeout(
           () => tool.execute(args, context),
@@ -1456,6 +1490,8 @@ export class AgentRuntime {
           success: !fallbackResult.error,
           output: fallbackResult.error ?? "Tool completed (fallback from SSH to process sandbox)",
           error: fallbackResult.error,
+          _sandboxLevel: "process",
+          _sandboxNote: "SSH 沙箱不可用，已自动降级到进程隔离。",
         };
       }
 

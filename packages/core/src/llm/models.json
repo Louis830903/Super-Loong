@@ -1,0 +1,6 @@
+{
+  "$schema": "./models.schema.json",
+  "_comment": "自定义模型配置文件。在此添加的 provider/model 会与内置目录合并，相同 id 的覆盖内置定义。编辑后重启服务生效。",
+  "providers": [],
+  "models": {}
+}

@@ -60,6 +60,18 @@ function getAuthToken(): string {
 
 // ─── Hook 实现 ─────────────────────────────────────────────
 
+/**
+ * P3-20: 深度比较两个字符串数组是否相等，避免引用变化导致的误判。
+ * topics 数组每次渲染都可能创建新引用，但内容可能不变。
+ */
+function shallowArrayEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 export const useWebSocket = (options: UseWebSocketOptions): UseWebSocketReturn => {
   const { topics, autoConnect = true, maxEvents = 50 } = options;
 
@@ -73,8 +85,15 @@ export const useWebSocket = (options: UseWebSocketOptions): UseWebSocketReturn =
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(INITIAL_RECONNECT_DELAY);
   const mountedRef = useRef(true);
+
+  // P3-20: 深度比较 topics 避免引用变化导致的连接抖动
+  // 仅当 topics 内容真正变化时才触发 unsubscribe/resubscribe
+  const prevTopicsRef = useRef<string[]>([]);
   const topicsRef = useRef(topics);
-  topicsRef.current = topics;
+  if (!shallowArrayEqual(prevTopicsRef.current, topics)) {
+    prevTopicsRef.current = [...topics];
+    topicsRef.current = [...topics];
+  }
 
   /** 清理心跳和重连定时器 */
   const cleanup = useCallback(() => {

@@ -8,7 +8,7 @@
  * 1. 明确黑名单: 按类别罗列具体变量名 (~100条)
  * 2. 白名单确保通行: PATH, HOME, LANG, TERM 等系统必需变量
  * 3. 动态扩展: 从当前配置的 LLM provider 自动提取需阻止的变量名
- * 4. 覆盖机制: SUPER_AGENT_FORCE_ 前缀允许绕过黑名单
+ * 4. 覆盖机制: SUPER_AGENT_FORCE_ 前缀（v1.1 已废弃，改为白名单制，仅允许已知系统变量通过）
  * 5. HOME 隔离: 子进程 HOME 可重定向到隔离目录
  */
 
@@ -61,6 +61,24 @@ const ENV_WHITELIST = new Set([
   // 代理(需通过)
   "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
   "http_proxy", "https_proxy", "no_proxy",
+]);
+
+// ─── FORCE_ 前缀白名单（v1.1 废弃的遗留机制）────────────────
+// FORCE_ 前缀不再能绕过黑名单。此白名单与 ENV_WHITELIST 完全重叠。
+// 迁移指南：若你的工作流依赖 FORCE_ 前缀传递自定义变量，
+// 请改为在 ENV_WHITELIST 中添加该变量名。
+
+/** FORCE_ 前缀白名单 — 仅允许已知安全系统变量通过 FORCE_ 前缀覆写 */
+const FORCE_WHITELIST = new Set([
+  "PATH", "HOME", "USER", "LANG", "LC_ALL",
+  "TMPDIR", "TMP", "TEMP",
+  "NODE_PATH", "PYTHONPATH", "GOPATH",
+  "JAVA_HOME", "MAVEN_HOME", "GRADLE_HOME",
+  "CARGO_HOME", "RUSTUP_HOME",
+  "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+  "http_proxy", "https_proxy", "no_proxy",
+  "DOCKER_HOST", "COMPOSE_FILE",
+  "DISPLAY", "XAUTHORITY",
 ]);
 
 // ─── 黑名单 — 明确阻止的环境变量 (参考 Hermes 103条) ──────
@@ -145,7 +163,7 @@ const BLOCK_KEYWORDS = [
 
 // ─── 核心过滤函数 ──────────────────────────────────────────
 
-/** 覆盖前缀 — 允许用户在知晓风险时绕过黑名单 */
+/** 覆盖前缀（v1.1 已废弃） — 仅供白名单内系统变量绕过黑名单 */
 const FORCE_PREFIX = "SUPER_AGENT_FORCE_";
 
 /**
@@ -153,7 +171,7 @@ const FORCE_PREFIX = "SUPER_AGENT_FORCE_";
  *
  * 过滤策略:
  * 1. 白名单中的变量 → 直接通过
- * 2. 黑名单中的变量 → 阻止(除非有 FORCE_ 前缀绕过)
+ * 2. 黑名单中的变量 → 阻止(FORCE_ 前缀仅对 FORCE_WHITELIST 内系统变量有效)
  * 3. 不在任何名单中的变量 → 通过(宽松策略，避免误阻)
  *
  * @param extraEnv 额外追加的环境变量
@@ -170,10 +188,16 @@ export function buildIsolatedEnv(
   for (const [key, value] of Object.entries(process.env)) {
     if (!value) continue;
 
-    // 检查是否有 FORCE_ 前缀覆盖
+    // FORCE_ 前缀覆盖（v1.1 白名单制 — 已废弃，仅允许已知安全系统变量）
+    // 自 v1.1 起，FORCE_ 不再能绕过黑名单。需传递自定义变量请修改 ENV_WHITELIST。
     const forceKey = FORCE_PREFIX + key;
-    if (process.env[forceKey]) {
+    if (process.env[forceKey] && FORCE_WHITELIST.has(key)) {
       safeEnv[key] = value;
+      logger.debug({ key }, "FORCE_ prefix whitelist pass-through");
+      continue;
+    }
+    if (process.env[forceKey] && !FORCE_WHITELIST.has(key)) {
+      logger.warn({ key, forceKey }, "FORCE_ prefix rejected — key not in whitelist. Add to ENV_WHITELIST if needed.");
       continue;
     }
 

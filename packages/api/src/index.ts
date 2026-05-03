@@ -42,6 +42,7 @@ import { fileRoutes } from "./routes/files.js";
 import { mediaRoutes } from "./routes/media.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { knowledgeGraphRoutes } from "./routes/knowledge-graph.js";
+import { knowledgeBaseRoutes } from "./routes/knowledge-base.js";
 import { a2aAdminRoutes } from "./routes/a2a-admin.js";
 import { videoRoutes } from "./routes/video.js";
 import { videoProviderTemplateRoutes } from "./routes/video-provider-templates.js";
@@ -271,6 +272,7 @@ async function main() {
   await mediaRoutes(app);
   await settingsRoutes(app, ctx);
   await knowledgeGraphRoutes(app, ctx);
+  await knowledgeBaseRoutes(app, ctx);
   await a2aAdminRoutes(app, ctx);
   await videoRoutes(app, ctx);
   await videoProviderTemplateRoutes(app);
@@ -293,7 +295,7 @@ async function main() {
       `  👉 http://localhost:${uiPort}/settings\n` +
       "\n" +
       "  操作：选择 Provider → 填入 API Key → 保存\n" +
-      "  支持：Kimi / 智谱GLM / 千问 / DeepSeek / MiniMax / 自定义\n" +
+      "  支持：Kimi / 智谱GLM / 千问 / DeepSeek / MiniMax / 豆包 / 自定义\n" +
       "  配置后无需重启，立即可用\n" +
       "============================================================"
     );
@@ -476,6 +478,12 @@ async function main() {
     app.log.info("Shutting down...");
     // 先停外部子进程，再停核心模块
     await videoForgeSupervisor.stop();
+    // 知识库 Docling sidecar（若启用）
+    if (ctx.kbParserStop) {
+      await ctx.kbParserStop().catch((err) => {
+        app.log.warn({ err }, "kb-parser 优雅停止失败（忽略）");
+      });
+    }
     await gatewayLauncher.stop();
     ctx.skillLoader.stopWatching();
     ctx.agentManager.stopAll();

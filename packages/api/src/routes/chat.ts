@@ -40,6 +40,73 @@ import {
 import type { AppContext } from "../context.js";
 import { SEEN_NO_RESPONSE } from "../shared/dedup.js";
 
+// ─── P3-18: 按错误类型返回不同 HTTP 状态码 ──────────────────
+// 从统一 500 升级为按错误类型区分，便于前端展示和日志审计
+
+/**
+ * 根据错误信息判断对应的 HTTP 状态码。
+ * - 504：超时 / 连接中断（AbortError、timeout、ECONNRESET 等）
+ * - 502：LLM API 错误（rate limit、auth、API 不可达等）
+ * - 400：参数校验错误
+ * - 404：Agent 或资源不存在
+ * - 500：其他未知错误（兜底）
+ */
+function categorizeError(error: unknown): number {
+  const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+
+  // 超时 / 连接中断 → 504
+  // Node.js 中 AbortError 的 name 为 "AbortError"（非 DOMException，两者都有 name 属性）
+  const errorName = (error instanceof Error ? (error as Error & { name?: string }).name : undefined);
+  if (
+    errorName === "AbortError" ||
+    msg.includes("timeout") ||
+    msg.includes("abort") ||
+    msg.includes("econnreset") ||
+    msg.includes("econnrefused") ||
+    msg.includes("etimedout")
+  ) {
+    return 504;
+  }
+
+  // LLM API 错误 → 502
+  if (
+    msg.includes("rate limit") ||
+    msg.includes("429") ||
+    msg.includes("401") ||
+    msg.includes("unauthorized") ||
+    msg.includes("invalid api key") ||
+    msg.includes("api key") ||
+    msg.includes("llm") ||
+    msg.includes("embedding") ||
+    msg.includes("model")
+  ) {
+    return 502;
+  }
+
+  // 参数校验 / 业务逻辑 → 400
+  if (
+    msg.includes("invalid") ||
+    msg.includes("validation") ||
+    msg.includes("required") ||
+    msg.includes("blocked") ||
+    msg.includes("scan") ||
+    msg.includes("exceeds") ||
+    msg.includes("limit")
+  ) {
+    return 400;
+  }
+
+  // 资源不存在 → 404（注意：此 catch 块在 agent 查找到之后，所以不是 agent 404）
+  if (
+    msg.includes("not found") ||
+    msg.includes("missing")
+  ) {
+    return 404;
+  }
+
+  return 500;
+}
+
 export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
   // ─── 使用共享去重模块（传输层无关，WS/HTTP 共用同一实例） ───
   const dedup = ctx.dedup;
@@ -93,7 +160,9 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
       return response;
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
-      return reply.status(500).send({ error: errMsg });
+      // P3-18: 按错误类型返回不同 HTTP 状态码，而非统一 500
+      const statusCode = categorizeError(error);
+      return reply.status(statusCode).send({ error: errMsg });
     }
   });
 

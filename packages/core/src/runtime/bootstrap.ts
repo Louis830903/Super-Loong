@@ -26,6 +26,7 @@ import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
 import pino from "pino";
+import { Env } from "../config/env.js";
 
 const execFileAsync = promisify(execFile);
 const logger = pino({ name: "video-forge-bootstrap" });
@@ -299,7 +300,7 @@ export const downloadFfmpeg = async (targetDir: string): Promise<string> => {
   const tempPath = path.join(binDir, `_downloading_${exeName}`);
 
   // 构建待尝试的下载 URL 列表
-  const envUrl = process.env.FFMPEG_DOWNLOAD_URL;
+  const envUrl = Env.FFMPEG_DOWNLOAD_URL;
   const urls = envUrl
     ? [envUrl]  // 环境变量覆盖：只用这一个
     : FFMPEG_MIRRORS.map((mirror) => `${mirror}/${fileName}`);
@@ -389,7 +390,7 @@ export const downloadFfprobe = async (targetDir: string): Promise<string> => {
   const tgzPath = path.join(tmpDir, "ffprobe.tgz");
 
   // 构建待尝试的下载 URL 列表
-  const envUrl = process.env.FFPROBE_DOWNLOAD_URL;
+  const envUrl = Env.FFPROBE_DOWNLOAD_URL;
   const urls = envUrl ? [envUrl] : getFfprobeMirrors();
 
   let lastError: Error | null = null;
@@ -527,7 +528,7 @@ export const ensureUvVenv = async (
         env: {
           ...process.env,
           // uv 使用国内 PyPI 镜像加速
-          UV_INDEX_URL: process.env.UV_INDEX_URL || "https://mirrors.aliyun.com/pypi/simple/",
+          UV_INDEX_URL: Env.UV_INDEX_URL,
         },
       },
     );

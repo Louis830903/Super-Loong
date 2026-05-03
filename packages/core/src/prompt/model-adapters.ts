@@ -185,7 +185,7 @@ export function resolveToolEnforcement(modelId: string): string | null {
   if (id.includes("grok")) return GPT_TOOL_ENFORCEMENT;
   // Gemini / Gemma 系列
   if (/gemini|gemma/i.test(id)) return GEMINI_TOOL_ENFORCEMENT;
-  // 国产模型：Kimi/Qwen/DeepSeek/GLM/MiniMax
-  if (/kimi|moonshot|qwen|tongyi|deepseek|glm|chatglm|zhipu|minimax|abab/i.test(id)) return CHINESE_LLM_TOOL_ENFORCEMENT;
+  // 国产模型：Kimi/Qwen/DeepSeek/GLM/MiniMax/豆包
+  if (/kimi|moonshot|qwen|tongyi|deepseek|glm|chatglm|zhipu|minimax|abab|doubao/i.test(id)) return CHINESE_LLM_TOOL_ENFORCEMENT;
   return null;
 }

@@ -29,7 +29,7 @@ on:
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   benchmark:
@@ -79,19 +79,10 @@ jobs:
             $ARGS \
             --output packages/research/data/history/${{ inputs.dataset }}-$(date +%Y%m%d).json
 
-      # ── 上传报告 ──
+      # ── 上传报告（仅 artifact，不 push 到仓库）──
       - name: Upload Report Artifact
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-report-${{ github.run_number }}
           path: packages/research/data/history/*.json
           retention-days: 90
-
-      # ── 提交历史数据到仓库 ──
-      - name: Commit History Data
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add packages/research/data/history/ || true
-          git diff --cached --quiet || git commit -m "[chore] benchmark report $(date +%Y-%m-%d)"
-          git push || echo "No changes to push"

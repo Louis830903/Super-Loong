@@ -43,6 +43,10 @@ __pycache__/
 .venv/
 .pytest_cache/
 
+# ====== 内部工具配置 ======
+.qoder/
+package-lock.json
+
 # ====== 系统文件 ======
 .DS_Store
 *.log

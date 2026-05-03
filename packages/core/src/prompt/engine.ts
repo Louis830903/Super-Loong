@@ -27,11 +27,12 @@ import { createRequire } from "node:module";
 import {
   TOOL_USE_ENFORCEMENT,
   MEMORY_GUIDANCE,
+  KB_GUIDANCE,
   SKILLS_GUIDANCE_HEADER,
   SAFETY_GUARDRAILS,
   SAFETY_POLICIES_SHORT,
   OUTPUT_FORMAT,
-  CAPABILITIES_OVERVIEW,
+  PLATFORM_SUMMARY,
 } from "./guidance.js";
 import { HEARTBEAT_SYSTEM_SECTION } from "../cron/heartbeat.js";
 import { resolveModelGuidance, resolveToolEnforcement } from "./model-adapters.js";
@@ -182,6 +183,12 @@ export class PromptEngine {
       // L4: Memory Guidance (when memory is enabled)
       if (cfg.memoryEnabled) parts.push(MEMORY_GUIDANCE);
 
+      // L4.5: Knowledge Base Guidance (when kb_ tools are available)
+      if (tools) {
+        const hasKbTools = Array.from(tools.keys()).some((n) => n.startsWith("kb_"));
+        if (hasKbTools) parts.push(KB_GUIDANCE);
+      }
+
       // L5: Skills Guidance (when skills are loaded)
       const skillsXml = this.buildSkillsList();
       if (skillsXml) {
@@ -192,8 +199,12 @@ export class PromptEngine {
       // L6: Safety Guardrails
       parts.push(SAFETY_GUARDRAILS);
 
-      // L6.5: Capabilities Overview (让 Agent 完整知道自己能做什么)
-      parts.push(CAPABILITIES_OVERVIEW);
+      // L6.5: Platform Summary (轻量平台摘要 — 替代旧 900 token CAPABILITIES_OVERVIEW)
+      parts.push(PLATFORM_SUMMARY);
+
+      // L6.5b: Active Features (条件注入 — 仅列出实际启用的可选模块)
+      const activeFeatures = this.buildActiveFeatures(tools);
+      if (activeFeatures) parts.push(activeFeatures);
 
       // L6.6: 心跳指导（Phase 1: 学 OpenClaw heartbeat-system-prompt.ts 条件注入）
       if (this.config.heartbeatEnabled) {
@@ -590,6 +601,116 @@ export class PromptEngine {
       return fs.existsSync("/.dockerenv") ||
         (fs.existsSync("/proc/1/cgroup") && fs.readFileSync("/proc/1/cgroup", "utf-8").includes("docker"));
     } catch { return false; }
+  }
+
+  // ─── Active Features (L6.5b, 条件注入) ───────────────────────
+
+  /**
+   * 动态生成 ## Active Features 区块，仅列出当前会话实际启用的可选模块。
+   *
+   * 检测策略：
+   * - 工具名前缀匹配 → 推断已加载的工具模块
+   * - 平台配置 → IM 能力声明
+   * - 环境变量 → Feature Flag 控制的功能
+   *
+   * 原则：只声明 Agent 真的能用的，不在工具列表里的不写。
+   */
+  private buildActiveFeatures(tools?: Map<string, ToolDefinition>): string {
+    if (!tools || tools.size === 0) return "";
+
+    const features: string[] = [];
+    const toolNames = Array.from(tools.keys());
+    const hasPrefix = (prefix: string) => toolNames.some((n) => n.startsWith(prefix));
+
+    // ── 浏览器 ──
+    if (toolNames.some((n) => n.startsWith("browser_"))) {
+      features.push("- Browser: Playwright web automation (navigate, click, type, screenshot)");
+    }
+
+    // ── 图片生成 ──
+    if (hasPrefix("image_generate") || hasPrefix("image_edit")) {
+      features.push("- Image Gen: Seedream text-to-image");
+    }
+
+    // ── 语音 ──
+    if (hasPrefix("tts_") || hasPrefix("stt_")) {
+      features.push("- Voice: TTS speech synthesis + STT transcription");
+    }
+
+    // ── 视频生成 ──
+    if (toolNames.some((n) => n.startsWith("forge_"))) {
+      features.push("- Video Forge: image/video/TTS/frame-compose/concat/BGM");
+    }
+
+    // ── 数据处理 ──
+    if (hasPrefix("csv_") || hasPrefix("xlsx_") || hasPrefix("regex_") || hasPrefix("hash_") || hasPrefix("text_diff")) {
+      features.push("- Data: CSV/XLSX/regex/diff/hash transform");
+    }
+
+    // ── 媒体处理 ──
+    if (hasPrefix("pdf_") || hasPrefix("markdown_") || hasPrefix("qr")) {
+      features.push("- Media: PDF extract, Markdown render, QR code");
+    }
+
+    // ── 视觉分析 ──
+    if (hasPrefix("vision_") || hasPrefix("ocr_")) {
+      features.push("- Vision: image analysis + OCR extraction");
+    }
+
+    // ── 知识库 ──
+    if (hasPrefix("kb_")) {
+      features.push("- Knowledge Base: semantic search across indexed documents");
+    }
+
+    // ── 桌面控制 ──
+    if (toolNames.some((n) =>
+      n.startsWith("mouse_") || n.startsWith("keyboard_") ||
+      n.startsWith("window_") || n.startsWith("app_") || n.startsWith("screen_"),
+    )) {
+      features.push("- Desktop Control: mouse/keyboard/window/app/screen");
+    }
+
+    // ── Computer Use ──
+    if (hasPrefix("computer_use")) {
+      features.push("- Computer Use: autonomous GUI automation loop (screenshot→analyze→act)");
+    }
+
+    // ── SysOps ──
+    if (toolNames.some((n) =>
+      n.startsWith("terminal") || n.startsWith("docker_") || n.startsWith("service_") ||
+      n.startsWith("network_") || n.startsWith("monitor_") || n.startsWith("deploy_"),
+    )) {
+      features.push("- SysOps: terminal/Docker/service/network/monitor/deploy");
+    }
+
+    // ── Git 高级 ──
+    if (toolNames.some((n) => n.startsWith("git_") && !["git_status", "git_log", "git_diff", "git_commit"].includes(n))) {
+      features.push("- Git Advanced: branching, merging, rebasing");
+    }
+
+    // ── 开发辅助 ──
+    if (hasPrefix("package_") || hasPrefix("test_") || hasPrefix("env_manage")) {
+      features.push("- Dev Tools: package management, test/build, environment");
+    }
+
+    // ── 定时任务 / 心跳 ──
+    if (this.config.heartbeatEnabled) {
+      features.push("- Cron Scheduler: natural language task scheduling via cron expressions");
+    }
+
+    // ── IM 平台（仅当运行在对应渠道时注入）──
+    const platform = this.config.platform?.toLowerCase();
+    if (platform === "feishu") {
+      features.push("- Feishu: event routing, card actions, rich text, rate limiting, webhook verification");
+    } else if (platform === "wecom") {
+      features.push("- WeCom: streaming responses, chunked upload (512KB), Markdown adaptation, AES encryption");
+    } else if (platform === "dingtalk") {
+      features.push("- DingTalk: Markdown + ActionCard, @mention support");
+    }
+
+    if (features.length === 0) return "";
+
+    return `## Active Features\n${features.join("\n")}`;
   }
 
   // ─── Cache Key ─────────────────────────────────────────────

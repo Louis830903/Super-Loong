@@ -19,6 +19,6 @@ export type SqlJsStatic = { Database: new (data?: ArrayLike<number> | Buffer | n
 
 /**
  * Schema 当前版本号（每次新增 migration 必须同步 bump，并在 runMigrations 中新增 migrateVN 调用）。
- * 版本语义：v1 = baseline（initDatabase 内 CREATE TABLE 事务块）；v2..v16 = migrations.ts 内 migrateVN 函数。
+ * 版本语义：v1 = baseline（initDatabase 内 CREATE TABLE 事务块）；v2..v17 = migrations.ts 内 migrateVN 函数。
  */
-export const CURRENT_SCHEMA_VERSION = 16;
+export const CURRENT_SCHEMA_VERSION = 17;

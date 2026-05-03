@@ -34,49 +34,6 @@ interface Attachment {
   type: "image" | "file";
 }
 
-// Text-based extensions whose content can be read and sent to LLM
-const TEXT_EXTENSIONS = new Set([
-  ".txt", ".csv", ".json", ".md", ".py", ".js", ".ts", ".tsx", ".jsx",
-  ".html", ".css", ".xml", ".yaml", ".yml", ".log", ".sh", ".bat",
-  ".sql", ".env", ".ini", ".conf", ".toml", ".cfg", ".properties",
-]);
-
-// 服务端可解析的二进制文件类型（PDF/DOCX/XLSX）
-const PARSEABLE_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".xls", ".pptx"]);
-
-function isTextFile(file: File): boolean {
-  const ext = "." + file.name.split(".").pop()?.toLowerCase();
-  return TEXT_EXTENSIONS.has(ext) || file.type.startsWith("text/");
-}
-
-function isParseableFile(file: File): boolean {
-  const ext = "." + file.name.split(".").pop()?.toLowerCase();
-  return PARSEABLE_EXTENSIONS.has(ext);
-}
-
-function readFileAsText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(file);
-  });
-}
-
-function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      // 去掉 data URL 前缀 (e.g. "data:application/pdf;base64,")
-      const base64 = result.split(",")[1] || result;
-      resolve(base64);
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
 interface ToolCallEntry {
   toolCallId: string;
   name: string;
@@ -157,6 +114,8 @@ ToolCallCard.displayName = "ToolCallCard";
  * - 点击外部自动关闭
  */
 import type { AgentInfo } from "@/hooks/useAgents";
+// P3-17: 文件工具函数提取到独立模块
+import { isTextFile, isParseableFile, readFileAsText, readFileAsBase64 } from "@/lib/file-utils";
 function AgentCombobox({ agents, selectedAgent, onSelect }: {
   agents: AgentInfo[];
   selectedAgent: string;
@@ -293,6 +252,8 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // 消息排队：Agent 回复期间用户可继续输入，消息自动排队依次发送
+  const [messageQueue, setMessageQueue] = useState<Array<{ text: string; atts: Attachment[] }>>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -570,32 +531,29 @@ export default function ChatPage() {
     return () => { skillChannelRef.current?.close(); };
   }, []);
 
-  // ─── Send message ──────────────────────────────────────
-  const sendMessage = async () => {
-    if ((!input.trim() && attachments.length === 0) || !selectedAgent || loading) return;
-
-    const attachmentFiles = [...attachments]; // snapshot before clearing
-    const msgAttachments = attachments.map((a) => ({ name: a.file.name, type: a.file.type, preview: a.preview }));
+  // ─── 核心发送逻辑（供 sendMessage 和队列消费复用）─────────
+  // 将 text 和 atts 作为参数传入，不再依赖组件 state
+  const doSend = async (text: string, atts: Attachment[]) => {
+    const msgAttachments = atts.map((a) => ({ name: a.file.name, type: a.file.type, preview: a.preview }));
     const userMsg: Message = {
       role: "user",
-      content: input.replace(/\u200B/g, ""),
+      content: text,
       attachments: msgAttachments.length > 0 ? msgAttachments : undefined,
     };
     setMessages((prev) => [...prev, userMsg]);
-    setInput(""); setAttachments([]); setLoading(true);
-    if (isRecording) stopRecording();
+    setLoading(true);
 
     // Read file contents for text-based attachments so LLM can actually see them
     let messageContent = userMsg.content;
     // 图片 base64 收集数组 — 用于多模态传递给后端
     const imagePayloads: { data: string; mimeType: string }[] = [];
-    if (attachmentFiles.length > 0) {
+    if (atts.length > 0) {
       const parts: string[] = [];
-      for (const att of attachmentFiles) {
+      for (const att of atts) {
         if (isTextFile(att.file)) {
           try {
-            const text = await readFileAsText(att.file);
-            const truncated = text.length > 30000 ? text.slice(0, 30000) + "\n...(内容过长已截断)" : text;
+            const fileText = await readFileAsText(att.file);
+            const truncated = fileText.length > 30000 ? fileText.slice(0, 30000) + "\n...(内容过长已截断)" : fileText;
             parts.push(`<file name="${att.file.name}">\n${truncated}\n</file>`);
           } catch {
             parts.push(`[附件: ${att.file.name} (读取失败)]`);
@@ -814,6 +772,37 @@ export default function ChatPage() {
       setLoading(false);
     }
   };
+
+  // 用 ref 保存最新 doSend，供 useEffect 消费队列时调用（避免闭包过期问题）
+  const doSendRef = useRef(doSend);
+  doSendRef.current = doSend;
+
+  // ─── Send message（支持排队）───────────────────────
+  const sendMessage = async () => {
+    if ((!input.trim() && attachments.length === 0) || !selectedAgent) return;
+
+    const text = input.replace(/\u200B/g, "");
+    const atts = [...attachments];
+    setInput(""); setAttachments([]);
+
+    // Agent 正在回复中 → 消息加入排队队列，用户可继续输入
+    if (loading) {
+      setMessageQueue((prev) => [...prev, { text, atts }]);
+      return;
+    }
+
+    if (isRecording) stopRecording();
+    await doSend(text, atts);
+  };
+
+  // ─── 队列消费：当前回复结束后自动发送排队中的下一条 ──────
+  useEffect(() => {
+    if (loading || messageQueue.length === 0) return;
+    const [next, ...rest] = messageQueue;
+    setMessageQueue(rest);
+    doSendRef.current(next.text, next.atts);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, messageQueue]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -1217,7 +1206,7 @@ export default function ChatPage() {
                       <Settings2 className="h-4 w-4" /> 前往设置
                     </a>
                     <p className="mt-4 text-xs text-zinc-500">
-                      支持 Kimi / 智谱GLM / 千问 / DeepSeek / MiniMax / 自定义
+                      支持 Kimi / 智谱GLM / 千问 / DeepSeek / MiniMax / 豆包 / 自定义
                     </p>
                     <p className="text-xs text-zinc-600">配置后无需重启，立即可用</p>
                   </div>
@@ -1347,7 +1336,7 @@ export default function ChatPage() {
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 placeholder={isRecording ? (voiceStatus || "录音中...") : "输入消息... (Shift+Enter 换行)"}
-                disabled={!selectedAgent || loading}
+                disabled={!selectedAgent}
                 rows={1}
                 className={cn(
                   "w-full resize-none rounded-xl border bg-zinc-900 px-4 py-3 pr-12 text-lg text-white placeholder-zinc-500 focus:outline-none disabled:opacity-50 transition-colors",
@@ -1355,14 +1344,45 @@ export default function ChatPage() {
                 )}
                 style={{ maxHeight: 200 }}
               />
-              <button type="button" onClick={sendMessage} disabled={(!input.trim() && attachments.length === 0) || loading} className="absolute bottom-2.5 right-2.5 rounded-lg bg-blue-600 p-1.5 text-white transition-colors hover:bg-blue-700 disabled:opacity-30 disabled:hover:bg-blue-600">
-                <Send className="h-4 w-4" />
+              <button
+                type="button"
+                onClick={sendMessage}
+                disabled={!input.trim() && attachments.length === 0}
+                className="absolute bottom-2.5 right-2.5 rounded-lg bg-blue-600 p-1.5 text-white transition-colors hover:bg-blue-700 disabled:opacity-30 disabled:hover:bg-blue-600"
+                title={loading ? "加入排队队列" : "发送消息"}
+              >
+                {loading && messageQueue.length > 0 ? (
+                  <span className="relative">
+                    <Send className="h-4 w-4 opacity-50" />
+                    <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center h-3.5 min-w-[14px] rounded-full bg-amber-500 text-[9px] font-bold text-white px-0.5 leading-none">
+                      {messageQueue.length + 1}
+                    </span>
+                  </span>
+                ) : loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
               </button>
             </div>
           </div>
 
           <div className="flex items-center justify-between text-xs text-zinc-600 px-1">
-            <span>{isRecording && <span className="inline-flex items-center gap-1 text-red-400"><span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />正在录音...</span>}</span>
+            <span>
+              {isRecording && <span className="inline-flex items-center gap-1 text-red-400"><span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />正在录音...</span>}
+              {!isRecording && loading && messageQueue.length > 0 && (
+                <span className="inline-flex items-center gap-1 text-amber-400">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  排队中 ({messageQueue.length + 1}条)
+                </span>
+              )}
+              {!isRecording && loading && messageQueue.length === 0 && (
+                <span className="inline-flex items-center gap-1 text-blue-400">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  回复中...
+                </span>
+              )}
+            </span>
             <span>Enter 发送 · Shift+Enter 换行 · 支持拖拽/粘贴文件</span>
           </div>
         </div>

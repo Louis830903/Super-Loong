@@ -21,6 +21,7 @@ import {
   initTraceStore,
 } from "@super-agent/core";
 import type { Span } from "@super-agent/core";
+import { requirePermission } from "../auth/index.js";
 
 export async function registerTracesRoutes(app: FastifyInstance): Promise<void> {
 
@@ -29,7 +30,9 @@ export async function registerTracesRoutes(app: FastifyInstance): Promise<void> 
    * Body: { enabled: boolean }
    * 返回: { enabled: boolean, message: string }
    */
-  app.post<{ Body: { enabled?: boolean } }>("/api/traces/toggle", async (request, reply) => {
+  app.post<{ Body: { enabled?: boolean } }>("/api/traces/toggle", {
+    preHandler: requirePermission("*"),
+  }, async (request, reply) => {
     const body = request.body as { enabled?: boolean } | undefined;
     if (body?.enabled === undefined || typeof body.enabled !== "boolean") {
       return reply.status(400).send({ error: "body.enabled is required (boolean)" });

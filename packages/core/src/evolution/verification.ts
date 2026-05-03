@@ -5,10 +5,13 @@
  * 1. 技能应用后自动运行验证案例
  * 2. 前后效果对比（A/B 测试式验证）
  * 3. 失败自动回滚 + 原因记录
+ *
+ * v1.1: 集成 @super-agent/research 的 LLMJudge，提供量化评分能力
  */
 
 import pino from "pino";
 import type { SkillProposal, InteractionCase } from "./engine.js";
+import { LLMJudge, type JudgeScore } from "@super-agent/research";
 
 const logger = pino({ name: "evolution:verification" });
 
@@ -72,9 +75,17 @@ export class VerificationPipeline {
   private results: VerificationResult[] = [];
   private rollbacks: RollbackRecord[] = [];
   private readonly passThreshold: number;
+  private llmJudge: LLMJudge | null = null;
 
-  constructor(options?: { passThreshold?: number }) {
+  /**
+   * @param options.passThreshold 验证通过阈值 (0-1)，默认 0.7
+   * @param options.llmCall 可选的 LLM 调用函数，传入后启用 LLM-as-Judge 量化评分
+   */
+  constructor(options?: { passThreshold?: number; llmCall?: (prompt: string) => Promise<string> }) {
     this.passThreshold = options?.passThreshold ?? 0.7; // 70% 通过率才算验证成功
+    if (options?.llmCall) {
+      this.llmJudge = new LLMJudge(options.llmCall);
+    }
   }
 
   /**
@@ -120,11 +131,13 @@ export class VerificationPipeline {
       try {
         if (executor) {
           const result = await executor(testCase.input);
-          const passed = result.success && this.matchesExpected(result.output, testCase.expectedBehavior);
+          const judgeResult = await this.evaluateOutput(
+            testCase.input, result.output, testCase.expectedBehavior
+          );
           details.push({
             caseId: testCase.id,
-            passed,
-            actualBehavior: result.output.slice(0, 500),
+            passed: result.success && judgeResult.passed,
+            actualBehavior: judgeResult.reason || result.output.slice(0, 500),
           });
         } else {
           // 无执行器，基于静态分析验证
@@ -243,7 +256,26 @@ export class VerificationPipeline {
 
   // ─── 内部方法 ──────────────────────────────────────────────
 
-  private matchesExpected(actual: string, expected: string): boolean {
+  /**
+   * 评估输出质量 — 优先使用 LLMJudge 量化评分，降级为关键词匹配
+   */
+  private async evaluateOutput(
+    input: string, output: string, expected: string
+  ): Promise<{ passed: boolean; reason: string }> {
+    if (this.llmJudge) {
+      try {
+        const result = await this.llmJudge.evaluate(input, output, expected);
+        return { passed: result.passed, reason: result.reason };
+      } catch (err) {
+        logger.warn({ err }, "LLMJudge evaluation failed, falling back to keyword match");
+      }
+    }
+    // 降级：关键词匹配
+    const passed = this.keywordMatch(output, expected);
+    return { passed, reason: passed ? "keyword match" : "keyword mismatch" };
+  }
+
+  private keywordMatch(actual: string, expected: string): boolean {
     // 简单匹配：检查期望的关键词是否出现在实际输出中
     const keywords = expected.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
     const actualLower = actual.toLowerCase();

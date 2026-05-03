@@ -2,7 +2,7 @@
  * T2.11f — 模型配置模板 + per-Agent Provider 覆盖 Vitest 测试
  *
  * 覆盖：
- * 1. PROVIDER_PRESETS 完整性（4 套预设 × 6 Agent）
+ * 1. PROVIDER_PRESETS 完整性（6 套预设 × 6 Agent）
  * 2. applyPerAgentProvider 三级优先级合并
  * 3. applyAllAgentProviders 批量覆盖
  * 4. ModelDef pricing 字段完整性
@@ -13,6 +13,8 @@ import {
   PRESET_BALANCED,
   PRESET_CHEAP,
   PRESET_ZH_BEST,
+  PRESET_DOUBAO_SEED2,
+  PRESET_DOUBAO_COST,
   PRESET_LOCAL,
 } from "../collaboration/video-crew-provider-presets.js";
 import type { AgentProviderOverride } from "../collaboration/video-crew-provider-presets.js";
@@ -64,10 +66,13 @@ function makeAgentConfig(id: string): AgentConfig {
 describe("PROVIDER_PRESETS 完整性", () => {
   const agentIds = Object.values(VIDEO_AGENT_IDS);
 
-  it("应导出 4 套系统预设", () => {
-    expect(PROVIDER_PRESETS).toHaveLength(4);
+  it("应导出 6 套系统预设", () => {
+    expect(PROVIDER_PRESETS).toHaveLength(6);
     expect(PROVIDER_PRESETS.map((p) => p.id)).toEqual(
-      expect.arrayContaining(["preset_balanced", "preset_cheap", "preset_zh_best", "preset_local"])
+      expect.arrayContaining([
+        "preset_balanced", "preset_cheap", "preset_zh_best",
+        "preset_doubao_seed2", "preset_doubao_cost", "preset_local",
+      ])
     );
   });
 
@@ -75,6 +80,8 @@ describe("PROVIDER_PRESETS 完整性", () => {
     ["balanced", PRESET_BALANCED],
     ["cheap", PRESET_CHEAP],
     ["zh_best", PRESET_ZH_BEST],
+    ["doubao_seed2", PRESET_DOUBAO_SEED2],
+    ["doubao_cost", PRESET_DOUBAO_COST],
     ["local", PRESET_LOCAL],
   ] as const)("预设 %s 应覆盖全部 6 个 Agent", (name, preset) => {
     for (const agentId of agentIds) {

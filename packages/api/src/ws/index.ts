@@ -104,7 +104,8 @@ const MAX_WS_CLIENTS = (() => {
 
 export async function registerWebSocket(app: FastifyInstance, ctx: AppContext): Promise<void> {
   // Register the Fastify WebSocket plugin
-  await app.register(websocket);
+  // P0 安全加固：限制 WebSocket 帧最大 16MB，防止超大帧内存耗尽攻击
+  await app.register(websocket, { options: { maxPayload: 16 * 1024 * 1024 } });
 
   const bus = getEventBus();
 

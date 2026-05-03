@@ -20,6 +20,7 @@ import {
   Image,
   Globe,
   Video,
+  BookMarked,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -31,6 +32,7 @@ const navigation = [
   { name: "通道管理", href: "/channels", icon: Radio },
   { name: "技能市场", href: "/skills", icon: Puzzle },
   { name: "记忆管理", href: "/memory", icon: Brain },
+  { name: "知识库", href: "/knowledge", icon: BookMarked },
   { name: "MCP 工具", href: "/mcp", icon: Plug },
   { name: "定时任务", href: "/cron", icon: Clock },
   { name: "多 Agent 协作", href: "/collaboration", icon: Users },

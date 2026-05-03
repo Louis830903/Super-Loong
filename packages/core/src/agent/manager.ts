@@ -151,6 +151,15 @@ export class AgentManager extends EventEmitter<AgentManagerEvents> {
   }
 
   /**
+   * 返回当前全局工具定义列表（供 SubagentExecutor 等内部消费方使用）。
+   * 与 listAvailableToolNames() 不同，本方法返回完整 ToolDefinition（含 execute 函数引用），
+   * 用于子代理创建时需要注入全部工具的完整定义。
+   */
+  getGlobalTools(): ToolDefinition[] {
+    return Array.from(this.globalTools.values());
+  }
+
+  /**
    * P1-2 / P2-1：返回当前加载的技能名列表（基于 skillLoader.listSkills）。
    * 若 skillLoader 未注入则返回空数组。名称来源于 Skill.frontmatter.name。
    */

@@ -204,15 +204,21 @@ export default function SettingsPage() {
     setTesting((t) => ({ ...t, [providerId]: true }));
     setTestResults((r) => { const n = { ...r }; delete n[providerId]; return n; });
     try {
-      // Auto-save first if user entered a new API key
+      // 自动保存用户新输入的数据（API Key / Base URL / Model）
+      // 前提：用户确实在输入框中做了修改，避免把数据库里的正确值覆盖成页面上的旧缓存
       const localKey = apiKeys[providerId];
       const localUrl = baseUrls[providerId];
       const localModel = selectedModels[providerId];
-      if (localKey || localUrl || localModel) {
+      const savedModel = providers.find((p) => p.id === providerId)?.selectedModel;
+      const hasLocalKey = localKey !== undefined;
+      const hasLocalUrl = localUrl !== undefined;
+      // 只有用户主动修改了模型输入框（不同于已保存的值）才自动保存模型
+      const hasLocalModel = localModel && localModel !== savedModel;
+      if (hasLocalKey || hasLocalUrl || hasLocalModel) {
         const saveBody: Record<string, unknown> = { isEnabled: true };
-        if (localKey !== undefined) saveBody.apiKey = localKey;
-        if (localUrl !== undefined) saveBody.baseUrl = localUrl;
-        if (localModel) saveBody.selectedModel = localModel;
+        if (hasLocalKey) saveBody.apiKey = localKey;
+        if (hasLocalUrl) saveBody.baseUrl = localUrl;
+        if (hasLocalModel) saveBody.selectedModel = localModel;
         await apiFetch(`/api/models/providers/${providerId}`, {
           method: "PUT",
           body: JSON.stringify(saveBody),
@@ -333,6 +339,8 @@ export default function SettingsPage() {
         {providers.map((provider) => {
           const isExpanded = expandedId === provider.id;
           const isCustom = provider.id === "custom";
+          // 火山引擎豆包需要支持端点 ID（ep-m-xxxxx）自由输入，而非固定模型下拉
+          const isEndpointBased = provider.id === "doubao";
           const currentModel = selectedModels[provider.id] || provider.selectedModel;
           const result = testResults[provider.id];
 
@@ -461,8 +469,8 @@ export default function SettingsPage() {
                     </div>
                   )}
 
-                  {/* Model Selector */}
-                  {!isCustom && provider.models.length > 0 && (
+                  {/* Model Selector — 非自定义、非端点型 provider 使用下拉选择 */}
+                  {!isCustom && !isEndpointBased && provider.models.length > 0 && (
                     <div>
                       <label className="block text-sm text-zinc-400 mb-1.5">选择模型</label>
                       <select
@@ -483,16 +491,41 @@ export default function SettingsPage() {
                     </div>
                   )}
 
-                  {/* Custom model ID input */}
-                  {isCustom && (
+                  {/* 火山引擎端点 ID / 自定义 Model ID 自由输入 */}
+                  {(isCustom || isEndpointBased) && (
                     <div>
-                      <label className="block text-sm text-zinc-400 mb-1.5">Model ID</label>
+                      <label className="block text-sm text-zinc-400 mb-1.5">
+                        {isEndpointBased ? "推理接入点 ID" : "Model ID"}
+                      </label>
+                      {isEndpointBased && (
+                        <p className="text-[11px] text-zinc-600 mb-2">
+                          请在<a href="https://console.volcengine.com/ark/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">火山引擎控制台 → 在线推理</a>创建推理接入点，然后填入端点 ID（如 ep-m-xxxxxxxxxx）。<br/>
+                          也可直接使用下方参考模型名（如 doubao-seed-1-8-251228），前提是已在控制台开通该模型。
+                        </p>
+                      )}
                       <input
                         value={selectedModels[provider.id] ?? provider.selectedModel ?? ""}
                         onChange={(e) => setSelectedModels((m) => ({ ...m, [provider.id]: e.target.value }))}
-                        placeholder="gpt-4o / llama3 / ..."
+                        placeholder={isEndpointBased ? "ep-m-20260220100223-99fz8" : "gpt-4o / llama3 / ..."}
                         className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
                       />
+                      {/* 豆包也列出参考模型作为快速选择 */}
+                      {isEndpointBased && provider.models.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <span className="text-[11px] text-zinc-500 self-center mr-1">参考模型：</span>
+                          {provider.models.slice(0, 6).map((m) => (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => setSelectedModels((prev) => ({ ...prev, [provider.id]: m.id }))}
+                              className="rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-700 hover:text-white transition-colors"
+                              title={`${m.name} · ${formatCtx(m.contextWindow)}`}
+                            >
+                              {m.id}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 

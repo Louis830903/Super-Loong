@@ -1,8 +1,26 @@
 {
   "name": "super-agent",
   "version": "0.1.0",
-  "private": true,
-  "description": "Modular AI Agent Platform with persistent memory, self-evolution, multi-agent collaboration, and IM gateway",
+  "private": false,
+  "description": "模块化通用 AI Agent 平台 — 持久记忆 · 自我进化 · 多智能体协作 · 知识库 · 视频生成 · IM 网关",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Louis830903/Super-Loong"
+  },
+  "author": "Louis830903",
+  "license": "MIT",
+  "keywords": [
+    "ai-agent",
+    "multi-agent",
+    "llm",
+    "knowledge-base",
+    "video-generation",
+    "im-gateway",
+    "self-evolution",
+    "persistent-memory",
+    "typescript",
+    "nextjs"
+  ],
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "dev:api": "pnpm --filter @super-agent/api dev",

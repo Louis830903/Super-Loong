@@ -12,6 +12,7 @@ import pino from "pino";
 import type { ToolDefinition, ToolContext, ToolResult } from "../../types/index.js";
 import { buildShellArgs } from "../../platform/adapter.js";
 import { runShellCmd } from "../run-shell-cmd.js";
+import { buildIsolatedEnv } from "../../security/env-isolation.js";
 import { registerProcess, pollProcess } from "../process-registry.js";
 
 const logger = pino({ name: "test-build" });
@@ -25,6 +26,7 @@ function runBackground(command: string, cwd?: string): ToolResult {
     cwd: cwd ?? undefined,
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
+    env: buildIsolatedEnv(),  // 安全：过滤子进程环境变量，阻止敏感密钥泄漏
   });
 
   const sessionId = registerProcess(command, child, cwd ?? process.cwd());

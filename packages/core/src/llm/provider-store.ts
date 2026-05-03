@@ -13,6 +13,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import pino from "pino";
 import { getDatabase, scheduleSave } from "../persistence/sqlite.js";
 import { getModelCatalog } from "./model-catalog.js";
+import { Env } from "../config/env.js";
 import { getEncryptionKey, decryptWithFallback } from "../security/encryption-key.js";
 
 const logger = pino({ name: "provider-store" });
@@ -137,18 +138,18 @@ export class ProviderStore {
         }
       }
     }
-    // Also support legacy LLM_API_KEY + LLM_BASE_URL
-    if (process.env.LLM_API_KEY && process.env.LLM_BASE_URL) {
-      const baseUrl = process.env.LLM_BASE_URL;
+    // 也支持传统的 LLM_API_KEY + LLM_BASE_URL 环境变量
+    if (Env.LLM_API_KEY && Env.LLM_BASE_URL) {
+      const baseUrl = Env.LLM_BASE_URL;
       const matchedProvider = catalog.find((p) => p.baseUrl && baseUrl.startsWith(p.baseUrl.replace(/\/v\d.*/, "")));
       if (matchedProvider) {
         const existing = this.get(matchedProvider.id);
         // 仅首次播种：DB 中已有 API Key 则跳过
         if (!existing?.apiKey) {
           this.upsert(matchedProvider.id, {
-            apiKey: process.env.LLM_API_KEY,
-            baseUrl: process.env.LLM_BASE_URL !== matchedProvider.baseUrl ? process.env.LLM_BASE_URL : undefined,
-            selectedModel: existing?.selectedModel || process.env.LLM_MODEL,
+            apiKey: Env.LLM_API_KEY,
+            baseUrl: Env.LLM_BASE_URL !== matchedProvider.baseUrl ? Env.LLM_BASE_URL : undefined,
+            selectedModel: existing?.selectedModel || Env.LLM_MODEL,
           });
           logger.info({ provider: matchedProvider.id }, "Seeded legacy LLM_* env vars");
         }
@@ -157,9 +158,9 @@ export class ProviderStore {
         // 仅首次播种：DB 中已有 API Key 则跳过
         if (!existing?.apiKey) {
           this.upsert("custom", {
-            apiKey: process.env.LLM_API_KEY,
-            baseUrl: process.env.LLM_BASE_URL,
-            selectedModel: existing?.selectedModel || process.env.LLM_MODEL,
+            apiKey: Env.LLM_API_KEY,
+            baseUrl: Env.LLM_BASE_URL,
+            selectedModel: existing?.selectedModel || Env.LLM_MODEL,
           });
           logger.info("Seeded legacy LLM_* env vars as custom provider");
         }

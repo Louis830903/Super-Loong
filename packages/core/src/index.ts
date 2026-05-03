@@ -138,6 +138,10 @@ export { extractRelations } from "./memory/relation-extractor.js";
 export type { RelationCandidate } from "./memory/relation-extractor.js";
 // ✨ T6: 关系传播规则
 export { TRANSITIVE_PREDICATES, applyTransitiveClosure, applyAllTransitiveClosures } from "./memory/inference-rules.js";
+
+// ═══ 知识库模块（Spec §5 / T1-T6）═══════════════════════
+// 文档 CRUD / 解析 / 分块 / ingestion / 混合检索 / Provider 与工具
+export * from "./knowledgebase/index.js";
 // ✨ T6: 搜索选项
 export type { MemorySearchOptions } from "./memory/manager.js";
 // J-1: 插件发现
@@ -229,7 +233,8 @@ export {
 } from "./collaboration/video-crew-presets.js";
 export type { ShortVideoCrewParams } from "./collaboration/video-crew-presets.js";
 export {
-  PRESET_BALANCED, PRESET_CHEAP, PRESET_ZH_BEST, PRESET_LOCAL,
+  PRESET_BALANCED, PRESET_CHEAP, PRESET_ZH_BEST,
+  PRESET_DOUBAO_SEED2, PRESET_DOUBAO_COST, PRESET_LOCAL,
   PROVIDER_PRESETS,
 } from "./collaboration/video-crew-provider-presets.js";
 export type { AgentProviderOverride, ProviderPreset } from "./collaboration/video-crew-provider-presets.js";
@@ -247,6 +252,7 @@ export { SubagentManager, DEFAULT_SPAWN_CONFIG } from "./collaboration/subagent-
 export type { SpawnConfig, SubagentRecord, SubagentStatus, SpawnRequest, SubagentExecuteFn } from "./collaboration/subagent-spawn.js";
 export { SubagentAnnouncer, formatAnnounceMessage } from "./collaboration/subagent-announce.js";
 export type { AnnouncePayload, InjectMessageFn } from "./collaboration/subagent-announce.js";
+export { SubagentExecutor } from "./collaboration/subagent-executor.js";
 
 // Evolution
 export {
@@ -512,6 +518,13 @@ export {
   VenvSetupError,
 } from "./runtime/index.js";
 export type { VideoForgeDepsResult, BootstrapOptions } from "./runtime/index.js";
+
+// Runtime — 知识库 Docling sidecar 环境自举（知识库 Spec §T7）
+export { ensureKbParserDeps } from "./runtime/index.js";
+export type {
+  KbParserDepsResult,
+  KbParserBootstrapOptions,
+} from "./runtime/index.js";
 
 // Services — video-forge HTTP 客户端
 export {

@@ -2,9 +2,10 @@
  * Application context shared across all route handlers.
  */
 
-import { AgentManager, SkillLoader, MessageRouter, MemoryManager, CollaborationOrchestrator, EvolutionEngine, SecurityManager, MCPRegistry, MCPMarketplace, CronScheduler, SkillMarketplace, SubagentManager, SubagentAnnouncer, builtinTools, getAllBuiltinTools, createMemoryTools, createSkillTools, initDatabase, SQLiteBackend, QwenEmbedding, HRRProvider, AliyunVoiceProvider, DockerSandbox, SSHSandbox, ProviderStore, initConfigStore, paths, ensureDirectories, loadNudgeConfig, ConfigStoreAdapter, SourceRouter, injectSysopsSecurityRules, TaskStore, InMemoryAgentRegistry, PushNotificationDispatcher, SessionSearchEngine, KnowledgeExtractor, InsightsEngine, VerificationPipeline, KnowledgeGraph, getProviderById, getModelById } from "@super-agent/core";
-import type { VoiceProvider, ConfigStore, IAgentRegistry, LLMProviderConfig, EmbeddingProvider } from "@super-agent/core";
+import { AgentManager, SkillLoader, MessageRouter, MemoryManager, CollaborationOrchestrator, EvolutionEngine, SecurityManager, MCPRegistry, MCPMarketplace, CronScheduler, SkillMarketplace, SubagentManager, SubagentAnnouncer, SubagentExecutor, builtinTools, getAllBuiltinTools, createMemoryTools, createSkillTools, initDatabase, SQLiteBackend, QwenEmbedding, HRRProvider, AliyunVoiceProvider, DockerSandbox, SSHSandbox, ProviderStore, initConfigStore, paths, ensureDirectories, loadNudgeConfig, ConfigStoreAdapter, SourceRouter, injectSysopsSecurityRules, TaskStore, InMemoryAgentRegistry, PushNotificationDispatcher, SessionSearchEngine, KnowledgeExtractor, InsightsEngine, VerificationPipeline, KnowledgeGraph, getProviderById, getModelById, KnowledgeBaseProvider } from "@super-agent/core";
+import type { VoiceProvider, ConfigStore, IAgentRegistry, LLMProviderConfig, EmbeddingProvider, DoclingClient, KBEmbedder } from "@super-agent/core";
 import { createDedupCache, type DedupCache } from "./shared/dedup.js";
+import { KbParserSupervisor } from "./services/kb-parser-supervisor.js";
 import pino from "pino";
 
 const logger = pino({ name: "context" });
@@ -19,6 +20,8 @@ export interface AppContext {
   subagentManager: SubagentManager;
   /** E-1: 子代理完成通报（与 Orchestrator 共享同一实例） */
   subagentAnnouncer: SubagentAnnouncer;
+  /** 子代理执行器（executeFn 注入 + spawn 工具注册） */
+  subagentExecutor: SubagentExecutor;
   evolutionEngine: EvolutionEngine;
   securityManager: SecurityManager;
   mcpRegistry: MCPRegistry;
@@ -28,6 +31,14 @@ export interface AppContext {
   providerStore: ProviderStore;
   configStore: ConfigStore;
   voiceProvider?: VoiceProvider;
+  /**
+   * 共享向量化器（知识库 T8 / §5.4）。
+   * 与 memoryManager 复用同一实例（QwenEmbedding 或 HRRProvider），
+   * 避免知识库路由自建实例造成 Key/维度不一致。
+   * 接口结构与 core 内部的 KBEmbedder 同构（embed + embeddingType），
+   * 知识库 ingestion/retrieval 直接传入即可。
+   */
+  embedder: EmbeddingProvider;
   /** A2A: Task 状态机存储（ENABLE_A2A=true 时初始化） */
   a2aTaskStore?: TaskStore;
   /** A2A: Agent 注册表 */
@@ -43,6 +54,21 @@ export interface AppContext {
   knowledgeGraph?: KnowledgeGraph;
   /** 传输层无关的请求去重缓存（WS/HTTP 共用） */
   dedup: DedupCache;
+  /**
+   * 知识库 Docling sidecar 客户端（知识库 Spec §T7）。
+   *
+   * - 懒启动：client 构造立即完成，首次调用 parse() 才真正 spawn Python 子进程
+   * - 可选：环境变量 DISABLE_KB_PARSER_SIDECAR=true 可整体关闭，client 为 undefined
+   * - 语义：knowledge-base 路由把它透传给 ingestDocument，当 TS parser 抛
+   *   PARSE_NEEDS_OCR / PARSE_EMPTY 时自动降级到 Docling
+   */
+  kbParserClient?: DoclingClient;
+  /**
+   * 知识库 sidecar 优雅停止钩子（index.ts shutdown 时调用）。
+   *
+   * 幂等：若 sidecar 从未启动，仅清理状态；若已启动则 SIGTERM + 5s 超时后 SIGKILL。
+   */
+  kbParserStop?: () => Promise<void>;
   /**
    * P3-1：统一应用当前激活 Provider 的单一入口。
    * 从 ProviderStore 读取 active provider → 构建 LLMProviderConfig →
@@ -106,6 +132,23 @@ export async function createAppContext(): Promise<AppContext> {
   const skillLoader = new SkillLoader([paths.skills()]);
   const router = new MessageRouter(agentManager);
   const memoryManager = new MemoryManager({ backend: sqliteBackend, embedder });
+
+  // ─── 知识库 Provider 装配（Spec §T6 / §八） ─────
+  // 注入 KnowledgeBaseProvider：Agent 对话时，prefetch 自动检索知识库并注入 system prompt，
+  // 同时注册 kb_search / kb_list 两个工具供 Agent 调用。
+  // 与 memoryManager 复用同一 embedder 实例，确保入库与检索的向量维度/类型一致。
+  const kbProvider = new KnowledgeBaseProvider({
+    // EmbeddingProvider 与 KBEmbedder 结构兼容（embed(q)→Promise<number[]>，embeddingType 一致）
+    embedder: embedder as unknown as KBEmbedder,
+  });
+  memoryManager.addProvider(kbProvider);
+
+  // 注册 KB 工具为全局工具：Agent 可直接调用 kb_search / kb_list
+  // 工具执行时从 ToolContext 读取 agentId/userId 实现运行时隔离
+  for (const tool of kbProvider.getToolSchemas()) {
+    agentManager.registerGlobalTool(tool);
+  }
+  logger.info("KnowledgeBaseProvider registered — Agent 对话自动引用知识库");
 
   // E-1: 初始化子代理管理器和通报器，注入 Orchestrator
   const subagentManager = new SubagentManager();
@@ -180,6 +223,20 @@ export async function createAppContext(): Promise<AppContext> {
     logger.warn("PLATFORM env not set — no platform-specific hints will be injected into prompts");
   }
 
+  // 创建 SubagentExecutor 并注入 executeFn（路 A：CrewExecutor 自动调用子代理）
+  const subagentExecutor = new SubagentExecutor(
+    agentManager,
+    subagentManager,
+    subagentAnnouncer,
+    securityManager,
+    memoryManager,
+    skillLoader,
+    platform,
+    () => router.getDefaultAgentId(), // 闭包解耦 MessageRouter
+  );
+  subagentManager.setExecuteFn(subagentExecutor.createExecuteFn());
+  logger.info("SubagentExecutor created — executeFn injected into SubagentManager");
+
   // Register memory tools as global tools for all agents
   const memTools = createMemoryTools(memoryManager);
   for (const tool of memTools) {
@@ -243,6 +300,10 @@ export async function createAppContext(): Promise<AppContext> {
     agentManager.registerGlobalTool(tool);
   }
   logger.info({ count: builtinTools.length }, "Core built-in tools registered (sync)");
+
+  // 注册 spawn_subagent 到全局工具（路 B：Agent 主动调子代理）
+  agentManager.registerGlobalTool(subagentExecutor.createSpawnTool());
+  logger.info("spawn_subagent tool registered globally");
 
   // 异步加载可选工具模块（浏览器/图片生成/语音）
   try {
@@ -388,5 +449,23 @@ export async function createAppContext(): Promise<AppContext> {
     return config;
   };
 
-  return { agentManager, skillLoader, router, memoryManager, collaborationOrchestrator, subagentManager, subagentAnnouncer, evolutionEngine, securityManager, mcpRegistry, mcpMarketplace, cronScheduler, skillMarketplace, providerStore, configStore, voiceProvider, sessionSearch, knowledgeExtractor, insightsEngine, verificationPipeline, knowledgeGraph, dedup, a2aTaskStore, a2aRegistry, a2aPushDispatcher, applyActiveProvider };
+  // ─── 知识库 Docling sidecar（知识库 Spec §T7，可选） ─────
+  // 懒启动：此处仅构造 supervisor 与 client 句柄，首次上传扫描件时才 spawn Python。
+  // 环境变量 DISABLE_KB_PARSER_SIDECAR=true 时完全跳过（router 无 docling → 行为回退到纯 TS 解析）
+  let kbParserClient: DoclingClient | undefined;
+  let kbParserStop: (() => Promise<void>) | undefined;
+  if (process.env.DISABLE_KB_PARSER_SIDECAR !== "true") {
+    const kbParserSupervisor = new KbParserSupervisor();
+    kbParserClient = kbParserSupervisor.getClient();
+    kbParserStop = () => kbParserSupervisor.stop();
+    logger.info(
+      "KbParserSupervisor 已创建（懒启动：首次上传需 OCR 的文档时才真正启动 Python sidecar）",
+    );
+  } else {
+    logger.info(
+      "KbParserSupervisor 已跳过（DISABLE_KB_PARSER_SIDECAR=true）—— 知识库将使用纯 TS 解析",
+    );
+  }
+
+  return { agentManager, skillLoader, router, memoryManager, collaborationOrchestrator, subagentManager, subagentAnnouncer, subagentExecutor, evolutionEngine, securityManager, mcpRegistry, mcpMarketplace, cronScheduler, skillMarketplace, providerStore, configStore, voiceProvider, embedder, sessionSearch, knowledgeExtractor, insightsEngine, verificationPipeline, knowledgeGraph, dedup, a2aTaskStore, a2aRegistry, a2aPushDispatcher, applyActiveProvider, kbParserClient, kbParserStop };
 }

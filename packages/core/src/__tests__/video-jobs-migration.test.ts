@@ -56,6 +56,9 @@ describe("Migration v15/v16 幂等", () => {
     insertVideoJob({
       id: "test-migration-1",
       status: "pending",
+      input_json: "{}",
+      cost_estimate_cny: 0,
+      cost_limit_cny: 0,
       created_at: now,
       updated_at: now,
     });
@@ -80,6 +83,9 @@ describe("Migration v15/v16 幂等", () => {
     insertVideoJob({
       id: "test-v16-columns",
       status: "pending",
+      input_json: "{}",
+      cost_estimate_cny: 0,
+      cost_limit_cny: 0,
       agent_providers: JSON.stringify({ writer: "deepseek-v3" }),
       agent_provider_template_id: "preset_balanced",
       created_at: now,
@@ -135,6 +141,9 @@ describe("video_jobs CRUD", () => {
     insertVideoJob({
       id: "crud-test-job-succeeded",
       status: "succeeded",
+      input_json: "{}",
+      cost_estimate_cny: 0,
+      cost_limit_cny: 0,
       created_at: now + 1000,
       updated_at: now + 1000,
     });

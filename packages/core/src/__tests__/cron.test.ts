@@ -125,7 +125,7 @@ describe("CronScheduler", () => {
       message: "every minute",
     });
 
-    scheduler.start(() => async () => "done");
+    scheduler.start(async () => "done");
     expect(scheduler.isRunning).toBe(true);
 
     scheduler.stop();

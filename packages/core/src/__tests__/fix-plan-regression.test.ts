@@ -192,7 +192,7 @@ describe("Phase B: Correctness Fixes", () => {
     const loaded = loadSession("null-content-sess");
     expect(loaded).not.toBeNull();
     expect(loaded!.messages).toHaveLength(3);
-    expect(loaded!.messages[1].content).toBeNull();
+    expect((loaded!.messages[1] as Record<string, unknown>).content).toBeNull();
   });
 
   it("B-10: Memory manager core blocks CRUD", () => {
@@ -503,7 +503,7 @@ describe("Cross-Phase Integration", () => {
     saveSession("int-sess-1", "agent-1", msgs);
     const loaded = loadSession("int-sess-1");
     expect(loaded).not.toBeNull();
-    expect(loaded!.messages[2].content).toBeNull();
+    expect((loaded!.messages[2] as Record<string, unknown>).content).toBeNull();
   });
 
   it("SecurityManager + CredentialVault + TokenProxy end-to-end", () => {

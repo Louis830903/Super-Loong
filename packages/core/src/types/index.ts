@@ -282,6 +282,10 @@ export interface ToolResult {
   output: string;
   data?: unknown;
   error?: string;
+  /** P2 沙箱降级透明化：实际使用的沙箱级别（若发生降级） */
+  _sandboxLevel?: string;
+  /** P2 沙箱降级透明化：降级说明（若发生降级） */
+  _sandboxNote?: string;
 }
 
 // ─── Memory Types ─────────────────────────────────────────────
@@ -397,7 +401,8 @@ export const ChatMessageSchema = z.object({
   sessionId: z.string().optional(),
   // 允许空字符串 — 非文本消息（图片/文件/音频）的 message 可能为空，
   // 媒体信息通过 metadata.media_urls 携带
-  message: z.string(),
+  // P0 安全加固：限制单条消息最大 65536 字符 (~64KB)，防止内存耗尽攻击
+  message: z.string().max(65536, "消息内容过长，请限制在 65536 字符以内。如需发送长文本，请使用文件上传功能。"),
   stream: z.boolean().default(false),
   metadata: z.record(z.unknown()).optional(),  // B-6: 携带 images 等附加数据
 });

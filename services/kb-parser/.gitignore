@@ -1,0 +1,12 @@
+# KB-Parser 运行产物
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Docling 首次运行会下载 OCR 模型到本地缓存（~/.cache/docling）
+# 此处仅为保险起见忽略可能在服务目录内生成的缓存
+.docling_cache/
+models/
