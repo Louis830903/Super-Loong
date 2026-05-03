@@ -378,8 +378,11 @@ export class ConfigStore {
       if (!isSecret || !value || !iv) continue;
 
       try {
-        const { plain, usedLegacy } = decryptWithStatus(value, iv);
-        if (!usedLegacy || !plain) continue; // 新 key 可解 or 全部解密失败，不做操作
+        // 直接调用 decryptWithFallback（而非 decryptWithStatus），以便在 catch 中区分永久失败 vs 临时失败
+        const { plaintext: plain, usedLegacy } = decryptWithFallback((key) =>
+          decryptWithKey(value, iv, key),
+        );
+        if (!usedLegacy || !plain) continue; // 新 key 已能解密 or 明文为空
         const { encrypted, iv: newIv } = encrypt(plain);
         db.run(
           `UPDATE service_configs SET config_value = ?, config_iv = ?, updated_at = ?
@@ -388,7 +391,21 @@ export class ConfigStore {
         );
         migrated++;
       } catch (err) {
-        logger.warn({ serviceId, configKey, err }, "Failed to re-encrypt config during legacy-key migration");
+        // 检查是否配置了 LEGACY key — 若有则说明双 key 均失败，数据永久无法解密
+        if (process.env.SA_ENCRYPTION_KEY_LEGACY) {
+          // 永久解密失败：清空残损记录，阻止每次启动/读取都告警
+          db.run(
+            "UPDATE service_configs SET config_value = '', config_iv = '', updated_at = ? WHERE service_id = ? AND config_key = ?",
+            [now, serviceId, configKey],
+          );
+          logger.warn(
+            { serviceId, configKey },
+            "[migration] 服务配置凭据永久无法解密（新旧密钥均失败），已清空残损记录。" +
+            "请在 Admin → Services 页面重新输入凭据。",
+          );
+        } else {
+          logger.warn({ serviceId, configKey, err }, "Failed to re-encrypt config during legacy-key migration");
+        }
       }
     }
 

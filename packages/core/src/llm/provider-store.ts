@@ -299,7 +299,21 @@ export class ProviderStore {
           );
           migratedFromLegacyKey++;
         } catch (err) {
-          logger.warn({ id, err }, "Failed to re-encrypt record during legacy-key migration");
+          // 检查是否配置了 LEGACY key — 若有则说明双 key 均失败，数据永久无法解密
+          if (process.env.SA_ENCRYPTION_KEY_LEGACY) {
+            // 永久解密失败：清空残损记录，阻止每次启动/读取都告警
+            db.run(
+              "UPDATE llm_providers SET api_key = '', api_key_iv = '', updated_at = ? WHERE id = ?",
+              [new Date().toISOString(), id],
+            );
+            logger.warn(
+              { id },
+              "[migration] 提供商凭据永久无法解密（新旧密钥均失败），已清空残损记录。" +
+              "请在 Admin → Providers 页面重新输入 API Key。",
+            );
+          } else {
+            logger.warn({ id, err }, "Failed to re-encrypt record during legacy-key migration");
+          }
         }
         continue;
       }
