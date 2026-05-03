@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 
 import { apiFetch, showToast } from "@/lib/utils";
+import { GuidedEmptyState } from "@/components/ui/guided-empty-state";
+import { FeatureBanner } from "@/components/ui/feature-banner";
 
 // ─── API 类型（与后端对齐，前端拷贝一份避免跨包耦合）────
 
@@ -274,6 +276,22 @@ export default function KnowledgeBasePage() {
         </button>
       </div>
 
+      <FeatureBanner
+        pageId="knowledge"
+        icon={BookMarked}
+        title="知识库"
+        description="上传文档后，系统会自动解析、分块、向量化。Agent 在回答问题时自动检索知识库中最相关的内容引用到回答中，就像给 AI 装上了「资料库」。"
+        useCases={[
+          "合同分析：上传合同文档，向 Agent 提问条款细节",
+          "论文研读：上传多篇论文 PDF，跨文档对比和总结",
+          "项目文档问答：将项目所有文档上传，随时提问技术细节",
+        ]}
+        tips={[
+          "支持 md / txt / html / pdf / docx / xlsx / pptx，单文件最大 20MB",
+          "重复上传相同内容的文档会自动跳过，不会浪费存储空间",
+        ]}
+      />
+
       {/* 统计卡片 */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         <StatCard label="文档总数" value={stats?.documentCount ?? 0} />
@@ -415,9 +433,17 @@ export default function KnowledgeBasePage() {
         {loading ? (
           <p className="py-8 text-center text-sm text-zinc-500">加载中...</p>
         ) : docs.length === 0 ? (
-          <p className="py-8 text-center text-sm text-zinc-500">
-            暂无文档，请先上传
-          </p>
+          <GuidedEmptyState
+            icon={BookMarked}
+            title="还没有上传文档"
+            description="知识库让 Agent 能够引用你的文档来回答问题。上传文档后，系统会自动分块、向量化，Agent 在对话中检索相关内容进行回答。"
+            steps={[
+              "上传文档：支持 md / txt / html / pdf / docx / xlsx / pptx",
+              "自动处理：系统会自动解析、分块并生成向量索引",
+              "自由提问：在对话中 Agent 会自动检索知识库中的相关内容",
+            ]}
+            action={{ label: "开始上传", onClick: () => fileRef.current?.click() }}
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

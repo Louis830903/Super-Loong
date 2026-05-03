@@ -11,6 +11,7 @@ import {
 import type { AgentInfo } from "@/hooks/useAgents";
 
 import type { AttachmentItem, TaskOutputItem, CollabMessageItem, CollabHistoryItem } from "@/types/api-types";
+import { FeatureBanner } from "@/components/ui/feature-banner";
 
 // G-1: 使用 type 字段判断，fallback 兼容旧数据
 const isCrew = (item: CollabHistoryItem) => item.type === "crew" || (item.type == null && "process" in item && item.process !== undefined);
@@ -578,6 +579,23 @@ export default function CollaborationPage() {
         <h1 className="text-2xl font-bold text-white">多 Agent 协作</h1>
         <p className="mt-1 text-zinc-400">Crew 任务编排 & GroupChat 多轮对话</p>
       </div>
+
+      <FeatureBanner
+        pageId="collaboration"
+        icon={Users}
+        title="多 Agent 协作"
+        description="让多个 AI Agent 组成团队协同工作。支持 Crew 任务编排（定义任务流程、分配 Agent）和 GroupChat 多轮对话（Agent 群聊自主讨论）两种模式。"
+        useCases={[
+          "Crew 任务编排：定义多步骤任务流程，Agent 按顺序或分层执行",
+          "GroupChat 群聊：多个 Agent 围绕主题自由讨论，适合头脑风暴",
+          "分层执行：Manager Agent 负责任务分配，Worker Agent 执行具体任务",
+          "智能分配：开启 autoAssign 后，Manager 从全局 Agent 池自动匹配",
+        ]}
+        tips={[
+          "Crew 模式适合结构化工作流，GroupChat 适合开放式讨论",
+          "执行结果包含文件附件和完整对话记录，支持 ZIP 下载",
+        ]}
+      />
 
       {/* ─── Tabs ───────────────────────────────────────────── */}
       <div className="flex gap-1 rounded-lg bg-zinc-900 p-1">

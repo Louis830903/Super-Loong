@@ -526,6 +526,13 @@ export type {
   KbParserBootstrapOptions,
 } from "./runtime/index.js";
 
+// Runtime — IM Gateway sidecar 环境自举
+export { ensureGatewayDeps } from "./runtime/index.js";
+export type {
+  GatewayDepsResult,
+  GatewayBootstrapOptions,
+} from "./runtime/index.js";
+
 // Services — video-forge HTTP 客户端
 export {
   forgeImage,

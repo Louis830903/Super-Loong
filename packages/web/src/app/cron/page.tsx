@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { apiFetch } from "@/lib/utils";
 import { useAgents } from "@/hooks/useAgents";
 import { Clock, Plus, Trash2, Play, Pause, History, RefreshCw, Loader2 } from "lucide-react";
+import { GuidedEmptyState } from "@/components/ui/guided-empty-state";
 
 interface CronJob {
   id: string;
@@ -132,11 +133,17 @@ export default function CronPage() {
       {loading ? (
         <div className="py-12 text-center text-zinc-500">加载中...</div>
       ) : jobs.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-zinc-700 p-12 text-center">
-          <Clock className="mx-auto h-12 w-12 text-zinc-600" />
-          <p className="mt-4 text-zinc-400">暂无定时任务</p>
-          <p className="mt-2 text-sm text-zinc-600">创建定时任务让 Agent 自动执行</p>
-        </div>
+        <GuidedEmptyState
+          icon={Clock}
+          title="还没有定时任务"
+          description="定时任务让 Agent 按预定计划自动执行操作。你可以设置 Agent 在特定时间发送消息、执行检查或触发工作流，无需手动干预。"
+          steps={[
+            "创建任务：设置任务名称和执行的 Agent",
+            "设定计划：用 Cron 表达式（如 0 9 * * 1-5）或用自然语言描述（如「每周一早九点」），系统自动解析",
+            "自动执行：Agent 会在指定时间自动发送消息并执行任务",
+          ]}
+          action={{ label: "创建定时任务", onClick: () => setShowCreate(true) }}
+        />
       ) : (
         <div className="space-y-3">
           {jobs.map((job) => (

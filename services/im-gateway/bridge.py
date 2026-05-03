@@ -284,7 +284,7 @@ class AgentBridge:
         将 IM 消息发送到 Super Agent API 并获取回复（带重试 + 幂等性保护）
 
         Args:
-            platform: 平台名称 (wecom/feishu/dingtalk/weixin)
+            platform: 平台名称 (wecom/feishu/dingtalk)
             chat_id: 聊天 ID
             user_id: 用户 ID
             text: 消息文本

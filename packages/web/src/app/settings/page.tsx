@@ -5,8 +5,9 @@ import { apiFetch } from "@/lib/utils";
 import {
   Settings, Save, Key, Globe, CheckCircle2, XCircle, ChevronDown, ChevronUp,
   Zap, ExternalLink, Loader2, RefreshCw, Wrench, Search, Database, Shield, Info,
-  ToggleLeft, ToggleRight, Terminal, Trash2,
+  ToggleLeft, ToggleRight, Terminal, Trash2, ArrowRightLeft,
 } from "lucide-react";
+import { MigrationCard } from "@/components/settings/migration-card";
 
 interface ServiceKeyInfo {
   key: string;
@@ -811,6 +812,9 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      {/* ── 数据迁移区块 ── */}
+      <MigrationCard />
 
       {/* System Info */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">

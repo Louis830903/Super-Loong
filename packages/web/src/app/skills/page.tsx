@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/utils";
 import { Puzzle, Plus, Trash2, FileText, Code, Search, Download, Store, Loader2, ExternalLink, ChevronDown, ChevronUp, X } from "lucide-react";
+import { GuidedEmptyState } from "@/components/ui/guided-empty-state";
+import { FeatureBanner } from "@/components/ui/feature-banner";
 
 interface Skill {
   id: string;
@@ -123,6 +125,22 @@ export default function SkillsPage() {
         </div>
       </div>
 
+      <FeatureBanner
+        pageId="skills"
+        icon={Puzzle}
+        title="技能市场"
+        description="技能（Skill）是 Agent 的可插拔能力模块。每个技能通过 .md 文件定义触发词和提示词模板，Agent 在对话中识别到触发词后自动调用对应技能执行任务。"
+        useCases={[
+          "代码审查：创建代码审查技能，Agent 自动审查代码质量",
+          "日报生成：设置定时触发，Agent 每日自动汇总工作内容生成日报",
+          "翻译助手：定义翻译技能，在对话中随时触发多语言翻译",
+        ]}
+        tips={[
+          "本地技能放在 skills/ 目录，兼容 OpenClaw / Hermes 格式",
+          "远程市场支持 SkillHub / ClawHub / GitHub 源，一键安装",
+        ]}
+      />
+
       {/* Tabs */}
       <div className="flex gap-1 rounded-lg bg-zinc-900 p-1">
         <button
@@ -149,11 +167,17 @@ export default function SkillsPage() {
           {loading ? (
             <div className="py-12 text-center text-zinc-500">加载中...</div>
           ) : skills.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-zinc-700 p-12 text-center">
-              <Puzzle className="mx-auto h-12 w-12 text-zinc-600" />
-              <p className="mt-4 text-zinc-400">暂无技能，在 skills/ 目录添加 .md 文件或从市场安装</p>
-              <p className="mt-2 text-sm text-zinc-600">兼容 OpenClaw / Hermes / Super Agent 格式</p>
-            </div>
+            <GuidedEmptyState
+              icon={Puzzle}
+              title="还没有安装技能"
+              description="技能（Skill）是 Agent 的可插拔能力模块。通过 .md 文件定义触发词和提示词，Agent 在对话中识别触发词后自动调用对应技能。兼容 OpenClaw / Hermes 格式。"
+              steps={[
+                "在 skills/ 目录创建 .md 文件，定义触发词和提示词模板",
+                "或从远程技能市场一键安装社区共享的技能",
+                "在对话中使用触发词，Agent 会自动调用对应技能",
+              ]}
+              secondaryAction={{ label: "去市场安装", onClick: () => setTab("marketplace") }}
+            />
           ) : (
             <>
               {/* 搜索过滤 */}
@@ -276,8 +300,10 @@ export default function SkillsPage() {
           ) : marketResults.length === 0 ? (
             <div className="rounded-xl border border-dashed border-zinc-700 p-8 text-center">
               <Store className="mx-auto h-10 w-10 text-zinc-600" />
-              <p className="mt-3 text-zinc-400">搜索远程技能市场</p>
-              <p className="mt-1 text-sm text-zinc-600">支持 SkillHub / ClawHub / GitHub 源</p>
+              <p className="mt-3 text-zinc-400">搜索远程技能市场，发现社区共享的技能</p>
+              <p className="mt-1 text-sm text-zinc-600">
+                输入关键词（如 code-review、translation）搜索，支持 SkillHub / ClawHub / GitHub 源
+              </p>
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

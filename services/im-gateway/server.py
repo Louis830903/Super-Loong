@@ -723,52 +723,7 @@ async def channel_status(channel_id: str):
     return result
 
 
-# ─── QR 扫码登录（微信）─────────────────────────────
-
-@app.post("/api/gateway/channels/{channel_id}/qr/start")
-async def start_qr_login(channel_id: str, req: ChannelConnectRequest):
-    """发起 QR 扫码登录"""
-    plugin = registry.get(channel_id)
-    if not plugin or not plugin.qr_login_adapter:
-        raise HTTPException(404, f"渠道 {channel_id} 不支持 QR 登录")
-
-    # 先初始化 gateway（建立 client 等）
-    config = ChannelConfig(channel_id=channel_id, credentials=req.credentials)
-    if hasattr(plugin.gateway_adapter, "_client") and plugin.gateway_adapter._client is None:
-        await plugin.gateway_adapter.start(config)
-
-    result = await plugin.qr_login_adapter.start_qr_login()
-    return {
-        "qr_data_url": result.qr_data_url,
-        "session_id": result.session_id,
-        "message": result.message,
-    }
-
-
-@app.get("/api/gateway/channels/{channel_id}/qr/status")
-async def check_qr_status(channel_id: str):
-    """轮询 QR 扫码状态"""
-    plugin = registry.get(channel_id)
-    if not plugin or not plugin.qr_login_adapter:
-        raise HTTPException(404, f"渠道 {channel_id} 不支持 QR 登录")
-
-    result = await plugin.qr_login_adapter.check_qr_status()
-
-    # 扫码成功后，完成连接设置
-    if result.connected:
-        config = config_persistence.get(channel_id) or ChannelConfig(channel_id=channel_id)
-        await _make_message_handler(channel_id)
-        if hasattr(plugin.outbound_adapter, "configure"):
-            plugin.outbound_adapter.configure(config)
-        _active_channels[channel_id] = config
-        # 延迟持久化：避免 Uvicorn reload 中断响应
-        asyncio.create_task(_deferred_save(channel_id, config))
-
-    return {
-        "status": result.status.value,
-        "connected": result.connected,
-        "error": result.error,
-    }
+# ─── 系统信息 ─────────────────────────────────────
 
 
 # ─── Doctor 诊断（6.8）────────────────────────────

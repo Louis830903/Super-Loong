@@ -74,7 +74,7 @@ class GatewayAdapter(Protocol):
 
 @runtime_checkable
 class QrLoginAdapter(Protocol):
-    """二维码登录适配器 — 微信等需要扫码的平台"""
+    """二维码登录适配器（预留扩展）"""
 
     async def start_qr_login(self) -> QrLoginResult:
         """发起二维码登录"""
@@ -266,7 +266,7 @@ class ChannelPlugin:
     可选字段：其余 adapter 按需实现
     """
     # ── 身份与元数据 ──
-    id: str                                      # 唯一标识：weixin/wecom/dingtalk/feishu
+    id: str                                      # 唯一标识：wecom/dingtalk/feishu
     label: str                                   # 显示名称
     capabilities: ChannelCapabilities             # 静态能力声明
     config_schema: "ChannelConfigSchema"          # 配置 Schema
@@ -278,7 +278,7 @@ class ChannelPlugin:
     inbound_adapter: InboundAdapter               # 消息接收
 
     # ── 基础可选 ──
-    qr_login_adapter: Optional[QrLoginAdapter] = None     # 微信扫码
+    qr_login_adapter: Optional[QrLoginAdapter] = None     # 扫码登录（预留）
     health_adapter: Optional[HealthAdapter] = None         # 基础健康
 
     # ── P0 生产级可选 ──

@@ -64,7 +64,7 @@ class MessagePipeline:
         处理入站消息
 
         Args:
-            channel_id: 渠道标识（weixin/wecom/dingtalk/feishu）
+            channel_id: 渠道标识（wecom/dingtalk/feishu）
             event: 统一消息事件
             capabilities: 渠道能力声明（G8 能力适配用）
         """

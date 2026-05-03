@@ -4,17 +4,12 @@ import { useEffect, useState, useCallback } from "react";
 import { apiFetch } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { TracesPanel } from "./traces-panel";
+import { OnboardingChecklist } from "./onboarding-checklist";
 import {
   Bot,
   MessageSquare,
-  Radio,
-  Puzzle,
   Activity,
   Clock,
-  Plug,
-  Shield,
-  Users,
-  Brain,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -132,66 +127,8 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Quick Actions */}
-      <div>
-        <h2 className="mb-4 text-lg font-semibold text-white">快速操作</h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <QuickAction
-            href="/agents"
-            icon={Bot}
-            title="创建 Agent"
-            desc="配置一个新的 AI Agent"
-          />
-          <QuickAction
-            href="/chat"
-            icon={MessageSquare}
-            title="开始对话"
-            desc="与 Agent 进行对话测试"
-          />
-          <QuickAction
-            href="/channels"
-            icon={Radio}
-            title="接入通道"
-            desc="连接微信、飞书等 IM 平台"
-          />
-          <QuickAction
-            href="/skills"
-            icon={Puzzle}
-            title="管理技能"
-            desc="添加或编辑 Agent 技能"
-          />
-          <QuickAction
-            href="/memory"
-            icon={Brain}
-            title="查看记忆"
-            desc="管理 Agent 持久记忆"
-          />
-          <QuickAction
-            href="/mcp"
-            icon={Plug}
-            title="MCP 工具"
-            desc="管理 MCP 服务器和工具"
-          />
-          <QuickAction
-            href="/cron"
-            icon={Clock}
-            title="定时任务"
-            desc="配置 Cron 定时调度"
-          />
-          <QuickAction
-            href="/collaboration"
-            icon={Users}
-            title="多 Agent 协作"
-            desc="Crew 编排和 GroupChat"
-          />
-          <QuickAction
-            href="/security"
-            icon={Shield}
-            title="安全管理"
-            desc="凭证保管和审计日志"
-          />
-        </div>
-      </div>
+      {/* 新用户任务清单 */}
+      <OnboardingChecklist systemHealthy={health?.status === "ok"} />
       {/* Traces — 全链路追踪面板 */}
       <div>
         <h2 className="mb-4 text-lg font-semibold text-white">全链路追踪</h2>
@@ -200,30 +137,5 @@ export default function DashboardPage() {
         </div>
       </div>
     </div>
-  );
-}
-
-function QuickAction({
-  href,
-  icon: Icon,
-  title,
-  desc,
-}: {
-  href: string;
-  icon: React.ElementType;
-  title: string;
-  desc: string;
-}) {
-  return (
-    <a
-      href={href}
-      className="group flex items-start gap-4 rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 transition-colors hover:border-zinc-700 hover:bg-zinc-900"
-    >
-      <Icon className="mt-0.5 h-5 w-5 shrink-0 text-zinc-400 group-hover:text-blue-400" />
-      <div>
-        <p className="font-medium text-white">{title}</p>
-        <p className="mt-1 text-sm text-zinc-500">{desc}</p>
-      </div>
-    </a>
   );
 }

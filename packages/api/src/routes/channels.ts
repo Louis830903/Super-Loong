@@ -169,17 +169,6 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
     proxyGET(`/api/gateway/channels/${request.params.channelId}/status`, reply)
   );
 
-  // ── QR 扫码登录（微信等）──────────────────────────
-
-  app.post<{ Params: { channelId: string } }>("/api/gateway/channels/:channelId/qr/start", async (request, reply) => {
-    app.log.info({ action: "qr_start", channel: request.params.channelId }, "Proxy: QR login start");
-    return proxyPOST(`/api/gateway/channels/${request.params.channelId}/qr/start`, request.body, reply);
-  });
-
-  app.get<{ Params: { channelId: string } }>("/api/gateway/channels/:channelId/qr/status", async (request, reply) =>
-    proxyGET(`/api/gateway/channels/${request.params.channelId}/qr/status`, reply)
-  );
-
   // ── Doctor 配置诊断（v2）───────────────────────────
 
   app.get<{ Params: { channelId: string } }>("/api/gateway/channels/:channelId/doctor", async (request, reply) =>

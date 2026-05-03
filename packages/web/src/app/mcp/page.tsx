@@ -8,6 +8,8 @@ import {
   RefreshCw, AlertTriangle,
 } from "lucide-react";
 import { showToast } from "@/lib/utils";
+import { GuidedEmptyState } from "@/components/ui/guided-empty-state";
+import { FeatureBanner } from "@/components/ui/feature-banner";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -84,6 +86,23 @@ export default function MCPPage() {
           <p className="mt-1 text-zinc-400">管理 Model Context Protocol 服务器和工具</p>
         </div>
       </div>
+
+      <FeatureBanner
+        pageId="mcp"
+        icon={Plug}
+        title="MCP 工具"
+        description="MCP（Model Context Protocol）是 AI 模型与外部工具交互的开放标准协议。通过 MCP 服务器，Agent 可以安全地访问文件系统、数据库、浏览器等外部资源，大幅扩展能力边界。"
+        useCases={[
+          "文件操作：通过 MCP 服务器让 Agent 读写本地文件",
+          "数据库查询：连接 PostgreSQL/MySQL，Agent 用自然语言查询数据",
+          "浏览器自动化：安装 Playwright MCP 服务器，Agent 接管浏览器操作",
+          "GitHub 集成：Agent 直接管理 Issues、PR、代码审查",
+        ]}
+        tips={[
+          "支持 stdio 本地进程和 SSE/HTTP 远程两种传输方式",
+          "从 MCP 市场一键安装社区共享的服务器，无需手动配置",
+        ]}
+      />
 
       {/* Tabs */}
       <div className="flex gap-1 rounded-lg bg-zinc-900/50 p-1 border border-zinc-800">
@@ -236,11 +255,17 @@ function ServersTab({ refreshKey }: { refreshKey: number }) {
         {loading ? (
           <div className="py-8 text-center text-zinc-500">加载中...</div>
         ) : servers.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-zinc-700 p-8 text-center">
-            <Plug className="mx-auto h-10 w-10 text-zinc-600" />
-            <p className="mt-3 text-zinc-400">暂无 MCP 服务器</p>
-            <p className="mt-1 text-sm text-zinc-600">添加 MCP 服务器或从市场一键安装</p>
-          </div>
+          <GuidedEmptyState
+            icon={Plug}
+            title="还没有 MCP 服务器"
+            description="MCP（Model Context Protocol）是模型与外部工具交互的标准协议。通过 MCP 服务器，Agent 可以访问文件系统、数据库、浏览器等外部资源，大幅扩展能力边界。"
+            steps={[
+              "添加服务器：支持 stdio 本地进程和 SSE/HTTP 远程连接",
+              "从市场安装：在 MCP 市场一键安装社区共享的服务器",
+              "Agent 自动调用：配置完成后，Agent 在对话中按需自动调用工具",
+            ]}
+            action={{ label: "添加服务器", onClick: () => setShowAdd(true) }}
+          />
         ) : (
           <div className="space-y-3">
             {servers.map((s) => (
@@ -560,9 +585,9 @@ function MarketplaceTab({ onInstalled }: { onInstalled: () => void }) {
       {!searched ? (
         <div className="rounded-xl border border-dashed border-zinc-700 p-12 text-center">
           <Globe className="mx-auto h-12 w-12 text-zinc-600" />
-          <p className="mt-4 text-zinc-400">搜索官方 MCP Registry 发现可用的 MCP 服务器</p>
+          <p className="mt-4 text-zinc-400">搜索 MCP 市场，一键安装社区共享的服务器</p>
           <p className="mt-1 text-sm text-zinc-600">
-            数据源: registry.modelcontextprotocol.io
+            输入关键词搜索（如 filesystem、playwright、github），数据源：registry.modelcontextprotocol.io
           </p>
         </div>
       ) : loading ? (
@@ -575,7 +600,7 @@ function MarketplaceTab({ onInstalled }: { onInstalled: () => void }) {
           <Search className="mx-auto h-10 w-10 text-zinc-600" />
           <p className="mt-3 text-zinc-400">未找到匹配的 MCP 服务器</p>
           <p className="mt-1 text-sm text-zinc-600">
-            尝试其他关键词，如 filesystem、database、search
+            尝试其他关键词，常用搜索词：filesystem、database、search、playwright、github
           </p>
         </div>
       ) : (
