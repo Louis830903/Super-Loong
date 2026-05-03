@@ -8,15 +8,23 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Louis830903/Super-Loong/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License" /></a>
-  <a href="https://github.com/Louis830903/Super-Loong"><img src="https://img.shields.io/badge/version-0.1.0-indigo?style=flat-square" alt="Version" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/node-%E2%89%A5%2020-brightgreen?style=flat-square&logo=node.js" alt="Node.js" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/pnpm-%E2%89%A5%209-orange?style=flat-square&logo=pnpm" alt="pnpm" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=next.js" alt="Next.js" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/Fastify-5-000000?style=flat-square&logo=fastify" alt="Fastify" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python" alt="Python" /></a>
-  <a href="#"><img src="https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss" alt="Tailwind" /></a>
+  <a href="https://github.com/Louis830903/Super-Loong/stargazers"><img src="https://img.shields.io/github/stars/Louis830903/Super-Loong?style=for-the-badge&logo=github&color=fbbf24&labelColor=1f2937" alt="Stars" /></a>
+  <a href="https://github.com/Louis830903/Super-Loong/network/members"><img src="https://img.shields.io/github/forks/Louis830903/Super-Loong?style=for-the-badge&logo=git&color=6366f1&labelColor=1f2937" alt="Forks" /></a>
+  <a href="https://github.com/Louis830903/Super-Loong/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-10b981?style=for-the-badge&labelColor=1f2937" alt="License" /></a>
+  <a href="https://github.com/Louis830903/Super-Loong"><img src="https://img.shields.io/github/last-commit/Louis830903/Super-Loong?style=for-the-badge&logo=git&color=ec4899&labelColor=1f2937" alt="Last Commit" /></a>
+  <a href="https://github.com/Louis830903/Super-Loong"><img src="https://img.shields.io/github/repo-size/Louis830903/Super-Loong?style=for-the-badge&logo=databricks&color=8b5cf6&labelColor=1f2937" alt="Repo Size" /></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Node.js-%E2%89%A5%2020-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" />
+  <img src="https://img.shields.io/badge/pnpm-%E2%89%A5%209-F69220?style=flat-square&logo=pnpm&logoColor=white" alt="pnpm" />
+  <img src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=next.js&logoColor=white" alt="Next.js" />
+  <img src="https://img.shields.io/badge/Fastify-5-000000?style=flat-square&logo=fastify&logoColor=white" alt="Fastify" />
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind" />
+  <img src="https://img.shields.io/badge/SQLite-WASM-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
+  <img src="https://img.shields.io/badge/Docker-Sandbox-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
 </p>
 
 ---
@@ -247,6 +255,27 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 | 🏗️ **部署形态** | ✅ **独立运行，自建服务** | ✅ 编辑器插件 | ⚠️ SaaS 锁定 | ⚠️ 纯框架 |
 
 > **一句话：Super Agent 是「有手的 AI」**——能聊天、能操作电脑、能管部署、能出视频。别的平台是「大脑」，Super Agent 是「大脑 + 双手」。
+
+---
+
+## 📈 Star 趋势
+
+<p align="center">
+  <a href="https://star-history.com/#Louis830903/Super-Loong&Date">
+    <img src="https://api.star-history.com/svg?repos=Louis830903/Super-Loong&type=Date" alt="Star History Chart" width="720" />
+  </a>
+</p>
+
+---
+
+## 🗺️ 路线图
+
+| 阶段 | 状态 | 内容 |
+|------|:----:|------|
+| 🏗️ **v0.1 Alpha** | ✅ 已完成 | 核心运行时 + 211 专家 + 记忆系统 + 三平台 IM + 安全沙箱 + MCP 生态 + 技能市场 |
+| 🚀 **v0.2 Beta** | 🔨 进行中 | FTS5 原生支持 · 记忆检索增强 · SSE 流稳定性 · A2A 跨进程打通 · 模型 Provider 扩展 |
+| 🎯 **v0.5 里程碑** | 📋 规划中 | 多模态 Agent 打通 · 视频生成端到端出片 · 分布式 Agent 协作 · 企业级权限系统 |
+| 🌟 **v1.0 正式版** | 💡 展望 | 插件市场 · 云端一键部署 · Agent 商店 · 社区贡献生态 |
 
 ---
 
@@ -526,6 +555,28 @@ pnpm dev:gateway   # 仅启动 IM 网关
 ```
 
 </details>
+
+---
+
+## 👥 贡献者
+
+<p align="center">
+  <a href="https://github.com/Louis830903/Super-Loong/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=Louis830903/Super-Loong" alt="Contributors" />
+  </a>
+</p>
+
+---
+
+## 🌍 社区与支持
+
+<p align="center">
+  <a href="https://github.com/Louis830903/Super-Loong/issues"><img src="https://img.shields.io/badge/💬-讨论%20%26%20建议-6366f1?style=for-the-badge&logo=github&labelColor=1f2937" alt="Discussions" /></a>
+  &nbsp;
+  <a href="https://github.com/Louis830903/Super-Loong/issues/new"><img src="https://img.shields.io/badge/🐛-报告%20Bug-f87171?style=for-the-badge&logo=github&labelColor=1f2937" alt="Bug Report" /></a>
+  &nbsp;
+  <a href="#"><img src="https://img.shields.io/badge/⭐-给个%20Star-fbbf24?style=for-the-badge&logo=github&labelColor=1f2937" alt="Star" /></a>
+</p>
 
 ---
 
