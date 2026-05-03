@@ -7,6 +7,7 @@ import {
   Brain, Search, Trash2, Clock, Plus, Pencil, Save,
   AlertTriangle, RefreshCw, X, BookOpen, Zap,
 } from "lucide-react";
+import { GuidedEmptyState } from "@/components/ui/guided-empty-state";
 
 import type { MemoryEntry } from "@/types/api-types";
 
@@ -246,10 +247,17 @@ export default function MemoryPage() {
           {loading ? (
             <div className="py-12 text-center text-zinc-500">加载中...</div>
           ) : memories.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-zinc-700 p-12 text-center">
-              <Brain className="mx-auto h-12 w-12 text-zinc-600" />
-              <p className="mt-4 text-zinc-400">暂无记忆数据</p>
-            </div>
+            <GuidedEmptyState
+              icon={Brain}
+              title="还没有记忆数据"
+              description="Agent 的记忆系统可以持久化保存对话中的重要信息，让 Agent 在后续对话中回忆起之前的上下文，实现跨会话的智能交互。"
+              steps={[
+                "创建记忆：手动添加关键信息，或让 Agent 在对话中自动记录",
+                "语义搜索：用自然语言搜索记忆，Agent 会自动匹配相关内容",
+                "管理核心记忆：为 Agent 设定必须记住的关键信息块",
+              ]}
+              action={{ label: "创建记忆", onClick: () => setShowCreate(true) }}
+            />
           ) : (
             <div className="space-y-3">
               {memories.map((mem) => (
@@ -328,10 +336,16 @@ export default function MemoryPage() {
             </button>
           </div>
           {coreBlocks.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-zinc-700 p-8 text-center">
-              <BookOpen className="mx-auto h-10 w-10 text-zinc-600" />
-              <p className="mt-3 text-zinc-400">暂无核心记忆块</p>
-            </div>
+            <GuidedEmptyState
+              icon={BookOpen}
+              title="还没有核心记忆块"
+              description="核心记忆块是 Agent 必须记住的关键信息，类似于 Agent 的「长期信念」。Agent 在每次对话中都会优先参考这些信息。"
+              steps={[
+                "选择一个 Agent，查看其当前的核心记忆块",
+                "编辑核心记忆块，设定 Agent 必须遵循的规则或记住的事实",
+                "例如：「用户偏好用中文回复」、「项目使用 React + TypeScript 技术栈」",
+              ]}
+            />
           ) : (
             <div className="space-y-3">
               {coreBlocks.map((block) => (
@@ -368,10 +382,17 @@ export default function MemoryPage() {
           {contradLoading ? (
             <div className="py-12 text-center text-zinc-500">检测中...</div>
           ) : contradictions.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-zinc-700 p-8 text-center">
-              <AlertTriangle className="mx-auto h-10 w-10 text-emerald-600" />
-              <p className="mt-3 text-zinc-400">未检测到矛盾记忆</p>
-            </div>
+            <GuidedEmptyState
+              icon={AlertTriangle}
+              title="未检测到矛盾记忆"
+              description="矛盾检测会扫描 Agent 的记忆库，找出逻辑上互相冲突的记忆条目（如「用户喜欢咖啡」和「用户不喝咖啡」），帮助你维护记忆的一致性。"
+              steps={[
+                "点击「重新检测」按钮开始扫描",
+                "系统会对比所有记忆条目，标记存在逻辑冲突的记忆对",
+                "对有矛盾的记忆进行编辑或删除，保持记忆库的一致性和准确性",
+              ]}
+              variant="success"
+            />
           ) : (
             <div className="space-y-4">
               {contradictions.map((pair, i) => (

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 import type { SkillProposal, EvolutionStats, Snapshot, NudgeConfig } from "@/types/api-types";
+import { FeatureBanner } from "@/components/ui/feature-banner";
 
 export default function EvolutionPage() {
   const [proposals, setProposals] = useState<SkillProposal[]>([]);
@@ -161,6 +162,23 @@ export default function EvolutionPage() {
           </button>
         </div>
       </div>
+
+      <FeatureBanner
+        pageId="evolution"
+        icon={Sparkles}
+        title="进化引擎"
+        description="进化引擎让 Agent 在交互过程中自动发现可复用的行为模式，生成技能提案供你审核。你可以批准、拒绝或应用提案，让 Agent 持续进化。"
+        useCases={[
+          "自动发现模式：Agent 检测到重复性工作后自动生成技能提案",
+          "技能提案审核：人工审核 Agent 生成的提案，批准后自动创建技能",
+          "快照管理：定期保存 Agent 进化状态，可回滚到历史版本",
+          "Nudge 配置：设置自动评审间隔，让进化引擎定时触发",
+        ]}
+        tips={[
+          "触发评审按钮会立即让 Agent 分析最近的交互，生成新提案",
+          "快照是 Agent 状态的完整备份，包含所有技能和记忆",
+        ]}
+      />
 
       {/* Stats */}
       {stats && (

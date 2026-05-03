@@ -6,6 +6,7 @@ import {
   Globe, ListTodo, Bell, Bug, RefreshCw, Loader2,
   CheckCircle, XCircle, AlertTriangle, Zap, Wifi, WifiOff,
 } from "lucide-react";
+import { FeatureBanner } from "@/components/ui/feature-banner";
 
 // ─── 类型定义 ──────────────────────────────────────────────────
 
@@ -78,6 +79,23 @@ export default function A2APage() {
             Agent-to-Agent 协议状态、远端 Agent 注册表与任务监控
           </p>
         </div>
+
+        <FeatureBanner
+          pageId="a2a"
+          icon={Globe}
+          title="A2A 协议管理"
+          description="A2A（Agent-to-Agent）协议让多个 Agent 节点之间可以相互发现、发送消息和协作完成任务。通过 A2A，你可以构建分布式的多 Agent 系统。"
+          useCases={[
+            "多节点协作：不同机器上的 Agent 通过 A2A 协议通信协作",
+            "远端 Agent 发现：自动发现网络中注册的其他 Agent 节点及其技能",
+            "任务委托：将复杂任务拆解后分发给不同的远端 Agent 执行",
+            "调试测试：通过调试面板直接向远端 Agent 发送测试消息",
+          ]}
+          tips={[
+            "设置环境变量 ENABLE_A2A=true 启用协议支持",
+            "Agent Card 展示当前节点对外暴露的能力和技能列表",
+          ]}
+        />
 
         {/* Tab 栏 */}
         <div className="flex gap-1 border-b border-zinc-800 mb-6">
