@@ -3,13 +3,19 @@
 
 发送方式：
 1. session_webhook 回复：在消息回调中通过 webhook URL 即时回复（首选，0延迟）
-2. 企业工作通知 API：通过 /topapi/message/corpconversation/asyncsend_v2 主动推送
-3. 媒体发送：先上传到 /media/upload，再通过工作通知发送
+2. 机器人 API（新 OAuth 2.0）：通过 api.dingtalk.com 的 robot API 主动推送
+   - 私聊: POST /v1.0/robot/oToMessages/batchSend
+   - 群聊: POST /v1.0/robot/groupMessages/send
+3. 媒体发送：先上传到 oapi.dingtalk.com/media/upload（旧端点仍可用），
+   再通过机器人 API 发送（msgKey + msgParam 格式）
 
-参考 adapters/dingtalk.py（DingTalkMediaAdapter）的 API 调用逻辑。
+已从旧的 oapi.dingtalk.com/gettoken + corpconversation/asyncsend_v2 全面升级到
+api.dingtalk.com + OAuth 2.0 标准。参考 jiuwenclaw/dingding.py。
 """
 
+import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -45,19 +51,24 @@ class DingTalkTokenManager(TokenManager):
         return bool(self._appkey and self._appsecret)
 
     async def _fetch_token(self) -> tuple[str, int]:
-        """从钉钉获取 access_token"""
+        """从钉钉获取 access_token（新 OAuth 2.0 API）"""
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-            resp = await client.get(
-                "https://oapi.dingtalk.com/gettoken",
-                params={"appkey": self._appkey, "appsecret": self._appsecret},
+            resp = await client.post(
+                "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+                json={"appKey": self._appkey, "appSecret": self._appsecret},
             )
             resp.raise_for_status()
             data = resp.json()
 
-        if data.get("errcode", 0) != 0:
-            raise RuntimeError(f"钉钉获取token失败: {data.get('errmsg', 'unknown')}")
+        # 新 API 返回 accessToken（驼峰命名），失败时无 errcode 字段
+        token = data.get("accessToken", "")
+        if not token:
+            raise RuntimeError(
+                f"钉钉获取token失败: {data.get('message', 'unknown')}"
+            )
 
-        return data["access_token"], data.get("expires_in", 7200)
+        expires_in = data.get("expireIn", 7200)
+        return token, expires_in
 
 
 class DingTalkOutbound:
@@ -66,7 +77,9 @@ class DingTalkOutbound:
 
     支持两种发送模式：
     1. session_webhook：直接回复消息（低延迟，推荐）
-    2. 工作通知 API：主动推送消息（需要 access_token + agent_id）
+    2. 机器人 API（新 OAuth 2.0）：主动推送消息（需 robot_code + accessToken）
+       - 私聊：POST /v1.0/robot/oToMessages/batchSend
+       - 群聊：POST /v1.0/robot/groupMessages/send
     """
 
     def __init__(self):
@@ -75,6 +88,8 @@ class DingTalkOutbound:
         self._client: Optional[httpx.AsyncClient] = None
         # 缓存最近一条消息的 session_webhook URL（由 gateway 回调设置）
         self._session_webhooks: dict[str, str] = {}  # chat_id → webhook_url
+        # 缓存会话类型（由 gateway 回调设置，供出站选择私聊/群聊 API）
+        self._conversation_types: dict[str, str] = {}  # chat_id → conversation_type
 
     def configure(self, config: ChannelConfig) -> None:
         """初始化配置（由 plugin 组装时调用）"""
@@ -87,6 +102,15 @@ class DingTalkOutbound:
         """缓存 session_webhook URL（由 gateway 消息回调设置）"""
         self._session_webhooks[chat_id] = webhook_url
 
+    def set_conversation_type(self, chat_id: str, conversation_type: str) -> None:
+        """缓存会话类型（供出站时选择正确的发送 API）"""
+        self._conversation_types[chat_id] = conversation_type
+
+    @staticmethod
+    def _auth_headers(token: str) -> dict[str, str]:
+        """构建新 API 的认证请求头（OAuth 2.0 Bearer Token）"""
+        return {"x-acs-dingtalk-access-token": token}
+
     # ── OutboundAdapter Protocol ──
 
     async def send_text(self, chat_id: str, text: str, **kwargs) -> SendResult:
@@ -97,16 +121,20 @@ class DingTalkOutbound:
         if webhook_url:
             return await self._send_via_webhook(webhook_url, text)
 
-        # 回退到工作通知 API
-        return await self._send_via_work_notice(chat_id, text)
+        # 回退到机器人 API（新接口，需区分私聊/群聊）
+        conversation_type = kwargs.get("conversation_type") or self._conversation_types.get(chat_id, "1")
+        return await self._send_via_robot_api(chat_id, text, conversation_type)
 
     async def send_media(self, chat_id: str, payload: MediaPayload) -> SendResult:
-        """发送媒体消息（上传+工作通知 API）"""
+        """发送媒体消息（旧上传端点 + 新机器人发送 API）"""
         try:
+            if not self._token_manager:
+                return SendResult(success=False, error="未配置 token 管理器")
+
             client = await self._ensure_client()
             token = await self._token_manager.get_token()
 
-            # 1. 上传媒体
+            # 1. 上传媒体（保留旧端点，jiuwenclaw 也是如此，media_id 可直接用于新 API）
             dingtalk_type = KIND_TO_DINGTALK_TYPE.get(payload.kind, "file")
             with open(payload.path, "rb") as f:
                 resp = await client.post(
@@ -122,29 +150,45 @@ class DingTalkOutbound:
 
             media_id = data.get("media_id", "")
 
-            # 2. 发送工作通知
-            msg = self._build_media_msg(dingtalk_type, media_id)
-            agent_id = self._config.credentials.get("agent_id", "0") if self._config else "0"
+            # 2. 构建新机器人 API 的 msgKey + msgParam
+            msg_key, msg_param = self._build_media_msg_param(dingtalk_type, media_id, payload.filename)
+
+            # 3. 根据会话类型选择发送端点
+            conversation_type = self._conversation_types.get(chat_id, "1")
+            robot_code = self._config.credentials.get("robot_code", "") if self._config else ""
+
+            if conversation_type == "2":
+                url = "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
+                body = {
+                    "robotCode": robot_code,
+                    "openConversationId": chat_id,
+                    "msgKey": msg_key,
+                    "msgParam": msg_param,
+                }
+            else:
+                url = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
+                body = {
+                    "robotCode": robot_code,
+                    "userIds": [chat_id],
+                    "msgKey": msg_key,
+                    "msgParam": msg_param,
+                }
 
             resp = await client.post(
-                "https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2",
-                params={"access_token": token},
-                json={
-                    "agent_id": agent_id,
-                    "userid_list": chat_id,
-                    "msg": msg,
-                },
+                url,
+                json=body,
+                headers=self._auth_headers(token),
             )
-            resp.raise_for_status()
+
+            if resp.status_code != 200:
+                error_msg = f"HTTP {resp.status_code}: {resp.text}"
+                logger.error("钉钉媒体发送失败: %s", error_msg)
+                return SendResult(success=False, error=error_msg)
+
             result = resp.json()
-
-            success = result.get("errcode", -1) == 0
-            if not success:
-                return SendResult(success=False, error=f"发送失败: {result.get('errmsg')}")
-
             return SendResult(
                 success=True,
-                message_id=str(result.get("task_id", "")),
+                message_id=result.get("processQueryKey", ""),
             )
 
         except Exception as e:
@@ -171,37 +215,69 @@ class DingTalkOutbound:
             logger.warning("钉钉 webhook 回复失败，回退到工作通知: %s", e)
             return SendResult(success=False, error=str(e))
 
-    async def _send_via_work_notice(self, chat_id: str, text: str) -> SendResult:
-        """通过工作通知 API 发送"""
+    async def _send_via_robot_api(
+        self, chat_id: str, text: str, conversation_type: str = "1"
+    ) -> SendResult:
+        """通过钉钉新版机器人 API 发送消息
+
+        新 API 区分私聊和群聊两个端点：
+        - 私聊 (conversation_type="1"): POST /v1.0/robot/oToMessages/batchSend
+        - 群聊 (conversation_type="2"): POST /v1.0/robot/groupMessages/send
+        """
         try:
             if not self._token_manager:
                 return SendResult(success=False, error="未配置 token 管理器")
 
             client = await self._ensure_client()
             token = await self._token_manager.get_token()
-            agent_id = self._config.credentials.get("agent_id", "0") if self._config else "0"
+            robot_code = self._config.credentials.get("robot_code", "") if self._config else ""
+
+            # 消息内容：使用 sampleMarkdown 格式（支持富文本，兼容纯文本）
+            msg_param = json.dumps({
+                "text": text,
+                "title": "Super Agent",
+            })
+
+            if conversation_type == "2":
+                # 群聊：需要 openConversationId
+                url = "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
+                body = {
+                    "robotCode": robot_code,
+                    "openConversationId": chat_id,
+                    "msgKey": "sampleMarkdown",
+                    "msgParam": msg_param,
+                }
+            else:
+                # 私聊：需要 userIds 列表
+                url = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
+                body = {
+                    "robotCode": robot_code,
+                    "userIds": [chat_id],
+                    "msgKey": "sampleMarkdown",
+                    "msgParam": msg_param,
+                }
 
             resp = await client.post(
-                "https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2",
-                params={"access_token": token},
-                json={
-                    "agent_id": agent_id,
-                    "userid_list": chat_id,
-                    "msg": {"msgtype": "text", "text": {"content": text}},
-                },
+                url,
+                json=body,
+                headers=self._auth_headers(token),
             )
-            resp.raise_for_status()
-            result = resp.json()
 
-            success = result.get("errcode", -1) == 0
+            if resp.status_code != 200:
+                error_msg = f"HTTP {resp.status_code}: {resp.text}"
+                logger.error("钉钉机器人 API 发送失败: %s", error_msg)
+                return SendResult(success=False, error=error_msg)
+
+            result = resp.json()
+            # 新 API 成功时不返回 processQueryKey 等字段即表示成功
+            logger.debug("钉钉消息已发送: chat=%s type=%s", chat_id, conversation_type)
             return SendResult(
-                success=success,
-                message_id=str(result.get("task_id", "")),
-                error="" if success else result.get("errmsg", ""),
+                success=True,
+                message_id=result.get("processQueryKey", ""),
             )
 
         except Exception as e:
-            logger.error("钉钉工作通知发送失败: %s", e)
+            logger.error("钉钉机器人 API 发送异常: %s", e)
             return SendResult(success=False, error=str(e))
 
     async def _ensure_client(self) -> httpx.AsyncClient:
@@ -211,16 +287,24 @@ class DingTalkOutbound:
         return self._client
 
     @staticmethod
-    def _build_media_msg(dingtalk_type: str, media_id: str) -> dict:
-        """构建钉钉媒体消息体"""
+    def _build_media_msg_param(dingtalk_type: str, media_id: str, filename: str = "") -> tuple[str, str]:
+        """构建新机器人 API 的 msgKey + msgParam（JSON 字符串）"""
         if dingtalk_type == "image":
-            return {"msgtype": "image", "image": {"media_id": media_id}}
+            return "sampleImageMsg", json.dumps({"photoURL": media_id})
         elif dingtalk_type == "voice":
-            return {"msgtype": "voice", "voice": {"media_id": media_id}}
+            return "sampleAudio", json.dumps({"mediaId": media_id})
         elif dingtalk_type == "video":
-            return {"msgtype": "video", "video": {"media_id": media_id}}
+            return "sampleVideo", json.dumps({"mediaId": media_id})
         else:
-            return {"msgtype": "file", "file": {"media_id": media_id}}
+            # file: 需要 fileName 和 fileType
+            ext = os.path.splitext(filename)[1].lower().lstrip(".") if filename else "stream"
+            if not ext:
+                ext = "stream"
+            return "sampleFile", json.dumps({
+                "mediaId": media_id,
+                "fileName": filename,
+                "fileType": ext,
+            })
 
     async def close(self) -> None:
         """关闭 HTTP 客户端"""

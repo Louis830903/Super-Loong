@@ -60,18 +60,19 @@ class DingTalkStatus:
         try:
             import httpx
             async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_ms / 1000)) as client:
-                resp = await client.get(
-                    "https://oapi.dingtalk.com/gettoken",
-                    params={"appkey": appkey, "appsecret": appsecret},
+                resp = await client.post(
+                    "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+                    json={"appKey": appkey, "appSecret": appsecret},
                 )
                 resp.raise_for_status()
                 data = resp.json()
 
-            if data.get("errcode", 0) == 0:
+            # 新 API 返回 accessToken（驼峰），成功时有该字段
+            if data.get("accessToken"):
                 result["reachable"] = True
                 result["token_valid"] = True
             else:
-                result["error"] = data.get("errmsg", "unknown error")
+                result["error"] = data.get("message", "unknown error")
 
         except Exception as e:
             result["error"] = str(e)

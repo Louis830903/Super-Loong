@@ -253,6 +253,12 @@ async def _make_message_handler(channel_id: str):
 
         logger.info(f"[{channel_id}] 消息: user={event.source.user_id} chat={event.source.chat_id} text={event.text[:50] if event.text else ''}...")
 
+        # 缓存会话类型供出站适配器使用（钉钉新 API 需区分私聊/群聊）
+        outbound = plugin.outbound_adapter
+        if hasattr(outbound, 'set_conversation_type') and event.source.chat_id:
+            conversation_type = "2" if event.source.is_group else "1"
+            outbound.set_conversation_type(event.source.chat_id, conversation_type)
+
         try:
             await pipeline.process(channel_id, event, capabilities=plugin.capabilities)
         except Exception as exc:
