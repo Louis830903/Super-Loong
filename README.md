@@ -186,6 +186,127 @@ graph TB
 
 ---
 
+## 🖥️ 系统操作能力
+
+Agent 不仅仅是"聊天机器人"——它能**像真人一样操作你的电脑**，接管鼠标键盘、操控窗口、执行运维部署。
+
+### 🖱️ 桌面精确控制
+
+分层混合 GUI 控制引擎，**8 大核心工具**覆盖所有桌面交互场景，支持 macOS / Linux / Windows 三平台：
+
+| 工具 | 能力 | 跨平台方案 |
+|------|------|------------|
+| `mouse_click` | 鼠标点击（左键/右键/中键） | macOS: `cliclick`，Linux: `xdotool`，Windows: PowerShell Win32 API |
+| `mouse_move` | 鼠标移动到指定坐标 | 同上，支持绝对坐标与相对位移 |
+| `mouse_drag` | 鼠标拖拽（起点→终点） | 支持拖拽文件、选区、滑块等 |
+| `mouse_scroll` | 滚轮滚动（上下/左右） | 精确控制滚动步长与方向 |
+| `keyboard_type` | 键盘输入文本（含中文） | 模拟逐键击键，支持 Unicode |
+| `keyboard_key` | 组合键/特殊键（Ctrl+C 等） | 支持修饰键 + 功能键组合 |
+| `window_focus` | 聚焦指定窗口 | 按标题/进程名匹配，自动切换焦点 |
+| `window_list` | 枚举所有窗口 | 返回窗口标题 + PID + 应用名列表 |
+
+```typescript
+// 示例：Agent 自主操作桌面
+await agent.use("mouse_click", { x: 500, y: 300, button: "left" });
+await agent.use("keyboard_type", { text: "你好，世界！" });
+await agent.use("window_focus", { title: "Visual Studio Code" });
+```
+
+### 🧠 Computer Use 视觉循环
+
+这是 **能力天花板**——Agent 通过「截屏 → 视觉推理 → 执行操作 → 再截屏」的闭环，像人类一样**看懂屏幕并自主操作**：
+
+```
+┌──────────┐    ┌──────────┐    ┌──────────┐
+│  📸 截屏  │ → │  🧠 推理  │ → │  🖱️ 执行  │
+│ screen   │    │ 视觉模型  │    │ 鼠标键盘  │
+│ _capture │    │ 分析画面  │    │ 操作      │
+└──────────┘    └──────────┘    └──────────┘
+       ↑                              │
+       └──────────── 循环 ────────────┘
+```
+
+- **最大 20 步安全上限**：防止无穷循环失控
+- **每步截图存档**：完整操作轨迹可回放审计
+- **Feature Flag 控制**：可按需开关，避免滥用
+
+### 📱 应用管理
+
+跨平台应用生命周期管理，**4 个工具**搞定一切应用操作：
+
+| 工具 | 能力 | 跨平台实现 |
+|------|------|------------|
+| `app_launch` | 启动应用程序 | macOS: `open -a`，Linux: `xdg-open`，Windows: `Start-Process` |
+| `app_quit` | 退出应用程序 | macOS: `osascript -e 'quit app'`，Linux/Windows: `taskkill` |
+| `app_list` | 列出运行中的应用 | 跨平台进程枚举 + 窗口匹配 |
+| `app_switch` | 切换到指定应用 | 组合 `window_focus` + 应用激活 |
+
+### 📸 屏幕捕获与 OCR
+
+Agent 能「看见」屏幕上的任何内容：
+
+| 工具 | 能力 | 说明 |
+|------|------|------|
+| `screen_capture` | 全屏 / 区域 / 窗口截图 | 输出 Base64 图片，直接喂给视觉模型 |
+| `screen_ocr` | 屏幕文字识别 | 截图后 OCR 提取文字，用于内容识别与校验 |
+
+### 🚀 运维部署工具链
+
+Agent 直接接管部署流水线，从代码拉取到健康检查一气呵成：
+
+| 工具 | 能力 | 智能策略 |
+|------|------|----------|
+| `deploy_git_pull` | 拉取最新代码 | 自动处理冲突、子模块更新 |
+| `deploy_build` | 构建项目 | 自动检测技术栈：Node(pnpm/npm) / Python(uv/pip) / Go / Rust |
+| `deploy_restart` | 重启服务 | 自动检测运行方式：pm2 / systemctl / docker |
+| `deploy_rollback` | 部署回滚 | git checkout HEAD~1 / revert / 备份还原 |
+| `deploy_healthcheck` | 健康检查 | HTTP curl + 进程存活双重验证 |
+
+```bash
+# Agent 一句话完成全链路部署
+deploy_git_pull → deploy_build → deploy_restart → deploy_healthcheck ✅
+```
+
+### 🐳 Docker 容器管理
+
+完整容器生命周期管理，同时兼容 **Docker** 和 **Podman**：
+
+| 工具 | 能力 |
+|------|------|
+| `docker_ps` | 容器列表 + 状态 + 资源占用 |
+| `docker_logs` | 实时/历史日志查看 |
+| `docker_exec` | 容器内执行命令 |
+| `docker_lifecycle` | 启动 / 停止 / 重启 / 删除容器 |
+| `docker_images` | 镜像列表 + 清理 |
+| `docker_compose` | `docker compose up/down/ps/logs` 一键编排 |
+
+### 🌐 网络诊断工具组
+
+网络排障一站通，**5 个经典诊断工具**内置：
+
+| 工具 | 能力 | 场景 |
+|------|------|------|
+| `net_ping` | ICMP 连通性测试 | 判断主机是否可达 |
+| `net_traceroute` | 路由追踪 | 定位网络瓶颈在哪一跳 |
+| `net_ports` | 端口占用检测 (`ss`/`lsof`) | 排查端口冲突 |
+| `net_dns` | DNS 解析 (`nslookup`) | 域名解析问题排查 |
+| `net_curl` | HTTP 请求测试 | 接口连通性 + 响应内容检查 |
+
+### ⚙️ 服务与定时任务
+
+系统级服务管理，支持 macOS(`launchctl`) / Linux(`systemctl`) / Windows(`Get-Service`)：
+
+| 工具 | 能力 |
+|------|------|
+| `service_status` | 查看服务运行状态 |
+| `service_control` | 启动 / 停止 / 重启系统服务 |
+| `service_logs` | 查看服务日志 |
+| `cron_manage` | 定时任务管理（crontab / launchd / Task Scheduler） |
+
+> **一句话总结**：从鼠标键盘到 Docker 部署，从截屏 OCR 到网络诊断——Super Agent 具备**完整的生产级电脑操控能力**，是真正的「数字员工」而非聊天玩具。
+
+---
+
 ## ⚡ 一键启动
 
 ### 📋 环境要求
@@ -319,16 +440,64 @@ pnpm dev:gateway   # 仅启动 IM 网关
 
 ---
 
-## 🤝 贡献
+## 📜 开源协议
 
-欢迎提交 Issue、PR 或 Star ⭐！详见 [CONTRIBUTING.md](CONTRIBUTING.md)（如有）。
+Super Agent 采用 **MIT License** —— 业界最宽松的开源协议之一，在**保留版权声明**的前提下，赋予你最大的使用自由。
+
+### 你拥有以下权利
+
+| 权利 | 说明 |
+|------|------|
+| 🆓 **免费商用** | 可用于商业项目、SaaS 产品、企业内部工具，无需付费 |
+| ✂️ **自由修改** | 可以修改、定制、二次开发，无需公开你的改动 |
+| 📦 **自由分发** | 可以作为独立产品或嵌入到你的项目中分发 |
+| 🔗 **闭源使用** | 修改后的代码可以选择不开源，没有 "传染性" Copyleft 限制 |
+| 🔀 **子许可** | 可以在你的产品中以其他协议重新许可 |
+
+### 你需要注意
+
+| 注意事项 | 说明 |
+|----------|------|
+| 📋 **保留版权声明** | 分发时需保留原始 MIT License 声明和版权信息 |
+| ⚠️ **无担保** | 软件按"原样"提供，作者不承担任何质量或适用性担保 |
+| 🛡️ **无责任** | 因使用本软件产生的任何损失，作者不承担法律责任 |
+
+### 第三方依赖
+
+本项目依赖的第三方库（React、Next.js、Fastify、Python 生态等）遵循各自的许可证。使用前请确认各依赖的许可证条款与你的用途兼容。
+
+### 全文
+
+完整许可证文本请参阅 [LICENSE](LICENSE) 文件。
+
+```
+MIT License
+
+Copyright (c) 2026 Louis830903
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND...
+```
 
 ---
+
+## 🤝 贡献
+
+欢迎提交 Issue、PR 或 Star ⭐！
 
 <div align="center">
 
 **[📖 文档](docs/)** · **[🐛 报告问题](https://github.com/Louis830903/Super-Loong/issues)** · **[💡 功能建议](https://github.com/Louis830903/Super-Loong/issues)**
 
-<sub>Made with ❤️ by the Super Agent Team · MIT License</sub>
+<sub>Made with ❤️ by the Super Agent Team</sub>
 
 </div>
