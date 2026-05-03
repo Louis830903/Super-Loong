@@ -214,6 +214,9 @@ export class GatewayLauncher {
         ...(this.deps ? { PATH: this.deps.spawnEnv.PATH } : {}),
         // 确保 Python 无缓冲输出
         PYTHONUNBUFFERED: "1",
+        // 强制 Python UTF-8 输出（修复 Windows 中文乱码"锟斤拷"）
+        PYTHONIOENCODING: "utf-8",
+        PYTHONUTF8: "1",
       },
     });
 
@@ -228,7 +231,13 @@ export class GatewayLauncher {
     child.stderr?.on("data", (data: Buffer) => {
       const lines = data.toString().trim().split("\n");
       for (const line of lines) {
-        logger.error(`[IM-Gateway] ${line}`);
+        // 智能分级：真正的错误栈保留 ERROR，常规诊断信息降为 WARN
+        // Python 生态中 Uvicorn 等框架将启动日志写入 stderr，全量 ERROR 造成噪音
+        if (/Traceback|Error:|FATAL|CRITICAL/i.test(line)) {
+          logger.error(`[IM-Gateway] ${line}`);
+        } else {
+          logger.warn(`[IM-Gateway] ${line}`);
+        }
       }
     });
 

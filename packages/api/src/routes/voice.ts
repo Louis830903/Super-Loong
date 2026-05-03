@@ -117,18 +117,25 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
       }
 
       // 第二优先级：Whisper 兼容 API（如果有 STT_API_KEY）
+      // 保留 LLM_API_KEY → STT_API_KEY 的 fallback，因为 OpenAI 等主流 API 同时支持 Chat + Whisper
       if (STT_API_KEY) {
-        const result = await whisperTranscribe(audioBuffer, language, format);
-        if (result && result.text) {
-          app.log.info("STT via Whisper API OK (%d chars)", result.text.length);
+        try {
+          const result = await whisperTranscribe(audioBuffer, language, format);
+          if (result && result.text) {
+            app.log.info("STT via Whisper API OK (%d chars)", result.text.length);
+            return result;
+          }
+        } catch (whisperErr: any) {
+          app.log.warn({ err: whisperErr },
+            "Whisper API transcription failed (your LLM provider may not support STT)");
         }
-        return result;
       }
 
-      // 两个都没配 → 503
+      // 两个都没配（或都失败）→ 503
       return reply.status(503).send({
         error: "语音识别未配置",
-        message: "请在系统设置中配置阿里云语音（AccessKey + AppKey），或设置 STT_API_KEY 环境变量使用 Whisper API",
+        detail: "阿里云语音需配置 AccessKey，Whisper API 需设置 STT_API_KEY",
+        hint: "Kimi/Moonshot 等部分 LLM API 不支持语音识别端点。如使用 OpenAI，其 API Key 可同时用于 Chat 和 Whisper。",
       });
     } catch (err: any) {
       app.log.error({ err }, "Voice transcription failed");

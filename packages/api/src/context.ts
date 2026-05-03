@@ -262,6 +262,35 @@ export async function createAppContext(): Promise<AppContext> {
   const configStore = initConfigStore();
   logger.info("ConfigStore initialized and synced from env");
 
+  // ── 凭据配置状态汇总 ──
+  // 检查哪些 Provider 有记录但缺少 API Key（通常是密钥升级后安全清空的残损记录）
+  (() => {
+    const allProviders = providerStore.list();
+    const missingProviders = allProviders.filter(p => !p.apiKey);
+    if (missingProviders.length > 0) {
+      const names = missingProviders.map(p => {
+        const cat = getProviderById(p.id);
+        return cat?.name || p.id;
+      }).join(" / ");
+      logger.warn(
+        "以下 Provider 的 API Key 需要重新配置（密钥升级后已安全清空）：\n" +
+        `    ${names}\n` +
+        "  → 前往 Settings → Providers 页面手动输入",
+      );
+    }
+
+    const allServices = configStore.listServices();
+    const unconfiguredServices = allServices.filter(s => !s.configured);
+    if (unconfiguredServices.length > 0) {
+      const svcNames = unconfiguredServices.map(s => s.name).join(" / ");
+      logger.warn(
+        "以下服务的凭据需要重新配置：\n" +
+        `    ${svcNames}\n` +
+        "  → 前往 Settings → Services 页面手动输入",
+      );
+    }
+  })();
+
   // ── 启动时从 ConfigStore 恢复 Feature Flag → process.env ──
   // UI 设置页面修改的 Flag 会持久化到 ConfigStore，启动时需要恢复到 process.env
   // 以便后续的 getAllBuiltinTools() 能正确读取

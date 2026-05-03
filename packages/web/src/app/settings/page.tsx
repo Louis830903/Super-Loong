@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/utils";
 import {
   Settings, Save, Key, Globe, CheckCircle2, XCircle, ChevronDown, ChevronUp,
   Zap, ExternalLink, Loader2, RefreshCw, Wrench, Search, Database, Shield, Info,
-  ToggleLeft, ToggleRight, Terminal, Trash2, ArrowRightLeft,
+  ToggleLeft, ToggleRight, Terminal, Trash2, ArrowRightLeft, AlertTriangle,
 } from "lucide-react";
 import { MigrationCard } from "@/components/settings/migration-card";
 
@@ -274,6 +274,8 @@ export default function SettingsPage() {
   // 统计已配置的 provider 数和服务数
   const configuredProviders = providers.filter((p) => p.keyStatus === "configured").length;
   const configuredServices = services.filter((s) => s.configured).length;
+  // 有数据库记录但缺少 API Key 的 provider（通常是密钥升级后安全清空的残损记录）
+  const missingKeyProviders = providers.filter(p => p.keyStatus === "missing" && providers.length > 0);
 
   return (
     <div className="space-y-6">
@@ -299,6 +301,24 @@ export default function SettingsPage() {
           <p className="mt-1 text-xs text-zinc-500">
             推荐：<strong className="text-zinc-300">DeepSeek</strong>（性价比高）或
             <strong className="text-zinc-300">千问</strong>（同时启用向量检索增强）
+          </p>
+        </div>
+      )}
+
+      {/* 凭据清空复原引导：有已配置的 Provider，但部分 Provider 存在数据库记录却无 API Key（密钥升级后安全清空） */}
+      {configuredProviders > 0 && missingKeyProviders.length > 0 && (
+        <div className="rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent px-5 py-4">
+          <p className="text-sm font-medium text-amber-400 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" /> 凭据需要重新配置
+          </p>
+          <p className="mt-1.5 text-sm text-zinc-300 leading-relaxed">
+            检测到以下 Provider 的 API Key 因密钥升级已安全清空，请重新填入：
+          </p>
+          <p className="mt-1.5 text-xs text-zinc-400">
+            {missingKeyProviders.map(p => p.name).join(" · ")}
+          </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            点击下方对应卡片，填入 API Key 并保存后即可恢复使用
           </p>
         </div>
       )}
