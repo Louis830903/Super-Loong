@@ -10,6 +10,7 @@
 
 import { spawn, type ChildProcess } from "child_process";
 import path from "node:path";
+import { ensureGatewayDeps, type GatewayDepsResult } from "@super-agent/core";
 
 export class GatewayLauncher {
   private process: ChildProcess | null = null;
@@ -17,6 +18,8 @@ export class GatewayLauncher {
   private maxRestarts = 5;
   private isRunning = false;
   private gatewayDir: string;
+  /** 自举结果（首次启动时自动完成 Python venv + 依赖安装），null 表示跳过自举（降级到系统 python） */
+  private deps: GatewayDepsResult | null = null;
 
   constructor() {
     // Gateway 目录：相对于 monorepo 根 (../../services/im-gateway)
@@ -36,6 +39,19 @@ export class GatewayLauncher {
     try {
       this.isRunning = true;
       this.restartAttempts = 0;
+
+      // 自举 IM Gateway 的 Python venv + 依赖（首次自动安装，幂等）
+      // 失败不阻塞：降级到直接用系统 python，Gateway 可能因缺依赖而崩溃但不会影响 API 主流程
+      try {
+        this.deps = await ensureGatewayDeps({ gatewayDir: this.gatewayDir });
+        console.log(
+          `[GatewayLauncher] venv 就绪 (python: ${this.deps.pythonVersion}, dir: ${this.deps.venvDir})`,
+        );
+      } catch (err) {
+        console.warn("[GatewayLauncher] 自举失败，回退到系统 python:", (err as Error).message);
+        this.deps = null;
+      }
+
       this._spawn();
       await this._waitForReady();
       console.log(`[GatewayLauncher] IM Gateway started and ready (dir: ${this.gatewayDir})`);
@@ -90,13 +106,20 @@ export class GatewayLauncher {
   }
 
   private _spawn(): void {
-    // 使用 python 启动 server.py
-    const pythonCmd = process.platform === "win32" ? "python" : "python3";
+    // 自举成功则用 venv 中的 python，否则回退到系统 python
+    const pythonCmd = this.deps
+      ? (process.platform === "win32"
+        ? path.join(this.deps.venvDir, "Scripts", "python.exe")
+        : path.join(this.deps.venvDir, "bin", "python"))
+      : (process.platform === "win32" ? "python" : "python3");
+
     const child = spawn(pythonCmd, ["-u", "server.py"], {
       cwd: this.gatewayDir,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
+        // 自举成功时注入 venv 的 PATH
+        ...(this.deps ? { PATH: this.deps.spawnEnv.PATH } : {}),
         // 确保 Python 无缓冲输出
         PYTHONUNBUFFERED: "1",
       },

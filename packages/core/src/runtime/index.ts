@@ -30,3 +30,10 @@ export type {
   KbParserDepsResult,
   KbParserBootstrapOptions,
 } from "./kb-parser-bootstrap.js";
+
+// IM Gateway sidecar 环境自举
+export { ensureGatewayDeps } from "./gateway-bootstrap.js";
+export type {
+  GatewayDepsResult,
+  GatewayBootstrapOptions,
+} from "./gateway-bootstrap.js";

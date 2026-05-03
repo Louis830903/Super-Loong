@@ -22,6 +22,7 @@
     "nextjs"
   ],
   "scripts": {
+    "setup": "tsx scripts/setup.ts",
     "dev": "pnpm -r --parallel dev",
     "dev:api": "pnpm --filter @super-agent/api dev",
     "dev:web": "pnpm --filter @super-agent/web dev",
