@@ -60,7 +60,7 @@ class AgentRouter:
         三级规则链解析 Agent ID
 
         Args:
-            platform: 平台标识 (feishu/wecom/dingtalk/weixin)
+            platform: 平台标识 (feishu/wecom/dingtalk)
             chat_id: 聊天/群 ID
             user_id: 用户 ID
 

@@ -92,7 +92,7 @@ class AdapterManager:
         注册并启动一个平台适配器
 
         Args:
-            platform_name: 平台名称 (wecom/feishu/dingtalk/weixin/telegram/...)
+            platform_name: 平台名称 (wecom/feishu/dingtalk)
             config: 平台配置字典
 
         Returns:
@@ -318,21 +318,6 @@ class AdapterManager:
             elif platform_name == "dingtalk":
                 from gateway.platforms.dingtalk import DingTalkAdapter
                 return DingTalkAdapter(platform_config)
-            elif platform_name == "weixin":
-                from gateway.platforms.weixin import WeixinAdapter
-                return WeixinAdapter(platform_config)
-            elif platform_name == "telegram":
-                from gateway.platforms.telegram import TelegramAdapter
-                return TelegramAdapter(platform_config)
-            elif platform_name == "discord":
-                from gateway.platforms.discord import DiscordAdapter
-                return DiscordAdapter(platform_config)
-            elif platform_name == "slack":
-                from gateway.platforms.slack import SlackAdapter
-                return SlackAdapter(platform_config)
-            elif platform_name == "webhook":
-                from gateway.platforms.webhook import WebhookAdapter
-                return WebhookAdapter(platform_config)
             else:
                 logger.error("未知平台", platform=platform_name)
                 return None
@@ -377,9 +362,4 @@ class AdapterManager:
             {"id": "wecom", "name": "企业微信", "requires": ["WECOM_BOT_ID", "WECOM_SECRET"]},
             {"id": "feishu", "name": "飞书", "requires": ["FEISHU_APP_ID", "FEISHU_APP_SECRET"]},
             {"id": "dingtalk", "name": "钉钉", "requires": ["DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"]},
-            {"id": "weixin", "name": "微信", "requires": ["WEIXIN_ACCOUNT_ID"]},
-            {"id": "telegram", "name": "Telegram", "requires": ["TELEGRAM_BOT_TOKEN"]},
-            {"id": "discord", "name": "Discord", "requires": ["DISCORD_BOT_TOKEN"]},
-            {"id": "slack", "name": "Slack", "requires": ["SLACK_BOT_TOKEN"]},
-            {"id": "webhook", "name": "Webhook", "requires": []},
         ]

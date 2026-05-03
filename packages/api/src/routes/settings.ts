@@ -13,6 +13,7 @@ import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
 import { requirePermission } from "../auth/index.js";
 import { getConfigStore, invalidateToolCache, getAllBuiltinTools, builtinTools, injectSysopsSecurityRules } from "@super-agent/core";
+import { previewMigration, executeMigration } from "../services/openclaw-migration.js";
 
 /** 支持的 Feature Flag 列表及其描述 */
 const FLAG_DEFS = [
@@ -144,6 +145,32 @@ export async function settingsRoutes(app: FastifyInstance, _ctx: AppContext) {
 
     app.log.info({ updated }, "Feature flags updated (persisted to ConfigStore)");
     return reply.send({ flags, updated });
+  });
+
+  // ─── GET /api/migration/preview ──────────────────────────
+  // 预览 OpenClaw 数据迁移（纯只读，不写任何文件）
+  app.get("/api/migration/preview", {
+    preHandler: requirePermission("*"),
+  }, async (_req, reply) => {
+    const report = previewMigration();
+    return reply.send(report);
+  });
+
+  // ─── POST /api/migration/execute ──────────────────────────
+  // 执行 OpenClaw 数据迁移
+  app.post("/api/migration/execute", {
+    preHandler: requirePermission("*"),
+  }, async (req, reply) => {
+    const { overwrite } = (req.body ?? {}) as { overwrite?: boolean };
+    const report = executeMigration({ overwrite: overwrite ?? false });
+
+    // ── 迁移完成后刷新技能加载器 ──
+    if (report.success) {
+      _ctx.skillLoader.loadAll();
+      app.log.info("Skills reloaded after OpenClaw migration");
+    }
+
+    return reply.send(report);
   });
 
   app.log.info("Settings routes registered");
