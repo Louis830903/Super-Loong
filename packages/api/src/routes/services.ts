@@ -9,7 +9,7 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import { SERVICE_CATALOG } from "@super-agent/core";
+import { SERVICE_CATALOG, syncEnvVarToFile } from "@super-agent/core";
 import type { AppContext } from "../context.js";
 import type { ServiceCatalogEntry, ServiceInfo } from "@super-agent/core";
 
@@ -47,6 +47,34 @@ export async function serviceRoutes(app: FastifyInstance, ctx: AppContext) {
       for (const [key, value] of Object.entries(body)) {
         if (validKeys.includes(key) && value !== undefined) {
           ctx.configStore.set(id, key, value);
+
+          // 同步到 .env 文件和 process.env，确保 Python 子进程（video-forge 等）能读取
+          const keyDef = catalog.keys.find((k) => k.key === key);
+          if (keyDef?.envKey && value) {
+            process.env[keyDef.envKey] = value;
+            syncEnvVarToFile(keyDef.envKey, value);
+
+            // RunningHub API Key 热更新：通知 Python video-forge 服务即时生效，无需重启
+            if (id === "runninghub" && keyDef.envKey === "RUNNINGHUB_API_KEY") {
+              const vfUrl = process.env.VIDEO_FORGE_URL || "http://127.0.0.1:8199";
+              try {
+                const resp = await fetch(`${vfUrl}/admin/reload-config`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ runninghub_api_key: value }),
+                  signal: AbortSignal.timeout(5000),
+                });
+                if (resp.ok) {
+                  console.log("[services] RunningHub API Key 已同步到 Python video-forge 服务（热更新）");
+                } else {
+                  console.warn("[services] Python video-forge 热更新返回非 200:", resp.status);
+                }
+              } catch (err: any) {
+                // video-forge 可能未启动或不可达，不影响主流程
+                console.warn("[services] Python video-forge 热更新通知失败（服务可能未启动）:", err.message);
+              }
+            }
+          }
         }
       }
       // 返回更新后的状态

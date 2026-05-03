@@ -160,5 +160,5 @@ export { systemDataTools } from "./system.js";
 export { configureTools } from "./configure.js";
 export { gitTools } from "./git-tools.js";
 export { productivityTools } from "./productivity.js";
-export { ConfigStore, SERVICE_CATALOG, getConfigStore, initConfigStore } from "./config-store.js";
+export { ConfigStore, SERVICE_CATALOG, getConfigStore, initConfigStore, syncEnvVarToFile } from "./config-store.js";
 export type { ServiceCatalogEntry, ServiceKeyDef, ServiceInfo } from "./config-store.js";

@@ -10,6 +10,8 @@
  */
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import pino from "pino";
 import { getDatabase, scheduleSave } from "../persistence/sqlite.js";
 import { getEncryptionKey, decryptWithFallback } from "../security/encryption-key.js";
@@ -146,6 +148,19 @@ export const SERVICE_CATALOG: ServiceCatalogEntry[] = [
       { key: "base_url", label: "Base URL", envKey: "VISION_BASE_URL", secret: false,
         default: "https://ark.cn-beijing.volces.com/api/v3" },
       { key: "model", label: "模型 ID", envKey: "VISION_MODEL", secret: false },
+    ],
+  },
+  {
+    id: "runninghub",
+    name: "RunningHub AI",
+    description: "ComfyUI 云端工作流（视频生成 / 图片生成 / TTS）",
+    website: "https://www.runninghub.com",
+    keys: [
+      {
+        key: "api_key", label: "API Key", envKey: "RUNNINGHUB_API_KEY", secret: true,
+        hint: "在 runninghub.com 注册并开通会员后获取，用于云端视频/图片/TTS 生成",
+        helpUrl: "https://www.runninghub.com",
+      },
     ],
   },
 ];
@@ -381,6 +396,70 @@ export class ConfigStore {
       scheduleSave();
       logger.info({ migrated }, "[migration] Service configs re-encrypted with current SA_ENCRYPTION_KEY");
     }
+  }
+}
+
+// ─── .env 文件同步工具 ─────────────────────────────
+
+/**
+ * 将单个环境变量写入项目根目录的 .env 文件。
+ *
+ * 用于设置页面保存服务配置后，将 Key 持久化到 .env，
+ * 确保 Python 子进程（video-forge / IM Gateway 等）启动时能读到。
+ *
+ * 策略：如果 .env 中已有该 KEY=xxx 行，则原地更新；否则追加到文件末尾。
+ * 空值不写入（避免产生 KEY= 空行）。
+ *
+ * @param envKey   环境变量名（如 "RUNNINGHUB_API_KEY"）
+ * @param value    环境变量值
+ */
+export function syncEnvVarToFile(envKey: string, value: string): void {
+  // 空值不写入 .env，避免覆盖已有的有效值
+  if (!envKey || !value) return;
+
+  try {
+    // .env 文件位于 monorepo 根目录（与 package.json 同级）
+    const envPath = path.resolve(process.cwd(), ".env");
+
+    let lines: string[] = [];
+    if (fs.existsSync(envPath)) {
+      lines = fs.readFileSync(envPath, "utf-8").split("\n");
+    }
+
+    // 查找已存在的行并原地更新
+    let found = false;
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      // 精确匹配 KEY= 或 KEY =（允许等号前后有空格），忽略注释行
+      // 使用正则避免 RUNNINGHUB_API_KEY 误匹配 RUNNINGHUB_API_KEY_BACKUP
+      if (!trimmed.startsWith("#") && /^[A-Z_]+[ ]*=/.test(trimmed)) {
+        const eqIdx = trimmed.indexOf("=");
+        const existingKey = trimmed.substring(0, eqIdx).trim();
+        if (existingKey === envKey) {
+          lines[i] = `${envKey}=${value}`;
+          found = true;
+          break;
+        }
+      }
+    }
+
+    // 未找到则追加
+    if (!found) {
+      // 确保最后一行是空行（如果有内容的话）
+      if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
+        lines.push("");
+      }
+      lines.push(`# RunningHub AI 视频/图片/TTS 云端生成`);
+      lines.push(`${envKey}=${value}`);
+    }
+
+    // 原子写入：先写临时文件再 rename
+    const tmpPath = envPath + ".tmp";
+    fs.writeFileSync(tmpPath, lines.join("\n") + "\n", "utf-8");
+    fs.renameSync(tmpPath, envPath);
+    logger.info({ envKey }, "已同步环境变量到 .env 文件");
+  } catch (err) {
+    logger.warn({ err, envKey }, "同步 .env 文件失败（不影响功能，仅作为持久化兜底）");
   }
 }
 

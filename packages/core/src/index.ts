@@ -428,7 +428,7 @@ export type { MCPServerConfig, MCPTool, MCPServerStatus, MCPServerInfo, MCPAuthC
 export { builtinTools, getAllBuiltinTools, invalidateToolCache, getToolsByCategory, filesystemTools, codeExecTools, webTools, systemDataTools, configureTools, gitTools, productivityTools } from "./tools/index.js";
 
 // Service ConfigStore (对话式配置持久化)
-export { ConfigStore, SERVICE_CATALOG, getConfigStore, initConfigStore } from "./tools/index.js";
+export { ConfigStore, SERVICE_CATALOG, getConfigStore, initConfigStore, syncEnvVarToFile } from "./tools/index.js";
 export type { ServiceCatalogEntry, ServiceKeyDef, ServiceInfo } from "./tools/index.js";
 
 // Cron Scheduler

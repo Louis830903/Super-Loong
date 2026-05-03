@@ -68,6 +68,7 @@ def _ensure_ffmpeg_on_path() -> None:
 _ensure_ffmpeg_on_path()
 
 from app.api.health import router as health_router  # noqa: E402
+from app.api.admin import router as admin_router  # noqa: E402
 from app.api.media import router as media_router  # noqa: E402
 from app.api.compose import router as compose_router  # noqa: E402
 from app.api.analysis import router as analysis_router  # noqa: E402
@@ -101,6 +102,7 @@ app = FastAPI(
 
 # 挂载路由
 app.include_router(health_router)
+app.include_router(admin_router)
 app.include_router(media_router, prefix="/forge")
 app.include_router(compose_router, prefix="/forge")
 app.include_router(analysis_router, prefix="/forge")

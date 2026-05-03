@@ -9,7 +9,9 @@ comfyui:
   comfyui_api_key: ""
 
   # RunningHub 配置（Phase 1 核心）
-  runninghub_api_key: "8a83e0e189e1423a8e8424714557e4dc"  # RunningHub API Key
+  # ⚠️ API Key 请通过 Web UI「设置 → 服务配置 → RunningHub AI」页面配置，不要在此硬编码
+  # 读取优先级：config.yaml 中的值（若非空） → 环境变量 RUNNINGHUB_API_KEY（Web UI 写入 .env）
+  runninghub_api_key: ""  # 留空，由 Web UI 的 RUNNINGHUB_API_KEY 环境变量提供
   runninghub_concurrent_limit: 1  # 并发上限（普通会员 1，高级可调至 5）
 
   # TTS 配置

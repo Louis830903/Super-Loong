@@ -10,6 +10,7 @@ MiniCore — 轻量核心路由（替代 PixelleVideoCore 在微服务场景的�
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -82,9 +83,15 @@ class MiniCore:
     # ------------------------------------------------------------------
 
     def _get_comfykit_config(self) -> dict:
-        """从 config 中提取 ComfyKit 连接参数。"""
-        # 每次调用都重读最新配置以支持热重载
-        self.config = self._load_config(self.config_path)
+        """从内存配置中提取 ComfyKit 连接参数。
+
+        不使用 _load_config() 重读文件——admin.py 的 /admin/reload-config 热更
+        端点直接修改 self.config 内存字典，重读文件会覆盖热更写入的值。
+        如需从文件重载，请显式调用 reload_config()。
+
+        runninghub_api_key 优先用 config.yaml 中的值；
+        若为空则回退到 os.environ（由 .env 或 /admin/reload-config 热更设置）。
+        """
         comfyui_cfg = self.config.get("comfyui", {})
 
         kit_cfg: dict = {}
@@ -92,8 +99,10 @@ class MiniCore:
             kit_cfg["comfyui_url"] = comfyui_cfg["comfyui_url"]
         if comfyui_cfg.get("comfyui_api_key"):
             kit_cfg["api_key"] = comfyui_cfg["comfyui_api_key"]
-        if comfyui_cfg.get("runninghub_api_key"):
-            kit_cfg["runninghub_api_key"] = comfyui_cfg["runninghub_api_key"]
+        # runninghub_api_key: config.yaml 优先，空则回退到环境变量
+        rh_key = comfyui_cfg.get("runninghub_api_key") or os.environ.get("RUNNINGHUB_API_KEY", "")
+        if rh_key:
+            kit_cfg["runninghub_api_key"] = rh_key
         instance_type = comfyui_cfg.get("runninghub_instance_type")
         if instance_type and str(instance_type).strip():
             kit_cfg["runninghub_instance_type"] = instance_type
@@ -138,6 +147,23 @@ class MiniCore:
     def comfykit_ready(self) -> bool:
         """ComfyKit 是否已初始化（不触发懒创建）。"""
         return self._comfykit is not None
+
+    async def reset_comfykit(self) -> None:
+        """
+        强制重置 ComfyKit 缓存，下次请求时自动用最新配置重建。
+
+        供 /admin/reload-config 热更新端点调用，避免外部代码直接操作
+        私有属性 _comfykit / _comfykit_config_hash。
+        """
+        if self._comfykit is not None:
+            logger.info("检测到已有 ComfyKit 实例，标记为待重建...")
+            try:
+                await self._comfykit.close()
+            except Exception as e:
+                logger.warning(f"关闭旧 ComfyKit 实例失败（不影响功能）: {e}")
+            self._comfykit = None
+            self._comfykit_config_hash = None
+            logger.info("ComfyKit 缓存已清除，下次请求将用新 Key 重建")
 
     # ------------------------------------------------------------------
     # 生命周期
