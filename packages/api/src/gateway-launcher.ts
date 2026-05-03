@@ -8,7 +8,8 @@
  * - API 关闭时优雅终止 Gateway 子进程
  */
 
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, execSync, type ChildProcess } from "child_process";
+import { createServer } from "node:net";
 import path from "node:path";
 import pino from "pino";
 import { ensureGatewayDeps, type GatewayDepsResult } from "@super-agent/core";
@@ -38,6 +39,9 @@ export class GatewayLauncher {
    */
   async start(): Promise<void> {
     if (this.isRunning) return;
+
+    // 启动前先清理可能残留的旧进程（防孤儿进程端口占用）
+    await this._freePort();
 
     try {
       this.isRunning = true;
@@ -106,6 +110,91 @@ export class GatewayLauncher {
   /** 获取 Gateway PID */
   get pid(): number | null {
     return this.process?.pid ?? null;
+  }
+
+  /**
+   * 释放 Gateway 端口：检测是否被旧孤儿进程占用，自动清理
+   * 防止上次异常退出后孤儿进程持续占用端口导致新 Gateway 无法启动
+   */
+  private async _freePort(): Promise<void> {
+    const gatewayUrl = process.env.IM_GATEWAY_URL || "http://localhost:8642";
+    const port = parseInt(new URL(gatewayUrl).port || "8642", 10);
+
+    // 检查端口是否空闲（尝试监听，成功则立即关闭）
+    const isPortFree = (): Promise<boolean> =>
+      new Promise((resolve) => {
+        const server = createServer();
+        server.once("error", () => resolve(false));
+        server.once("listening", () => {
+          server.close(() => resolve(true));
+        });
+        server.listen(port, "0.0.0.0");
+      });
+
+    if (await isPortFree()) return;
+
+    logger.warn(`[GatewayLauncher] 端口 ${port} 被占用，尝试清理旧进程...`);
+
+    try {
+      if (process.platform === "win32") {
+        // Windows: 用 netstat + taskkill 清理占用端口的进程
+        const netstatOut = execSync(
+          `netstat -ano | findstr ":${port}"`,
+          { encoding: "utf-8", timeout: 5000 },
+        );
+        const lines = netstatOut.trim().split("\n");
+        for (const line of lines) {
+          const match = line.match(/LISTENING\s+(\d+)/);
+          if (match) {
+            const pid = match[1];
+            logger.warn(
+              `[GatewayLauncher] 发现旧进程 PID=${pid} 占用端口 ${port}，正在终止...`,
+            );
+            try {
+              execSync(`taskkill /PID ${pid} /F`, {
+                encoding: "utf-8",
+                timeout: 5000,
+              });
+              logger.info(`[GatewayLauncher] 已终止旧进程 PID=${pid}`);
+            } catch {
+              logger.warn(`[GatewayLauncher] 无法终止 PID=${pid}（可能需要管理员权限）`);
+            }
+          }
+        }
+      } else {
+        // Unix: 用 fuser 或 lsof 清理
+        try {
+          execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, {
+            encoding: "utf-8",
+            timeout: 5000,
+          });
+        } catch {
+          try {
+            execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, {
+              encoding: "utf-8",
+              timeout: 5000,
+            });
+          } catch { /* 清理失败不阻塞 */ }
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        "[GatewayLauncher] 端口清理异常: %s",
+        (err as Error).message,
+      );
+    }
+
+    // 等待端口释放（最多 6 秒）
+    for (let i = 0; i < 30; i++) {
+      if (await isPortFree()) {
+        logger.info(`[GatewayLauncher] 端口 ${port} 已释放，可以启动 Gateway`);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    logger.error(
+      `[GatewayLauncher] 端口 ${port} 清理失败，Gateway 可能无法绑定端口`,
+    );
   }
 
   private _spawn(): void {
