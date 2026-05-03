@@ -159,7 +159,7 @@ export async function mediaRoutes(app: FastifyInstance) {
       if (isSecErr) {
         app.log.warn({ err, code: err?.code }, "Media upload rejected by security check");
         return reply.status(400).send({
-          error: err.message ?? "媒体上传失败",
+          error: "媒体上传失败，安全检测未通过",
           code: err.code,
         });
       }

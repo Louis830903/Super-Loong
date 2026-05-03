@@ -109,7 +109,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
     } catch (err: any) {
       // 返回 200 + error 字段（服务器仍然已注册，只是连接失败）
       const server = registry.getServer(request.params.id);
-      return { status: server?.status ?? "error", error: err.message };
+      app.log.error({ err, serverId: request.params.id }, "MCP 连接测试失败");
+      return { status: server?.status ?? "error", error: "MCP 服务器连接失败，请检查配置" };
     }
   });
 

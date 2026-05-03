@@ -1,5 +1,6 @@
 # 运行时数据（不应被 Git 追踪）
-data/
+# 仅忽略 JSON 凭据文件，允许 .example 模板被追踪
+data/*.json
 gateway_state.json
 gateway_state.tmp
 .media/
