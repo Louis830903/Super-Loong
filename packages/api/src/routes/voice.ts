@@ -9,8 +9,12 @@
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
 
-// ─── Whisper-compatible STT (always available) ────────────────────
-const STT_API_URL = process.env.STT_API_URL || process.env.LLM_BASE_URL || "https://api.openai.com";
+// ─── Whisper-compatible STT ──────────────────────────────────
+// STT_API_URL 独立设置优先；LLM_BASE_URL 可能含 /v1 后缀（如 Kimi），需归一化
+const rawSTTUrl = process.env.STT_API_URL || process.env.LLM_BASE_URL || "https://api.openai.com";
+// 归一化：去尾部 /v1 和 /，统一拼接 /v1/audio/transcriptions
+const STT_API_URL = rawSTTUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
+// STT_API_KEY 独立设置优先；LLM_API_KEY 作为 fallback（OpenAI 用户零配置）
 const STT_API_KEY = process.env.STT_API_KEY || process.env.LLM_API_KEY || "";
 const STT_MODEL = process.env.STT_MODEL || "whisper-1";
 
