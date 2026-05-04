@@ -35,10 +35,11 @@ export function detectAvailableProviders(configStore?: ConfigStore): SttProvider
     providers.push("aliyun-nls");
   }
 
-  // 2. llm-whisper: OpenAI 官方 API 白名单（零配置，LLM key 自动复用）
-  const llmBaseUrl = (process.env.LLM_BASE_URL || "").toLowerCase();
+  // 2. llm-whisper: 有 LLM Key 就放进降级链（零配置，LLM key 自动复用）
+  // 不限制只对 api.openai.com 生效 — 任何 OpenAI 兼容 API 都可能支持 Whisper。
+  // 如果实际不支持，首次转写时自然失败，自动跳到下一个 provider。
   const llmApiKey = process.env.LLM_API_KEY || "";
-  if (llmApiKey && llmBaseUrl.includes("api.openai.com")) {
+  if (llmApiKey) {
     providers.push("llm-whisper");
   }
 
