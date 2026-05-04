@@ -32,6 +32,12 @@ export interface AppContext {
   configStore: ConfigStore;
   voiceProvider?: VoiceProvider;
   /**
+   * 启动时静态检测到的可用 STT provider 列表（按优先级排列）。
+   * 由 voiceRoutes 启动时调用 detectAvailableProviders() 写入。
+   * 值示例: ["stt-custom", "aliyun-nls", "llm-whisper", "groq"]
+   */
+  availableSTTProviders: string[];
+  /**
    * 共享向量化器（知识库 T8 / §5.4）。
    * 与 memoryManager 复用同一实例（QwenEmbedding 或 HRRProvider），
    * 避免知识库路由自建实例造成 Key/维度不一致。
@@ -496,5 +502,5 @@ export async function createAppContext(): Promise<AppContext> {
     );
   }
 
-  return { agentManager, skillLoader, router, memoryManager, collaborationOrchestrator, subagentManager, subagentAnnouncer, subagentExecutor, evolutionEngine, securityManager, mcpRegistry, mcpMarketplace, cronScheduler, skillMarketplace, providerStore, configStore, voiceProvider, embedder, sessionSearch, knowledgeExtractor, insightsEngine, verificationPipeline, knowledgeGraph, dedup, a2aTaskStore, a2aRegistry, a2aPushDispatcher, applyActiveProvider, kbParserClient, kbParserStop };
+  return { agentManager, skillLoader, router, memoryManager, collaborationOrchestrator, subagentManager, subagentAnnouncer, subagentExecutor, evolutionEngine, securityManager, mcpRegistry, mcpMarketplace, cronScheduler, skillMarketplace, providerStore, configStore, voiceProvider, availableSTTProviders: [], embedder, sessionSearch, knowledgeExtractor, insightsEngine, verificationPipeline, knowledgeGraph, dedup, a2aTaskStore, a2aRegistry, a2aPushDispatcher, applyActiveProvider, kbParserClient, kbParserStop };
 }

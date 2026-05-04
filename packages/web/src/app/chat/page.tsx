@@ -432,9 +432,23 @@ export default function ChatPage() {
 
   // ─── Voice ─────────────────────────────────────────────
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const rmsPeakRef = useRef<number>(0); // 录音期间 RMS 峰值，传给服务端做幻觉过滤 context guard
   const [voiceStatus, setVoiceStatus] = useState("");
+  // 波形条高度（5 条，每条约 50ms 更新一次，用于 Task 3 波形可视化）
+  const [waveHeights, setWaveHeights] = useState<number[]>([1, 1, 1, 1, 1]);
 
   const stopRecording = useCallback(() => {
+    // 停止 AudioContext 分析循环
+    if (animFrameRef.current) { cancelAnimationFrame(animFrameRef.current); animFrameRef.current = null; }
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      audioContextRef.current.close().catch(() => {});
+    }
+    audioContextRef.current = null;
+    analyserRef.current = null;
+    // 停止 MediaRecorder
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") mediaRecorderRef.current.stop();
     setIsRecording(false);
   }, []);
@@ -450,12 +464,124 @@ export default function ChatPage() {
       alert(`麦克风访问失败: ${err?.name || "未知错误"}\n${err?.message || ""}`);
       return;
     }
-    setIsRecording(true); setVoiceStatus("录音中...");
+    setIsRecording(true); setVoiceStatus("录音中..."); rmsPeakRef.current = 0;
+
+    // ─── AudioContext + AnalyserNode：三段式静音自动停止 ───
+    // 与 MediaRecorder 共享同一个 MediaStream，互不干扰
+    const audioCtx = new AudioContext();
+    audioContextRef.current = audioCtx;
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    source.connect(analyser);
+    analyserRef.current = analyser;
+
+    // 三段式静音检测状态机（参考 Hermes AudioRecorder）
+    // ⚠️ 使用 performance.now() 做时间基准，而非帧计数（rAF 帧率随显示器 60-144Hz 变化）
+    const RMS_THRESHOLD = 8; // Web Audio byte data (0-255, center 128), RMS 基于 sample-128
+    const VOICE_CONFIRM_MS = 300;    // 0.3s 语音确认
+    const GAP_TOLERANCE_MS = 300;    // 0.3s 间隙容忍
+    const SILENCE_TRIGGER_MS = 3000;  // 3s 静音触发
+    const TIMEOUT_MS = 15000;         // 15s 超时
+
+    let voiceConfirmed = false;
+    let voiceTime = 0;        // 累计语音时间（ms）
+    let silenceTime = 0;      // 累计静音时间（ms）
+    let gapTime = 0;          // 累计间隙时间（ms）
+    let totalTime = 0;        // 总运行时间（ms）
+    let lastFrameTime = performance.now();
+    let lastWaveUpdate = 0;   // 波形上次更新时间戳
+
+    const checkSilence = () => {
+      const now = performance.now();
+      const elapsed = now - lastFrameTime;
+      lastFrameTime = now;
+      totalTime += elapsed;
+
+      const dataArray = new Uint8Array(analyser.fftSize);
+      analyser.getByteTimeDomainData(dataArray);
+
+      // 计算 RMS（基于 sample-128 中心偏移）
+      let sumSq = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        const normalized = dataArray[i] - 128; // 偏移量，范围 -128 ~ 127
+        sumSq += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSq / dataArray.length); // 范围 0 ~ 128
+
+      // 追踪 RMS 峰值（传给服务端做幻觉过滤 context guard）
+      if (rms > rmsPeakRef.current) rmsPeakRef.current = rms;
+
+      const isVoice = rms > RMS_THRESHOLD;
+
+      if (!voiceConfirmed) {
+        // 语音确认期：连续 RMS > 阈值 300ms 才确认「用户在说话」
+        if (isVoice) {
+          voiceTime += elapsed;
+          if (voiceTime >= VOICE_CONFIRM_MS) {
+            voiceConfirmed = true;
+            silenceTime = 0;
+          }
+        } else {
+          voiceTime = 0;
+        }
+      } else {
+        // 已确认说话：检测静音
+        if (isVoice) {
+          silenceTime = 0;
+          gapTime = 0;
+        } else {
+          gapTime += elapsed;
+          // 间隙容忍：300ms 内短暂低于阈值不重置（处理辅音/气声等自然停顿）
+          if (gapTime >= GAP_TOLERANCE_MS) {
+            silenceTime += elapsed;
+          }
+        }
+        // 静音触发：连续 3s 低于阈值 → 自动停止
+        if (silenceTime >= SILENCE_TRIGGER_MS) {
+          stopRecording();
+          return;
+        }
+      }
+
+      // 超时保护：15s 无人声自动终止
+      if (totalTime >= TIMEOUT_MS) {
+        stopRecording();
+        return;
+      }
+
+      // ─── 波形可视化：每 40ms 更新一次频域数据（高刷屏避免过频渲染）───
+      if (now - lastWaveUpdate >= 40) {
+        lastWaveUpdate = now;
+        const freqData = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(freqData);
+        // 将频域数据分为 5 段，每段取平均值作为对应条的高度
+        const bandSize = Math.floor(freqData.length / 5);
+        const heights: number[] = [];
+        for (let b = 0; b < 5; b++) {
+          const start = b * bandSize;
+          const end = (b === 4) ? freqData.length : (b + 1) * bandSize;
+          let sum = 0;
+          for (let j = start; j < end; j++) sum += freqData[j];
+          const avg = sum / (end - start);
+          // 映射 0-255 → 1-32px（不录音时 1px 基线）
+          heights.push(Math.max(1, Math.round((avg / 255) * 32)));
+        }
+        setWaveHeights(heights);
+      }
+
+      animFrameRef.current = requestAnimationFrame(checkSilence);
+    };
+
+    animFrameRef.current = requestAnimationFrame(checkSilence);
+
+    // ─── MediaRecorder：实际录音编码（与 AudioContext 共享 stream）───
     const chunks: Blob[] = [];
     const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus"
       : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
     const recorder = new MediaRecorder(stream, { mimeType });
     mediaRecorderRef.current = recorder;
+
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
     recorder.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
@@ -469,15 +595,25 @@ export default function ChatPage() {
         let binary = ""; for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
         const base64 = btoa(binary);
         const format = mimeType.includes("webm") ? "webm" : "mp4";
-        const result = await apiFetch<{ text: string }>("/api/voice/transcribe", {
-          method: "POST", body: JSON.stringify({ audio: base64, language: "zh", format }),
+        const reqBody: any = { audio: base64, language: "zh", format };
+        // 传递 RMS 峰值给服务端，用于幻觉过滤的 context guard
+        if (rmsPeakRef.current > 0) reqBody.rmsPeak = Math.round(rmsPeakRef.current * 100) / 100;
+        const result = await apiFetch<{ text: string; filtered?: boolean }>("/api/voice/transcribe", {
+          method: "POST", body: JSON.stringify(reqBody),
         });
         if (result.text) { setInput((prev) => (prev ? prev + " " + result.text : result.text)); setVoiceStatus("识别完成"); }
+        else if (result.filtered) setVoiceStatus("未识别到有效语音");
         else setVoiceStatus("未识别到语音");
       } catch (err: any) { setVoiceStatus("识别失败"); }
       setTimeout(() => setVoiceStatus(""), 2000); setIsRecording(false);
     };
-    recorder.onerror = () => { stream.getTracks().forEach((t) => t.stop()); setVoiceStatus("录音失败"); setIsRecording(false); setTimeout(() => setVoiceStatus(""), 2000); };
+
+    recorder.onerror = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      setVoiceStatus("录音失败"); setIsRecording(false);
+      setTimeout(() => setVoiceStatus(""), 2000);
+    };
+
     recorder.start();
   }, [isRecording, stopRecording]);
 
@@ -1323,6 +1459,21 @@ export default function ChatPage() {
                 <ImageIcon className="h-5 w-5" />
               </button>
               <button type="button" onClick={toggleVoice} disabled={loading} className={cn("relative rounded-lg p-2 transition-colors disabled:opacity-50", isRecording ? "bg-red-600/20 text-red-400 hover:bg-red-600/30" : "text-zinc-400 hover:bg-zinc-800 hover:text-white")} title={isRecording ? "停止录音" : "语音输入"}>
+                {/* 波形可视化：录音时显示 5 条波形，不录音时隐藏 */}
+                {isRecording && (
+                  <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 flex items-end gap-[2px]">
+                    {waveHeights.map((h, wi) => {
+                      // 低音量 zinc-500 → 高音量 red-400
+                      const ratio = Math.min(1, h / 32);
+                      const color = ratio < 0.3 ? "bg-zinc-500" : ratio < 0.6 ? "bg-amber-500" : "bg-red-400";
+                      return (
+                        <span key={wi} className={`inline-block w-[3px] rounded-full ${color}`}
+                          style={{ height: `${h}px` }}
+                        />
+                      );
+                    })}
+                  </span>
+                )}
                 {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                 {voiceStatus && <span className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs text-emerald-400 bg-zinc-900 px-2 py-0.5 rounded">{voiceStatus}</span>}
               </button>
