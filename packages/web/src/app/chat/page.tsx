@@ -453,17 +453,26 @@ export default function ChatPage() {
     setIsRecording(false);
   }, []);
 
-  const toggleVoice = useCallback(async () => {
-    if (isRecording) { stopRecording(); return; }
-    let stream: MediaStream;
-    try {
-      if (!window.isSecureContext) { alert("语音输入需要安全连接（HTTPS 或 localhost）"); return; }
-      if (!navigator.mediaDevices?.getUserMedia) { alert("当前浏览器不支持麦克风访问 API"); return; }
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err: any) {
-      alert(`麦克风访问失败: ${err?.name || "未知错误"}\n${err?.message || ""}`);
-      return;
-    }
+  // ─── SpeechRecognition 连通性探针 ────────────────────────
+  // 快速验证浏览器内置语音识别是否可用（2s 超时，避免在中国大陆等受限网络白白等待）
+  function probeSpeechRecognition(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const api = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (!api) { resolve(false); return; }
+      const r = new api();
+      r.continuous = false;
+      r.interimResults = false;
+      const timeout = setTimeout(() => { try { r.abort(); } catch {} resolve(false); }, 2000);
+      r.onstart = () => { clearTimeout(timeout); r.stop(); };
+      r.onresult = () => { clearTimeout(timeout); resolve(true); };
+      r.onerror = () => { clearTimeout(timeout); resolve(false); };
+      r.onend = () => { clearTimeout(timeout); resolve(true); };
+      try { r.start(); } catch { clearTimeout(timeout); resolve(false); }
+    });
+  }
+
+  // ─── MediaRecorder 录音流程（从 toggleVoice 中抽取，供降级复用）───
+  const startMediaRecorderFlow = useCallback((stream: MediaStream) => {
     setIsRecording(true); setVoiceStatus("录音中..."); rmsPeakRef.current = 0;
 
     // ─── AudioContext + AnalyserNode：三段式静音自动停止 ───
@@ -615,7 +624,52 @@ export default function ChatPage() {
     };
 
     recorder.start();
-  }, [isRecording, stopRecording]);
+  }, [stopRecording]);
+
+  // ─── toggleVoice 入口：探针优先，浏览器识别 → 降级 MediaRecorder ──
+  const toggleVoice = useCallback(async () => {
+    if (isRecording) { stopRecording(); return; }
+
+    // 尝试浏览器内置语音识别（连通性探针，2s 超时）
+    const canUseBrowserSpeech = await probeSpeechRecognition();
+    if (canUseBrowserSpeech) {
+      setIsRecording(true);
+      setVoiceStatus("浏览器语音识别中...");
+      const api = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const rec = new api();
+      rec.lang = "zh-CN";
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.onresult = (e: any) => {
+        const text = e.results[0]?.[0]?.transcript || "";
+        if (text) { setInput((prev) => (prev ? prev + " " + text : text)); setVoiceStatus("识别完成"); }
+        else setVoiceStatus("未识别到语音");
+      };
+      rec.onerror = () => {
+        // 浏览器识别失败 → 降级到 MediaRecorder 录音 + 服务端转写
+        setVoiceStatus("");
+        setIsRecording(false);
+        navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(startMediaRecorderFlow)
+          .catch(() => { alert("语音识别不可用，请检查麦克风权限或网络连接"); });
+      };
+      rec.onend = () => { setIsRecording(false); setTimeout(() => setVoiceStatus(""), 2000); };
+      rec.start();
+      return;
+    }
+
+    // 浏览器语音不可用 → 直接走 MediaRecorder 流程
+    let stream: MediaStream;
+    try {
+      if (!window.isSecureContext) { alert("语音输入需要安全连接（HTTPS 或 localhost）"); return; }
+      if (!navigator.mediaDevices?.getUserMedia) { alert("当前浏览器不支持麦克风访问 API"); return; }
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err: any) {
+      alert(`麦克风访问失败: ${err?.name || "未知错误"}\n${err?.message || ""}`);
+      return;
+    }
+    startMediaRecorderFlow(stream);
+  }, [isRecording, stopRecording, startMediaRecorderFlow]);
 
   // ─── New conversation ──────────────────────────────────
   const createNewConversation = useCallback(async () => {
