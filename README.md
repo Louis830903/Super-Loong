@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>下一代模块化 AI Agent 平台</b><br/>
-  <sub>🧠 211 内置专家 · 🔮 HRR 向量记忆 · 🕸️ 知识图谱推理 · 🤝 A2A 跨进程通信 · 🧬 双引擎进化 · 💬 三大平台 IM</sub>
+  <sub>🧠 211 内置专家 · 🔮 HRR 向量记忆 · 🕸️ 知识图谱推理 · 🤝 A2A 跨进程通信 · 🧬 34 模块进化引擎 · 💬 三大平台 IM · 🎬 端到端视频生成 · 🖱️ 桌面操控</sub>
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
 ║  🧠 211 内置专家 │ 🔮 HRR 向量记忆 │ 🕸️ 知识图谱推理 │ 💬 三大平台 IM ║
-║  🤝 A2A 协议 │ 🧬 双引擎进化 │ 🔒 三级沙箱 │ 🎬 端到端视频生成  ║
+║  🤝 A2A 协议 │ 🧬 34 模块进化引擎 │ 🔒 三级沙箱 │ 🎬 端到端视频生成  ║
 ╚══════════════════════════════════════════════════════════════════════╝
 ```
 
@@ -44,15 +44,16 @@
 
 ## ✨ 为什么选择 Super Agent？
 
-Super Agent 不是又一个 AI 聊天机器人——它是**全球唯一同时具备「桌面操控 + 211 专家 + 三大平台 IM + 自我进化」的生产级智能体操作系统**。
+Super Agent 不是又一个 AI 聊天机器人——它是**全球唯一同时具备「桌面操控 + 211 专家 + 三平台 IM + 源码级自进化」的生产级智能体操作系统**。
 
 > **只此一家，别无分店：**
 > - 🖱️ **真正操控电脑**：鼠标键盘、桌面窗口、截屏 OCR——不是"建议"而是"执行"
 > - 🧠 **211 个专家不糊弄**：每个是完整 System Prompt + Toolset，不是关键词匹配
 > - 🔮 **HRR 代数向量记忆**：能做绑定/解绑/叠加运算，不是 cos-sim 玩具
-> - 🧬 **Agent 自己写技能**：进化成果持久化到 .md 文件，热加载生效，越用越强
+> - 🧬 **Agent 自己写代码改进自己**：34 模块进化引擎，源码级自修改（targetCode + diff + 沙箱验证）
 > - 💬 **一套代码通三平台**：飞书/钉钉/企业微信，插件式热插拔无缝接入
 > - 🎬 **一句话出片**：ComfyUI 工作流 + RunningHub，从文案到成片全自动
+> - 🛒 **电商运营自动化**：微信小店 + 抖音小店双平台，商品管理/订单发货/日常巡检
 
 ### 🤖 数字员工实战
 
@@ -66,6 +67,8 @@ Super Agent 不是又一个 AI 聊天机器人——它是**全球唯一同时�
 | 🎬 "生成一段 30 秒产品介绍视频，配上背景音乐" | 写文案 → 调 ComfyUI 工作流 → 渲染 → 合成 BGM |
 | 🐳 "把这个 Next.js 项目 Docker 化并推到服务器部署" | 写 Dockerfile → 构建镜像 → 推送到服务器 → 拉起容器 |
 | 📊 "每天下午 6 点自动抓 GitHub Star 数，发到企微群" | 定时任务 → HTTP 请求 → 企微 Webhook 发送 |
+| 🛒 "帮我在微信小店后台批量上架这 20 个新品" | 浏览器自动登录 → 填写商品信息 → 批量上架 → 回报结果 |
+| 🧬 "分析最近的代码改动，生成改进提案并 diff 对比" | 代码分析 → LLM 审查 → targetCode 提案 → before/after diff → 提交审核 |
 
 **开箱即用，一切皆可 Agent。**
 
@@ -81,7 +84,7 @@ graph TB
         Runtime["⚡ Agent 运行时<br/>工具调用 · 推理链 · 流式响应"]
         Experts["🧠 211 内置专家<br/>16 行业 · 语义匹配 · 层级分配"]
         Memory["🔮 HRR 向量记忆<br/>相位绑定 · 知识图谱 · FTS5 全文"]
-        Evolution["🧬 双引擎进化<br/>Nudge 反思 · 技能进化 · 自适应优化"]
+        Evolution["🧬 34 模块进化引擎<br/>自修改 · 编码委派 · 算子体系"]
         Sandbox["🔒 三级安全沙箱<br/>Process → Docker → SSH 自动降级"]
         Prompt["📝 10 层提示工程<br/>注入防护 · 模型适配 · 上下文压缩"]
     end
@@ -156,10 +159,10 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 <tr>
 <td width="50%">
 
-### 🧬 双引擎自我进化
-**Nudge 引擎**：每次对话后自动反思，提取洞察，优化策略。**技能进化引擎**：从任务经验生成新技能 .md 文件，自动热加载。进化提案先预览再应用，可回滚。
+### 🧬 双引擎自我进化（Phase 2 全面落地）
+**Nudge 反思引擎**：每次对话后自动反思，提取洞察，优化策略。**进化引擎 Phase 2**：34 个进化模块全面落地——自适应执行器动态调整策略、自动学习器从交互中提取可复用模式、**源码级自修改引擎**（LLM 分析代码缺陷 → 产出 targetCode 提案 → before/after diff 对比 → 沙箱验证后应用）、编码委派器智能分配编码任务给子代理、意图分解器 + 策略学习器自动优化任务处理路径。20+ 算子体系（base/recombination/refinement/revision）驱动技能自动进化，质量关卡 + 审计 + 预算控制确保安全放权。
 
-**炸裂点**：你今天让它「帮我写个自动备份脚本」——三天后它自己进化出了一个「备份管理技能」。越用越强，不是口号，是文件落地的真实能力。
+**炸裂点**：不仅是「生成技能文件」——Agent 能**自己写代码改进自己**，有 diff 对比、沙箱验证、人工审批三道关卡，渐进式自动化放权。
 
 </td>
 <td width="50%">
@@ -225,13 +228,14 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 | 🔌 API 路由 | **22** | Fastify 5 全 RESTful |
 | 🌐 Web 页面 | **17** | Next.js 16 全功能面板 |
 | 💬 IM 渠道 | **3** | 飞书/钉钉/企业微信，插件式热插拔 |
-| 🧩 内置工具 | **20+** | 文件/桌面/运维/Docker/Git/浏览器/视频 |
+| 🔧 内置工具 | **36** | 文件/桌面/运维/Docker/Git/浏览器/视频/安全 |
+| 🧬 进化模块 | **34** | 自适应执行器 · 自修改引擎 · 算子体系 · 质量关卡 |
 | 📄 知识库格式 | **10+** | PDF/Word/Excel/PPT/Markdown/HTML/EPUB/CSV/JSON |
-| 🏭 微服务 | **3** | IM 网关 (Python/FastAPI) · 视频引擎 · 文档解析器 |
+| 🏭 微服务 | **4** | IM 网关 · 视频引擎 · 文档解析器 · 定时任务调度 |
 | 🔒 沙箱层级 | **3** | Process → Docker → SSH 自动降级 |
 | 📝 提示层级 | **10** | L1-L6 缓存 + L7-L10 动态注入 |
-| 💾 持久化表 | **13** | SQLite WASM，25 个 Store 文件 |
-| 📦 核心代码 | **~50K+ 行** | TypeScript + Python |
+| 💾 持久化表 | **6** | SQLite WAL，配置持久化加密存储 |
+| 📦 核心代码 | **~40K+ 行** | TypeScript (~4M 含 node_modules) + Python IM 网关 |
 
 > 这不是一个 Demo——这是**生产级智能体操作系统**。
 
@@ -273,9 +277,9 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 | 阶段 | 状态 | 内容 |
 |------|:----:|------|
 | 🏗️ **v0.1 Alpha** | ✅ 已完成 | 核心运行时 + 211 专家 + 记忆系统 + 三平台 IM + 安全沙箱 + MCP 生态 + 技能市场 |
-| 🚀 **v0.2 Beta** | 🔨 进行中 | FTS5 原生支持 · 记忆检索增强 · SSE 流稳定性 · A2A 跨进程打通 · 模型 Provider 扩展 |
-| 🎯 **v0.5 里程碑** | 📋 规划中 | 多模态 Agent 打通 · 视频生成端到端出片 · 分布式 Agent 协作 · 企业级权限系统 |
-| 🌟 **v1.0 正式版** | 💡 展望 | 插件市场 · 云端一键部署 · Agent 商店 · 社区贡献生态 |
+| 🚀 **v0.2 Beta** | ✅ 已完成 | 进化引擎 Phase 2（34 个模块）· 自修改引擎 · 编码委派 · FTS5 原生支持 · A2A 跨进程打通 · 电商运营技能 · 进化 UI 完善 |
+| 🎯 **v0.5 里程碑** | 🔨 进行中 | 多模态 Agent 打通 · 视频生成端到端出片 · 分布式 Agent 协作 · SSE 流稳定性 |
+| 🌟 **v1.0 正式版** | 📋 规划中 | 插件市场 · 云端一键部署 · Agent 商店 · 企业级权限系统 · 社区贡献生态 |
 
 ---
 
@@ -409,42 +413,215 @@ deploy_git_pull → deploy_build → deploy_restart → deploy_healthcheck ✅
 
 ---
 
-## ⚡ 一键启动
+## ⚡ 快速开始
 
 ### 📋 环境要求
 
-| 依赖 | 版本 | 说明 |
-|------|------|------|
-| ![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A5%2020-339933?style=flat-square&logo=node.js) | ≥ 20.0.0 | 运行时 |
-| ![pnpm](https://img.shields.io/badge/pnpm-%E2%89%A5%209-F69220?style=flat-square&logo=pnpm) | ≥ 9.0.0 | 包管理 |
-| ![Python](https://img.shields.io/badge/Python-%E2%89%A5%203.11-3776AB?style=flat-square&logo=python) | ≥ 3.11 | 知识库 / IM / 视频 |
-| ![uv](https://img.shields.io/badge/uv-推荐-8040FF?style=flat-square) | 最新 | Python 依赖管理 |
+#### 硬件要求
 
-### 🪄 三步起飞
+| 级别 | CPU | 内存 | 磁盘 | 说明 |
+|------|-----|------|------|------|
+| **最小** | 2 核 | 4 GB | 2 GB | 基础对话功能，不含视频/Docker |
+| **推荐** | 4 核 | 8 GB | 10 GB SSD | 全功能流畅运行 |
+| **最优** | 8 核+ | 16 GB+ | 50 GB+ SSD | 多 Agent 协作 + 视频生成 + 知识库 |
+
+> 💡 **LLM 推理不占本地资源**——所有模型调用走云端 API（DashScope / DeepSeek / 智谱等），这是最大成本节省。仅当本地跑 Ollama 时才需 GPU（建议 8 GB+ 显存）。
+
+#### 软件依赖
+
+| 依赖 | 版本 | 说明 | 安装方式 |
+|------|------|------|----------|
+| ![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A5%2020-339933?style=flat-square&logo=node.js) | ≥ 20.0.0 | TypeScript 运行时 | `nvm install 20` 或 [nodejs.org](https://nodejs.org) |
+| ![pnpm](https://img.shields.io/badge/pnpm-%E2%89%A5%209-F69220?style=flat-square&logo=pnpm) | ≥ 9.0.0 | Monorepo 包管理 | `npm i -g pnpm` 或 `corepack enable` |
+| ![Python](https://img.shields.io/badge/Python-%E2%89%A5%203.11-3776AB?style=flat-square&logo=python) | ≥ 3.11 | IM 网关 / 视频生成 / 文档解析 | [python.org](https://python.org) 或 `pyenv` |
+| ![uv](https://img.shields.io/badge/uv-推荐-8040FF?style=flat-square) | 最新 | Python 依赖管理（替代 pip） | `pip install uv` 或 [astral.sh](https://astral.sh) |
+| ![Git](https://img.shields.io/badge/Git-%E2%89%A5%202.40-F05032?style=flat-square&logo=git) | ≥ 2.40 | 版本管理 | [git-scm.com](https://git-scm.com) |
+
+#### LLM API Key（至少配置一个）
+
+| 提供商 | 环境变量 | 获取地址 |
+|--------|----------|----------|
+| 阿里 DashScope | `DASHSCOPE_API_KEY` | [dashscope.aliyun.com](https://dashscope.aliyun.com) |
+| DeepSeek | `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com) |
+| 智谱 GLM | `ZHIPU_API_KEY` | [open.bigmodel.cn](https://open.bigmodel.cn) |
+| Moonshot (Kimi) | `MOONSHOT_API_KEY` | [platform.moonshot.cn](https://platform.moonshot.cn) |
+| 火山方舟 | `ARK_API_KEY` | [console.volcengine.com](https://console.volcengine.com/ark) |
+| MiniMax | `MINIMAX_API_KEY` | [platform.minimaxi.com](https://platform.minimaxi.com) |
+| OpenAI（可选） | `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com) |
+| Ollama（本地） | 自动检测 `http://127.0.0.1:11434` | `ollama pull qwen3` |
+
+### 🪄 安装步骤
+
+<details open>
+<summary><b>Windows（你在用的系统）</b></summary>
+
+```powershell
+# ① 克隆仓库
+git clone https://github.com/Louis830903/Super-Loong.git
+cd Super-Loong
+
+# ② 安装 Node.js 依赖
+pnpm install
+
+# ③ 安装 IM 网关 Python 依赖
+cd services/im-gateway
+uv sync  # 或: pip install -e .
+cd ../..
+
+# ④ 复制环境变量模板并编辑
+copy .env.example .env
+# 用记事本打开 .env，至少填入一个 API Key（如 DASHSCOPE_API_KEY）
+notepad .env
+
+# ⑤ 启动！
+pnpm dev
+```
+
+> ⚠️ **Windows 用户注意**：PowerShell 不支持 `&&` 作为语句分隔符，请逐行执行或用 `;` 代替。
+
+启动后访问：
+
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 🌐 **Web UI** | http://localhost:3000 | 对话 / Agent 管理 / 知识库 / 进化引擎 |
+| 🔌 **API** | http://localhost:3001 | RESTful API 服务（Fastify 5） |
+| 🌉 **IM 网关** | http://localhost:8642 | 飞书/钉钉/企微消息接入（FastAPI） |
+| 🖥️ **监控面板** | Electron 窗口 | 桌面级实时监控（自动弹出） |
+| 🎬 **视频引擎** | http://localhost:8199 | 视频生成（按需启动） |
+
+</details>
+
+<details>
+<summary><b>macOS / Linux</b></summary>
 
 ```bash
-# ① 克隆并进入
+# ① 克隆仓库
 git clone https://github.com/Louis830903/Super-Loong.git && cd Super-Loong
 
 # ② 一键初始化（依赖安装 + 配置生成 + Python 服务自举）
 pnpm setup
 
-# ③ 编辑 .env 填入 API Key，然后启动
+# ③ 编辑 .env 填入 API Key
+nano .env
+# 或者: vim .env / code .env
+
+# ④ 启动
 pnpm dev
 ```
 
-<div align="center">
+启动后访问：http://localhost:3000
 
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| 🌐 **Web UI** | http://localhost:3000 | 对话 / Agent 管理 / 知识库 |
-| 🔌 **API** | http://localhost:3001 | RESTful API 服务 |
-| 🌉 **IM 网关** | http://localhost:8642 | 三平台消息接入 |
-| 🖥️ **监控面板** | Electron 窗口 | 桌面级实时监控 |
+</details>
 
-</div>
+### 🔧 配置说明
 
-> 💡 **零配置哲学**：`pnpm setup` 自动完成一切——加密密钥生成、Node.js 依赖安装、IM Gateway 的 Python venv 创建。`pnpm dev` 启动后，video-forge（视频生成）、im-gateway（IM 网关）自动拉起，kb-parser（知识库解析）首次使用时懒启动。**三个 Python 微服务，零手动配置**。
+`.env` 文件核心配置项：
+
+```bash
+# === 必填：加密密钥（自动生成 64 位 hex）===
+SA_ENCRYPTION_KEY=        # 首次运行时自动生成，也可手动：openssl rand -hex 32
+
+# === 必填：至少配置一个 LLM Provider ===
+DASHSCOPE_API_KEY=        # 阿里 DashScope（推荐，Qwen 系列性价比最高）
+DEEPSEEK_API_KEY=          # DeepSeek V3/R1
+ZHIPU_API_KEY=             # 智谱 GLM-4.7
+
+# === 可选：视频生成（需要 RunningHub 账号）===
+RUNNINGHUB_API_KEY=        # https://www.runninghub.com 注册获取
+VIDEO_FORGE_URL=http://127.0.0.1:8199
+
+# === 可选：IM 网关（飞书/钉钉/企微）===
+# 飞书: 在飞书开放平台创建应用，获取 App ID + App Secret
+# 钉钉: 在钉钉开放平台创建应用，获取 Client ID + Client Secret  
+# 企微: 在企业微信管理后台获取 Corp ID + Secret
+# 详细配置见 services/im-gateway/.env.example
+```
+
+### ✅ 验证安装
+
+```bash
+# 检查 API 服务是否正常
+curl http://localhost:3001/api/health
+# 预期返回: {"status":"ok","uptime":...}
+
+# 检查 Web 前端是否正常
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
+# 预期返回: 200
+```
+
+### ⚠️ 常见问题
+
+<details>
+<summary><b>Q: 启动报错 "SA_ENCRYPTION_KEY is required"</b></summary>
+
+编辑 `.env` 文件，设置 `SA_ENCRYPTION_KEY`（64 位 hex）。生成方式：
+
+```bash
+# 方式一（推荐）
+openssl rand -hex 32
+
+# 方式二（Node.js）
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+</details>
+
+<details>
+<summary><b>Q: pnpm install 很慢 / 报网络错误</b></summary>
+
+国内用户建议配置镜像源：
+
+```bash
+pnpm config set registry https://registry.npmmirror.com
+```
+
+</details>
+
+<details>
+<summary><b>Q: Python 依赖安装失败（uv sync 报错）</b></summary>
+
+确保 Python ≥ 3.11，然后重试：
+
+```bash
+python --version  # 确认版本
+cd services/im-gateway
+uv venv            # 创建虚拟环境
+uv sync            # 安装依赖
+```
+
+如果 `uv` 不可用，改用 pip：
+
+```bash
+pip install -e services/im-gateway/
+```
+
+</details>
+
+<details>
+<summary><b>Q: 端口被占用（3000 / 3001 / 8642）</b></summary>
+
+```powershell
+# Windows — 查找并结束占用进程
+netstat -ano | findstr :3000
+taskkill /PID <PID> /F
+
+# macOS/Linux — 查找并结束占用进程
+lsof -i :3000
+kill -9 <PID>
+```
+
+</details>
+
+<details>
+<summary><b>Q: 飞书/钉钉/企微 IM 网关怎么配置？</b></summary>
+
+详见 `services/im-gateway/` 目录下的各个渠道配置文档。飞书需要：
+
+1. 在[飞书开放平台](https://open.feishu.cn)创建企业自建应用
+2. 开启「机器人」能力，配置事件订阅地址为 `https://你的域名:8642/feishu/event`
+3. 将 App ID / App Secret 填入 IM 网关对应的 `.env` 文件
+
+</details>
 
 ---
 
