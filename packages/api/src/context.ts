@@ -167,11 +167,13 @@ export async function createAppContext(): Promise<AppContext> {
     announcer: subagentAnnouncer,
   });
   logger.info("SubagentManager + SubagentAnnouncer integrated into CollaborationOrchestrator (E-1)");
-  const evolutionEngine = new EvolutionEngine(agentManager, loadNudgeConfig() ?? undefined);
+  const evolutionEngine = new EvolutionEngine(agentManager, loadNudgeConfig() ?? undefined, undefined, providerStore);
   // H-1: 连接进化引擎到协作编排器，协作完成后自动反馈交互数据
   collaborationOrchestrator.setEvolutionEngine(evolutionEngine);
   // Phase A-1: 连接进化引擎与 AgentManager，启用 Nudge 自动化闭环
   agentManager.setEvolutionEngine(evolutionEngine);
+  // [审查 P0-1]: 从 SQLite 恢复独立存储的分析器 Agent 配置
+  await evolutionEngine.loadAnalyzerConfig();
 
   // Task 3.4: 初始化 Evolution 高级子模块（无必需参数，均使用内部默认配置）
   const sessionSearch = new SessionSearchEngine();

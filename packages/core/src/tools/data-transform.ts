@@ -15,7 +15,7 @@ import * as os from "node:os";
 import * as crypto from "node:crypto";
 import { runInNewContext } from "node:vm";
 import type { ToolDefinition, ToolResult } from "../types/index.js";
-import { checkFileSize, truncateResult } from "./shared-security.js";
+import { checkFileSize, truncateResult } from "./write-path-security.js";
 
 // ── 路径验证（复用 filesystem.ts 的 ALLOWED_ROOTS 逻辑） ──
 

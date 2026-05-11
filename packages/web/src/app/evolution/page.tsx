@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/utils";
 import {
   Sparkles, CheckCircle, XCircle, Clock, ThumbsUp, ThumbsDown,
   BarChart3, Lightbulb, Play, Trash2, RefreshCw, Camera,
-  Settings2, Save, Loader2,
+  Settings2, Save, Loader2, Shield, AlertTriangle, Wrench, Plus, Minus, Brain,
 } from "lucide-react";
 
 import type { SkillProposal, EvolutionStats, Snapshot, NudgeConfig } from "@/types/api-types";
@@ -28,6 +28,15 @@ export default function EvolutionPage() {
   const [nudgeConfig, setNudgeConfig] = useState<NudgeConfig | null>(null);
   const [nudgeSaving, setNudgeSaving] = useState(false);
   const [nudgeEditing, setNudgeEditing] = useState<NudgeConfig | null>(null);
+
+  // [审查 P1-4/P1-5/P2-7]: 分析器 LLM 配置（Provider+Model 选择，纯 LLM 分析不走 Agent）
+  const [providers, setProviders] = useState<Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>>([]);
+  const [analyzerProviderId, setAnalyzerProviderId] = useState<string | null>(null);
+  const [analyzerModelId, setAnalyzerModelId] = useState<string | null>(null);
+  const [analyzerSaving, setAnalyzerSaving] = useState(false);
+  const [originalCode, setOriginalCode] = useState<string | null>(null);
+  const [fetchingOriginalCode, setFetchingOriginalCode] = useState(false);
+  const [approvingCode, setApprovingCode] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -135,10 +144,89 @@ export default function EvolutionPage() {
     setNudgeSaving(false);
   };
 
+  // [审查 P1-4]: 获取已配置的 Provider+Model 列表 + 分析器配置
+  const fetchProviders = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ providers: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }> }>("/api/evolution/analyzer/providers");
+      setProviders(data.providers ?? []);
+    } catch { /* ignore */ }
+  }, []);
+
+  const fetchAnalyzerConfig = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ providerId: string | null; modelId: string | null }>("/api/evolution/analyzer/config");
+      setAnalyzerProviderId(data.providerId ?? null);
+      setAnalyzerModelId(data.modelId ?? null);
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleSaveAnalyzer = async () => {
+    setAnalyzerSaving(true);
+    try {
+      const data = await apiFetch<{ providerId: string | null; modelId: string | null }>("/api/evolution/analyzer/config", {
+        method: "PUT",
+        body: JSON.stringify({ providerId: analyzerProviderId, modelId: analyzerModelId }),
+      });
+      setAnalyzerProviderId(data.providerId ?? null);
+      setAnalyzerModelId(data.modelId ?? null);
+    } catch { /* ignore */ }
+    setAnalyzerSaving(false);
+  };
+
+  // [审查 P2-7]: 审核代码并执行（含 loading 态与错误提示）
+  const handleApproveCode = async (id: string) => {
+    if (!confirm("确认审核通过并执行代码修改？此操作将修改源码文件。")) return;
+    setApprovingCode(prev => new Set(prev).add(id));
+    try {
+      const result = await apiFetch<SkillProposal>(`/api/evolution/proposals/${id}/approve-code`, { method: "POST" });
+      if (result) {
+        // 成功后会刷新列表
+        fetchData();
+      }
+    } catch {
+      // apiFetch 内部已 showToast，错误消息会包含沙箱验证失败的详情
+    } finally {
+      setApprovingCode(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  // [审查 P0-2]: 选中代码提案时获取原始代码
+  const fetchOriginalCode = useCallback(async (p: SkillProposal) => {
+    if (!p.targetCode) {
+      setOriginalCode(null);
+      return;
+    }
+    setFetchingOriginalCode(true);
+    try {
+      const data = await apiFetch<{ code: string }>("/api/evolution/code/read", {
+        method: "POST",
+        body: JSON.stringify({ modulePath: p.targetCode.modulePath, targetName: p.targetCode.targetName }),
+      });
+      setOriginalCode(data.code ?? "");
+    } catch {
+      setOriginalCode(""); // 读取失败时显示空字符串，前端提示"无法读取原始文件"
+    }
+    setFetchingOriginalCode(false);
+  }, []);
+
+  // [审查 P1-4]: 页面初始化时加载 Agent 列表和分析器配置
+  useEffect(() => { fetchProviders(); fetchAnalyzerConfig(); }, [fetchProviders, fetchAnalyzerConfig]);
+
   useEffect(() => {
     if (tab === "snapshots") fetchSnapshots();
     if (tab === "nudge") fetchNudgeConfig();
   }, [tab, fetchSnapshots, fetchNudgeConfig]);
+
+  // [审查 P0-2]: 选中提案时自动获取原始代码用于 before/after diff
+  useEffect(() => {
+    if (selectedProposal) {
+      fetchOriginalCode(selectedProposal);
+    }
+  }, [selectedProposal, fetchOriginalCode]);
 
   const tabs = [
     { id: "proposals" as const, label: "技能提案", icon: Lightbulb },
@@ -151,7 +239,7 @@ export default function EvolutionPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">进化引擎</h1>
-          <p className="mt-1 text-zinc-400">监控 Agent 自我进化和技能提案</p>
+          <p className="mt-1 text-zinc-400">Agent 自我进化中枢：技能提案 · 源码修改 · 失败分析 · 记忆纠偏</p>
         </div>
         <div className="flex gap-2">
           <button onClick={handleFlush} className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800">
@@ -167,22 +255,25 @@ export default function EvolutionPage() {
         pageId="evolution"
         icon={Sparkles}
         title="进化引擎"
-        description="进化引擎让 Agent 在交互过程中自动发现可复用的行为模式，生成技能提案供你审核。你可以批准、拒绝或应用提案，让 Agent 持续进化。"
+        description="进化引擎是 Agent 的自我进化中枢，横跨三大进化通道：技能进化（自动从交互中发现可复用模式并生成.md技能提案）、源码进化（LLM 分析代码缺陷后直接产出源码修改提案，含 before/after diff 对比）、记忆进化（自动检测用户偏好矛盾并生成纠偏建议）。所有提案经过风险评估后进入审核队列，支持人工审批或渐进自动化放权。"
         useCases={[
-          "自动发现模式：Agent 检测到重复性工作后自动生成技能提案",
-          "技能提案审核：人工审核 Agent 生成的提案，批准后自动创建技能",
-          "快照管理：定期保存 Agent 进化状态，可回滚到历史版本",
-          "Nudge 配置：设置自动评审间隔，让进化引擎定时触发",
+          "技能提案：Agent 检测到重复性工作后自动生成 .md 技能，支持 create/update/patch 三种操作",
+          "源码修改：LLM 分析代码缺陷 → 产出 targetCode 提案 → before/after 双栏 diff → 沙箱验证后应用",
+          "失败分析：自动汇聚交互失败案例，LLM 分析模式后生成改进提案（分析器支持配置 Provider+Model）",
+          "记忆纠偏：检测用户偏好矛盾 → 生成 contradictions 报告 → 人工确认后修正",
+          "快照管理：定期保存 Agent 进化状态（技能+记忆+配置），支持一键回滚",
+          "Nudge 定时：配置记忆评审/技能评审/Flush 间隔，进化引擎后台自动触发",
         ]}
         tips={[
-          "触发评审按钮会立即让 Agent 分析最近的交互，生成新提案",
-          "快照是 Agent 状态的完整备份，包含所有技能和记忆",
+          "触发评审按钮会立即让分析器 LLM 分析最近的交互，生成技能或源码提案",
+          "源码修改提案需人工审核后才能执行，高风险提案（requiredHumanReview）必须人工确认",
+          "快照是 Agent 状态的完整备份，创建后可在快照管理中回滚",
         ]}
       />
 
       {/* Stats */}
       {stats && (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
             <div className="flex items-center gap-3">
               <div className="rounded-lg bg-blue-600/20 p-2"><BarChart3 className="h-5 w-5 text-blue-400" /></div>
@@ -219,8 +310,75 @@ export default function EvolutionPage() {
               </div>
             </div>
           </div>
+          {/* [审查 P1-5]: 待审核代码提案计数 */}
+          <div
+            onClick={() => setTab("proposals")}
+            className={`rounded-xl border p-5 cursor-pointer transition-colors ${
+              proposals.filter(p => p.requiresHumanReview).length > 0
+                ? "border-orange-600/50 bg-orange-600/5 hover:bg-orange-600/10"
+                : "border-zinc-800 bg-zinc-900/50"
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div className={`rounded-lg p-2 ${proposals.filter(p => p.requiresHumanReview).length > 0 ? "bg-orange-600/20" : "bg-zinc-700/20"}`}>
+                <Shield className={`h-5 w-5 ${proposals.filter(p => p.requiresHumanReview).length > 0 ? "text-orange-400" : "text-zinc-500"}`} />
+              </div>
+              <div>
+                <p className="text-sm text-zinc-400">待审核代码</p>
+                <p className={`text-2xl font-bold ${proposals.filter(p => p.requiresHumanReview).length > 0 ? "text-orange-400" : "text-white"}`}>
+                  {proposals.filter(p => p.requiresHumanReview).length}
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
+
+      {/* [审查 P1-4]: 分析器 LLM 配置 — Provider+Model 二级选择器（纯 LLM 分析不走 Agent） */}
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="rounded-lg bg-purple-600/20 p-2">
+            <Brain className="h-5 w-5 text-purple-400" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-white">分析器配置</h3>
+            <p className="text-xs text-zinc-500">用于失败分析、技能提案生成的纯 LLM，不走 Agent 系统提示词和工具</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Provider 选择器 */}
+          <select
+            value={analyzerProviderId ?? ""}
+            onChange={(e) => { setAnalyzerProviderId(e.target.value || null); setAnalyzerModelId(null); }}
+            className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white text-sm focus:border-purple-500 focus:outline-none"
+          >
+            <option value="">自动选择（首个可用 Agent 的 LLM）</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          {/* Model 选择器（仅当 Provider 已选择时显示） */}
+          {analyzerProviderId && (
+            <select
+              value={analyzerModelId ?? ""}
+              onChange={(e) => setAnalyzerModelId(e.target.value || null)}
+              className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white text-sm focus:border-purple-500 focus:outline-none"
+            >
+              <option value="">选择模型</option>
+              {(providers.find(p => p.id === analyzerProviderId)?.models ?? []).map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={handleSaveAnalyzer}
+            disabled={analyzerSaving}
+            className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
+          >
+            {analyzerSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} 保存
+          </button>
+        </div>
+      </div>
 
       {/* Tabs */}
       <div className="flex gap-1 rounded-lg bg-zinc-900 p-1">
@@ -275,6 +433,25 @@ export default function EvolutionPage() {
                           <span className="text-xs text-zinc-500">质量: {p.qualityScore}分</span>
                         )}
                         <span className="text-xs text-zinc-600">{new Date(p.createdAt).toLocaleDateString("zh-CN")}</span>
+                        {/* [审查 P1-5/P2-6]: targetCode 差异化 chip */}
+                        {p.requiresHumanReview && (
+                          <span className="rounded px-1.5 py-0.5 text-xs bg-orange-600/10 text-orange-400 flex items-center gap-1">
+                            <Shield className="h-3 w-3" /> 待审核
+                          </span>
+                        )}
+                        {p.targetCode && !p.requiresHumanReview && (
+                          <span className={`rounded px-1.5 py-0.5 text-xs flex items-center gap-1 ${
+                            p.targetCode.operation === "modify" ? "bg-purple-600/10 text-purple-400" :
+                            p.targetCode.operation === "add" ? "bg-green-600/10 text-green-400" :
+                            "bg-red-600/10 text-red-400"
+                          }`}>
+                            {p.targetCode.operation === "modify" ? <Wrench className="h-3 w-3" /> :
+                             p.targetCode.operation === "add" ? <Plus className="h-3 w-3" /> :
+                             <Minus className="h-3 w-3" />}
+                            {p.targetCode.operation === "modify" ? "代码修改" :
+                             p.targetCode.operation === "add" ? "代码新增" : "代码删除"}
+                          </span>
+                        )}
                       </div>
                     </div>
                     {p.status === "pending" && (
@@ -299,9 +476,173 @@ export default function EvolutionPage() {
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
                 <h3 className="font-semibold text-white mb-2">{selectedProposal.skillName}</h3>
                 <p className="text-sm text-zinc-400 mb-4">{selectedProposal.description}</p>
-                <pre className="max-h-[50vh] overflow-auto rounded-lg bg-zinc-950 p-4 text-sm text-zinc-300 font-mono">
-                  {selectedProposal.content || "暂无内容"}
-                </pre>
+
+                {selectedProposal.targetCode ? (
+                  /* [审查 P0-2]: 代码提案 diff 面板 — before/after 双栏对比 */
+                  <div className="space-y-4">
+                    {/* 提案元信息 */}
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className={`rounded px-1.5 py-0.5 ${
+                        selectedProposal.targetCode.operation === "modify" ? "bg-purple-600/10 text-purple-400" :
+                        selectedProposal.targetCode.operation === "add" ? "bg-green-600/10 text-green-400" :
+                        "bg-red-600/10 text-red-400"
+                      }`}>
+                        {selectedProposal.targetCode.operation === "modify" ? "修改" :
+                         selectedProposal.targetCode.operation === "add" ? "新增" : "删除"}
+                      </span>
+                      <span className="text-zinc-500">模块:</span>
+                      <code className="text-zinc-300">{selectedProposal.targetCode.modulePath}</code>
+                      {selectedProposal.targetCode.targetName && (
+                        <>
+                          <span className="text-zinc-500">目标:</span>
+                          <code className="text-zinc-300">{selectedProposal.targetCode.targetName}</code>
+                        </>
+                      )}
+                    </div>
+
+                    {/* 推理理由 */}
+                    {selectedProposal.reasoning && (
+                      <p className="text-xs text-zinc-500 bg-zinc-900 rounded-lg p-3">{selectedProposal.reasoning}</p>
+                    )}
+
+                    {/* Code Diff 双栏 */}
+                    {fetchingOriginalCode ? (
+                      <div className="py-8 text-center text-zinc-500">
+                        <Loader2 className="mx-auto h-5 w-5 animate-spin mb-2" />
+                        加载原始代码...
+                      </div>
+                    ) : (
+                      <div className={`grid gap-3 ${
+                        selectedProposal.targetCode.operation === "add" ||
+                        selectedProposal.targetCode.operation === "delete"
+                          ? "grid-cols-1" : "grid-cols-2"
+                      }`}>
+                        {/* Before 栏 — delete 和 modify 操作才显示 */}
+                        {(selectedProposal.targetCode.operation === "modify" ||
+                          selectedProposal.targetCode.operation === "delete") && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-xs text-zinc-500 font-medium">原始代码 (before)</span>
+                            </div>
+                            <pre className="max-h-[40vh] overflow-auto rounded-lg bg-zinc-950 border border-zinc-800 p-3 text-xs text-zinc-400 font-mono whitespace-pre-wrap break-all">
+                              {originalCode || (originalCode === "" ? "⚠ 无法读取原始文件" : "")}
+                            </pre>
+                          </div>
+                        )}
+                        {/* After 栏 — add 和 modify 操作才显示 */}
+                        {(selectedProposal.targetCode.operation === "modify" ||
+                          selectedProposal.targetCode.operation === "add") && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-xs text-zinc-500 font-medium">
+                                {selectedProposal.targetCode.operation === "add" ? "新增代码 (after)" : "新代码 (after)"}
+                              </span>
+                            </div>
+                            <pre className="max-h-[40vh] overflow-auto rounded-lg bg-zinc-950 border border-emerald-600/30 p-3 text-xs text-emerald-300 font-mono whitespace-pre-wrap break-all">
+                              {selectedProposal.targetCode.newCode || "暂无内容"}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 审核警告 */}
+                    {selectedProposal.requiresHumanReview && (
+                      <div className="flex items-center gap-2 rounded-lg bg-orange-600/10 border border-orange-600/30 p-3">
+                        <AlertTriangle className="h-4 w-4 text-orange-400 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-sm text-orange-300 font-medium">需要人工审核</p>
+                          {selectedProposal.reviewReason && (
+                            <p className="text-xs text-orange-400/70 mt-0.5">{selectedProposal.reviewReason}</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 操作按钮栏 */}
+                    <div className="flex items-center gap-2 pt-2 border-t border-zinc-800">
+                      {selectedProposal.requiresHumanReview && selectedProposal.status === "pending" ? (
+                        <button
+                          onClick={() => handleApproveCode(selectedProposal.id)}
+                          disabled={approvingCode.has(selectedProposal.id)}
+                          className="flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-50"
+                        >
+                          {approvingCode.has(selectedProposal.id) ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Shield className="h-4 w-4" />
+                          )}
+                          审核代码并执行
+                        </button>
+                      ) : selectedProposal.targetCode && selectedProposal.status === "pending" ? (
+                        <button
+                          onClick={() => handleApproveCode(selectedProposal.id)}
+                          disabled={approvingCode.has(selectedProposal.id)}
+                          className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {approvingCode.has(selectedProposal.id) ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <CheckCircle className="h-4 w-4" />
+                          )}
+                          应用代码
+                        </button>
+                      ) : selectedProposal.status === "pending" && (
+                        <>
+                          <button
+                            onClick={() => handleApprove(selectedProposal.id)}
+                            className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+                          >
+                            <ThumbsUp className="h-4 w-4" /> 采纳
+                          </button>
+                          <button
+                            onClick={() => handleApply(selectedProposal.id)}
+                            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                          >
+                            <Play className="h-4 w-4" /> 应用
+                          </button>
+                        </>
+                      )}
+                      {selectedProposal.status === "pending" && (
+                        <button
+                          onClick={() => handleReject(selectedProposal.id)}
+                          className="flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
+                        >
+                          <ThumbsDown className="h-4 w-4" /> 拒绝
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* 无 targetCode：保持现有 Markdown 渲染 */
+                  <>
+                    <pre className="max-h-[50vh] overflow-auto rounded-lg bg-zinc-950 p-4 text-sm text-zinc-300 font-mono">
+                      {selectedProposal.content || "暂无内容"}
+                    </pre>
+                    {selectedProposal.status === "pending" && (
+                      <div className="flex items-center gap-2 mt-4 pt-3 border-t border-zinc-800">
+                        <button
+                          onClick={() => handleApprove(selectedProposal.id)}
+                          className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+                        >
+                          <ThumbsUp className="h-4 w-4" /> 采纳
+                        </button>
+                        <button
+                          onClick={() => handleApply(selectedProposal.id)}
+                          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                        >
+                          <Play className="h-4 w-4" /> 应用
+                        </button>
+                        <button
+                          onClick={() => handleReject(selectedProposal.id)}
+                          className="flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
+                        >
+                          <ThumbsDown className="h-4 w-4" /> 拒绝
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>

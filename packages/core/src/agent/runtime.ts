@@ -71,6 +71,8 @@ import {
   estimateToolResultReducibleChars,
 } from "../context/tool-result-truncation.js";
 import { shouldPreemptivelyCompact } from "../context/preemptive-check.js";
+// Phase 5 (Task 5.4): 环境快照注入系统提示词
+import { captureEnvironmentPrompt } from "../context/environment-snapshot.js";
 
 const logger = pino({ name: "agent-runtime" });
 
@@ -123,6 +125,11 @@ export class AgentRuntime {
   private reflection: ReflectionEngine;
   // 知识库 Provider prefetch 引用（通过 orchestrator 调用 prefetchAll）
   private memoryManager?: MemoryManager;
+  // Phase 5 (Task 5.4): 环境快照文本（首次 chat/chatStream 时采集并缓存）
+  private envSnapshotText?: string;
+  private envSnapshotPromise?: Promise<string>;
+  // Task 4: sessions Map TTL 自动清理定时器
+  private _cleanupTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: AgentRuntimeOptions) {
     this.id = options.config.id;
@@ -196,6 +203,65 @@ export class AgentRuntime {
       // CronScheduler 由外部注入，此处仅存储配置，start() 由外部调用
       this.heartbeatRunner = undefined; // 待外部注入 CronScheduler 后构造
     }
+
+    // Phase 5 (Task 5.4): 预采集环境快照（后台异步，不阻塞构造）
+    this.envSnapshotPromise = captureEnvironmentPrompt()
+      .then(text => { this.envSnapshotText = text; return text; })
+      .catch(err => { logger.warn({ err }, "Environment snapshot capture failed"); return ""; });
+
+    // Task 4: 启动 sessions 定时清理（unref 不阻止进程退出）
+    const ttlMs = this.config.sessionTtlMs ?? 30 * 60 * 1000; // 默认 30 分钟
+    if (ttlMs > 0) {
+      const intervalMs = Math.max(ttlMs / 6, 60_000); // TTL/6，最少 1 分钟
+      this._cleanupTimer = setInterval(() => this.cleanupStaleSessions(), intervalMs);
+      // unref 确保定时器不阻止 Node 进程退出
+      if (this._cleanupTimer.unref) this._cleanupTimer.unref();
+      logger.info({ ttlMs, intervalMs, agentId: this.id }, "Session TTL cleanup timer started");
+    }
+  }
+
+  /**
+   * Phase 5 (Task 5.4): 获取环境快照文本。
+   * 首次调用时等待异步采集完成，后续直接返回缓存。
+   */
+  private async getEnvSnapshot(): Promise<string> {
+    if (this.envSnapshotText !== undefined) return this.envSnapshotText;
+    if (this.envSnapshotPromise) {
+      await this.envSnapshotPromise;
+      return this.envSnapshotText ?? "";
+    }
+    return "";
+  }
+
+  // ─── Task 4: sessions TTL 自动清理 ─────────────────────────────
+
+  /**
+   * 清理过期 session。
+   * 跳过正在锁中的 session（有活跃请求在处理）。
+   * 参照 BrowserSessionManager.cleanupInactive() 模式。
+   */
+  private cleanupStaleSessions(): void {
+    const ttlMs = this.config.sessionTtlMs ?? 30 * 60 * 1000;
+    if (ttlMs <= 0) return;
+
+    const now = Date.now();
+    let cleaned = 0;
+
+    for (const [id, session] of this.sessions) {
+      // 跳过正在锁中的 session（有活跃请求）
+      if (this._sessionLocks.has(id)) continue;
+
+      const age = now - session.updatedAt.getTime();
+      if (age > ttlMs) {
+        this.sessions.delete(id);
+        cleaned++;
+        logger.info({ sessionId: id, ageMs: age, agentId: this.id }, "Cleaned stale session");
+      }
+    }
+
+    if (cleaned > 0) {
+      logger.info({ cleaned, remaining: this.sessions.size, agentId: this.id }, "Session TTL cleanup completed");
+    }
   }
 
   get status(): AgentStatus {
@@ -226,7 +292,10 @@ export class AgentRuntime {
   /** Get or create a session. If persistence is enabled, loads messages from DB. */
   getSession(sessionId?: string): Session {
     if (sessionId && this.sessions.has(sessionId)) {
-      return this.sessions.get(sessionId)!;
+      const session = this.sessions.get(sessionId)!;
+      // Task 4: 刷新活动时间，防止被 TTL 清理误杀
+      session.updatedAt = new Date();
+      return session;
     }
     const id = sessionId ?? `conv-${uuid()}`;
 
@@ -528,7 +597,10 @@ export class AgentRuntime {
     }
 
     // Build system prompt via PromptEngine (10-layer architecture)
+    // Phase 5 (Task 5.4): 注入环境快照
+    const envSnapshot = await this.getEnvSnapshot();
     const systemContent = this.promptEngine.build(session, this.tools) +
+      (envSnapshot ? "\n\n" + envSnapshot : "") +
       (kbPrefetchBlock ? "\n\n" + kbPrefetchBlock : "");
     const systemMessage: LLMMessage = {
       role: "system",
@@ -820,7 +892,10 @@ export class AgentRuntime {
       }
     }
 
+    // Phase 5 (Task 5.4): 注入环境快照
+    const envSnapshot = await this.getEnvSnapshot();
     const systemContent = this.promptEngine.build(session, this.tools) +
+      (envSnapshot ? "\n\n" + envSnapshot : "") +
       (kbPrefetchBlock ? "\n\n" + kbPrefetchBlock : "");
     const systemMessage: LLMMessage = { role: "system", content: systemContent };
 
@@ -1791,6 +1866,11 @@ private recordEvolutionInteraction(data: {
    * 学 Hermes review_agent.close() 模式。
    */
   destroy(): void {
+    // Task 4: 清理 sessions TTL 定时器
+    if (this._cleanupTimer) {
+      clearInterval(this._cleanupTimer);
+      this._cleanupTimer = undefined;
+    }
     this.sessions.clear();
     this._sessionLocks.clear();
     this.tools.clear();

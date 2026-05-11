@@ -8,12 +8,14 @@
  * - API 关闭时优雅终止 Gateway 子进程
  */
 
-import { spawn, execSync, type ChildProcess } from "child_process";
+import { spawn, exec, type ChildProcess } from "child_process";
+import { promisify } from "node:util";
 import { createServer } from "node:net";
 import path from "node:path";
 import pino from "pino";
 import { ensureGatewayDeps, type GatewayDepsResult } from "@super-agent/core";
 
+const execAsync = promisify(exec);
 const logger = pino({ name: "gateway-launcher" });
 
 export class GatewayLauncher {
@@ -138,7 +140,7 @@ export class GatewayLauncher {
     try {
       if (process.platform === "win32") {
         // Windows: 用 netstat + taskkill 清理占用端口的进程
-        const netstatOut = execSync(
+        const { stdout: netstatOut } = await execAsync(
           `netstat -ano | findstr ":${port}"`,
           { encoding: "utf-8", timeout: 5000 },
         );
@@ -151,7 +153,7 @@ export class GatewayLauncher {
               `[GatewayLauncher] 发现旧进程 PID=${pid} 占用端口 ${port}，正在终止...`,
             );
             try {
-              execSync(`taskkill /PID ${pid} /F`, {
+              await execAsync(`taskkill /PID ${pid} /F`, {
                 encoding: "utf-8",
                 timeout: 5000,
               });
@@ -164,13 +166,13 @@ export class GatewayLauncher {
       } else {
         // Unix: 用 fuser 或 lsof 清理
         try {
-          execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, {
+          await execAsync(`fuser -k ${port}/tcp 2>/dev/null || true`, {
             encoding: "utf-8",
             timeout: 5000,
           });
         } catch {
           try {
-            execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, {
+            await execAsync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, {
               encoding: "utf-8",
               timeout: 5000,
             });

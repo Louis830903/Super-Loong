@@ -34,6 +34,11 @@ export interface AgentConfig {
    * 导致其尝试用 write_file 写长内容 → JSON 破损 → Qwen 400 死循环。
    */
   toolPolicy?: "all" | "configured-only";
+  /**
+   * Session TTL（毫秒）。超时未活动的 session 将被自动清理。
+   * 默认 30 分钟（1800000ms）。设为 0 禁用自动清理。
+   */
+  sessionTtlMs?: number;
 }
 
 export interface AgentState {

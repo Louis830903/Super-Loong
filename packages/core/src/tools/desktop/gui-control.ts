@@ -17,7 +17,7 @@ import { z } from "zod";
 import pino from "pino";
 import type { ToolDefinition, ToolContext, ToolResult } from "../../types/index.js";
 import { getPlatformInfo } from "../../platform/adapter.js";
-import { validateShellArg } from "../../security/shared-security.js";
+import { validateShellArg } from "../../security/shell-arg-security.js";
 import { runShellCmd } from "../run-shell-cmd.js";
 
 const logger = pino({ name: "gui-control" });

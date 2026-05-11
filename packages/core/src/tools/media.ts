@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import type { ToolDefinition, ToolResult } from "../types/index.js";
-import { checkFileSize, truncateResult, validateWritePath } from "./shared-security.js";
+import { checkFileSize, truncateResult, validateWritePath } from "./write-path-security.js";
 
 // ── 路径验证 ──────────────────────────────────
 

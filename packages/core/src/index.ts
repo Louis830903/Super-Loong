@@ -268,6 +268,125 @@ export type {
   EvolutionStats,
 } from "./evolution/engine.js";
 
+// Evolution — Task 1.1 风险评分引擎
+export { RiskEngine } from "./evolution/risk-engine.js";
+export type { RiskScore, RiskDecision, RiskProfile, FixType, RiskProfileDef } from "./evolution/risk-engine.js";
+
+// Evolution — Task 1.3 进化审计日志
+export { EvolutionAudit } from "./evolution/evolution-audit.js";
+export type { AuditEntry, AuditFilter } from "./evolution/evolution-audit.js";
+
+// Evolution — Task 1.4 进化预算控制
+export { EvolutionBudget, DEFAULT_BUDGET_CONFIG } from "./evolution/evolution-budget.js";
+export type { BudgetConfig, BudgetCheckResult, BudgetStats } from "./evolution/evolution-budget.js";
+
+// Evolution — Task 1.5 级联故障检测
+export { CascadeDetector } from "./evolution/cascade-detector.js";
+export type { CascadeSignature, CascadeResult } from "./evolution/cascade-detector.js";
+
+// Evolution — Task 2.1 进化协调器
+export { EvolutionCoordinator } from "./evolution/evolution-coordinator.js";
+export type { CycleInput, CycleOutput } from "./evolution/evolution-coordinator.js";
+
+// Evolution — Task 2.2 三算子体系
+export { EvolutionOperator, registerOperator, getRegisteredOperators, getOperatorByName } from "./evolution/operators/base.js";
+export type { OperatorContext, OperatorResult } from "./evolution/operators/base.js";
+export { RevisionOperator } from "./evolution/operators/revision.js";
+export { RecombinationOperator } from "./evolution/operators/recombination.js";
+export { RefinementOperator } from "./evolution/operators/refinement.js";
+
+// Evolution — Task 2.3 策略选择器
+export { OperatorSelector } from "./evolution/operator-selector.js";
+export type { OperatorSelection, FailureProfile, OperatorName } from "./evolution/operator-selector.js";
+
+// Evolution — Task 2.5 智能错误匹配
+export { ErrorMatcher } from "./evolution/error-matching.js";
+export type { ErrorMatchResult, ErrorRecord, MatchSignal } from "./evolution/error-matching.js";
+
+// Evolution — Task 3.1 自修改引擎
+export { SelfModificationEngine } from "./evolution/self-modification-engine.js";
+export type { CodeChangeRequest, CodeChangeResult, CodeSnapshot, CodeOperation } from "./evolution/self-modification-engine.js";
+
+// Evolution — Task 3.2 沙箱执行环境
+export { SandboxExecutor } from "./evolution/sandbox-executor.js";
+export type { EvolutionSandboxResult, SandboxExecutionResult } from "./evolution/sandbox-executor.js";
+
+// Evolution — Task 3.4 进化锁
+export { EvolutionLock } from "./evolution/evolution-lock.js";
+export type { LockState } from "./evolution/evolution-lock.js";
+
+// Evolution — Phase 4: 能力自主扩展 (L4→L5)
+// Task 4.1 工具代码生成器
+/** @deprecated 孤岛模块 — 待 LLM 生成逻辑补全后激活 */
+export { ToolGenerator } from "./evolution/tool-generator.js";
+/** @deprecated 孤岛模块 — 待 LLM 生成逻辑补全后激活 */
+export type { ToolRequirement, GeneratedTool, ValidationResult } from "./evolution/tool-generator.js";
+// Task 4.2 工具注册器
+/** @deprecated 孤岛模块 — 待同步I/O异步化后激活 */
+export { ToolRegistrar } from "./evolution/tool-registrar.js";
+/** @deprecated 孤岛模块 — 待同步I/O异步化后激活 */
+export type { RegistrationResult, DynamicToolRecord } from "./evolution/tool-registrar.js";
+// Task 4.3 依赖自动管理
+/** @deprecated 孤岛模块 — 保留参考，待集成决策 */
+export { DependencyManager } from "./evolution/dependency-manager.js";
+/** @deprecated 孤岛模块 — 保留参考，待集成决策 */
+export type { DependencyRequest, DependencyResult, DepAuditLogEntry } from "./evolution/dependency-manager.js";
+// Task 4.4 跨应用工作流引擎
+export { WorkflowEngine, WORKFLOW_TEMPLATES } from "./evolution/workflow-engine.js";
+export type { WorkflowStep, WorkflowDefinition, WorkflowContext, StepResult, WorkflowResult, WorkflowProgressCallback, WorkflowToolExecutor } from "./evolution/workflow-engine.js";
+
+// Evolution — Phase 5: 能力自我感知 (L5→L5.5)
+// Task 5.1 能力差距检测器
+/** @deprecated 孤岛模块 — 需与 AutoLearner 联动激活 */
+export { CapabilityGapDetector } from "./evolution/capability-gap-detector.js";
+/** @deprecated 孤岛模块 — 需与 AutoLearner 联动激活 */
+export type { CapabilityGap, GapCategory, GapDetectionMethod, GapDetectionInput, GapReport, GapDetectorConfig } from "./evolution/capability-gap-detector.js";
+// Task 5.2 自主学习循环
+/** @deprecated 孤岛模块 — 依赖链条未接通（需 CapabilityGapDetector + ToolDiscoverer 先激活） */
+export { AutoLearner } from "./evolution/auto-learner.js";
+/** @deprecated 孤岛模块 — 依赖链条未接通（需 CapabilityGapDetector + ToolDiscoverer 先激活） */
+export type { AutoLearnAction, AutoLearnRecord, AutoLearnResult, AutoLearnerConfig, SolutionOption } from "./evolution/auto-learner.js";
+// Task 5.3 工具自动发现与评估
+/** @deprecated 孤岛模块 — 需与 AutoLearner 联动激活 */
+export { ToolDiscoverer } from "./evolution/tool-discoverer.js";
+/** @deprecated 孤岛模块 — 需与 AutoLearner 联动激活 */
+export type { DiscoverySource, DiscoveredTool, ToolEvaluation, DiscovererConfig } from "./evolution/tool-discoverer.js";
+// Task 5.4 环境快照采集
+export { EnvironmentSnapshotCollector, captureEnvironmentPrompt } from "./context/environment-snapshot.js";
+export type { EnvironmentSnapshot, OSInfo, InstalledApp, FilesystemInfo, NetworkInfo, SnapshotConfig } from "./context/environment-snapshot.js";
+// Task 5.5 用户意图学习引擎
+/** @deprecated 孤岛模块 — 零引用，待集成到 Agent 对话流程 */
+export { IntentLearner } from "./evolution/intent-learner.js";
+/** @deprecated 孤岛模块 — 零引用，待集成到 Agent 对话流程 */
+export type { IntentLearnerConfig, OperationRecord, LearnedPattern, OperationPatternType, IntentPrediction, LearningReport, PatternTrigger } from "./evolution/intent-learner.js";
+
+// Evolution — Phase 6: 全数字自主 (L5.5→L6)
+// Task 6.1 意图分解引擎
+/** @deprecated 孤岛模块 — 仅有 type 被引用，待集成到 evolution 主循环 */
+export { IntentDecomposer } from "./evolution/intent-decomposer.js";
+/** @deprecated 孤岛模块 — 仅有 type 被引用，待集成到 evolution 主循环 */
+export type { DecomposedStep, SubGoal, SubGoalOutput, SubGoalStatus, DecompositionResult, DecompositionProgress, DecomposerConfig } from "./evolution/intent-decomposer.js";
+// Task 6.2 自适应任务执行器
+/** @deprecated 孤岛模块 — 零引用；需先修复 timeout 悬挂 Bug (Task 9) 后激活 */
+export { AdaptiveExecutor } from "./evolution/adaptive-executor.js";
+/** @deprecated 孤岛模块 — 零引用；需先修复 timeout 悬挂 Bug (Task 9) 后激活 */
+export type { ExecutionStatus, ExecutionUnit, ExecutionResult, ExecutionStrategy, FailureStrategy, ExecutionPlan, ExecutionProgress, AdaptiveExecutorConfig } from "./evolution/adaptive-executor.js";
+// Task 6.3 会话连续性管理器
+export { SessionContinuityManager } from "./evolution/session-continuity.js";
+export type { TaskState as ContinuityTaskState, PendingTask, SessionHandoff, ContinuityConfig } from "./evolution/session-continuity.js";
+// Task 6.5 渐进自动化信任阶梯
+export { ProgressiveAutomation, AUTOMATION_LEVELS } from "./evolution/progressive-automation.js";
+export type { AutomationLevel, LevelDefinition, AutomationAction, LevelChange, ProgressiveAutomationConfig } from "./evolution/progressive-automation.js";
+// P1-1 瘦身: 策略学习器
+export { StrategyLearner } from "./evolution/strategy-learner.js";
+export type { StrategyCacheEntry, ToolPatternStats, PromptFeedbackEntry } from "./evolution/strategy-learner.js";
+// P1-2: 编码委托器
+export { CodingDelegator, CLI_TOOLS } from "./evolution/coding-delegator.js";
+export type { CliTool, DelegationTier, DelegationStrategy, DelegationInput, DelegationResult, ValidationResult as DelegateValidationResult } from "./evolution/coding-delegator.js";
+// P1-3: 质量闸门
+export { QualityGate } from "./evolution/quality-gate.js";
+export type { GateLevel, GateConfig, GateResult, PipelineResult, DeliveryReport, QualityGateConfig } from "./evolution/quality-gate.js";
+
 // Security
 export {
   SecurityManager,
@@ -425,7 +544,7 @@ export { MCPClient, MCPRegistry, MCPMarketplace, MCPServer, EventBridge, StdioTr
 export type { MCPServerConfig, MCPTool, MCPServerStatus, MCPServerInfo, MCPAuthConfig, MCPMarketEntry, MCPInstallConfig, MCPRegistryPackage, MCPServerOptions, MCPServerState, PermissionRequest, MCPEvent, MCPEventType, EventBridgeConfig, MCPTransport, SSEHandlerConfig } from "./mcp/index.js";
 
 // Built-in Tools (24 core sync + optional async-loaded)
-export { builtinTools, getAllBuiltinTools, invalidateToolCache, getToolsByCategory, filesystemTools, codeExecTools, webTools, systemDataTools, configureTools, gitTools, productivityTools } from "./tools/index.js";
+export { builtinTools, getAllBuiltinTools, invalidateToolCache, getToolsByCategory, filesystemTools, codeExecTools, webTools, systemDataTools, configureTools, gitTools, productivityTools, registerDynamicTool, unregisterDynamicTool, getDynamicToolDefs } from "./tools/index.js";
 
 // Service ConfigStore (对话式配置持久化)
 export { ConfigStore, SERVICE_CATALOG, getConfigStore, initConfigStore, syncEnvVarToFile } from "./tools/index.js";

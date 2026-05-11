@@ -14,7 +14,7 @@ import * as os from "node:os";
 import pino from "pino";
 import type { ToolDefinition, ToolResult } from "../types/index.js";
 import { getConfigStore, maskSecret } from "./config-store.js";
-import { isSafeUrl, detectMimeFromHeader, isBlockedDevicePath } from "./shared-security.js";
+import { isSafeUrl, detectMimeFromHeader, isBlockedDevicePath } from "./write-path-security.js";
 
 const logger = pino({ name: "vision" });
 

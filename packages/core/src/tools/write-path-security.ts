@@ -1,5 +1,5 @@
 /**
- * Shared Security — 跨工具安全原语基座。
+ * 写路径安全基座 — 跨工具安全原语基座。
  *
  * 对标 Hermes file_tools.py + file_operations.py + path_security.py，
  * 集中提供写入黑名单、设备阻断、二进制检测、大小守卫、SSRF 检查、

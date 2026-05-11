@@ -427,7 +427,8 @@ function ensureCleanupTimer(): void {
 }
 
 /**
- * 清除所有进程记录和定时器（仅用于测试/清理）
+ * 清除所有进程记录和定时器（仅用于测试/清理）。
+ * @internal — 测试专用，不应在生产代码中调用。
  */
 export function _resetRegistry(): void {
   // 终止所有运行中的进程

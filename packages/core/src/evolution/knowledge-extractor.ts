@@ -12,6 +12,7 @@
 
 import pino from "pino";
 import type { InteractionCase } from "./engine.js";
+import { safeJsonParseAny } from "../utils/json-guard.js";
 
 const logger = pino({ name: "evolution:knowledge-extractor" });
 
@@ -274,7 +275,8 @@ ${caseSummary}
 
     try {
       const response = await llmCall(prompt);
-      const parsed = JSON.parse(response.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
+      const parsed = safeJsonParseAny(response.match(/\[[\s\S]*\]/)?.[0] ?? "[]", "knowledge-extractor");
+      if (!Array.isArray(parsed)) return [];
 
       return parsed.map((item: any, i: number) => ({
         id: `llm_${Date.now()}_${i}`,

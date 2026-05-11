@@ -135,9 +135,8 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
 
   // ─── Analysis ──────────────────────────────────────────────
 
-  app.post("/api/evolution/analyze", async (req, reply) => {
-    const body = (req.body ?? {}) as { analyzerAgentId?: string };
-    const proposals = await engine.analyzeFailures(body.analyzerAgentId);
+  app.post("/api/evolution/analyze", async (_req, reply) => {
+    const proposals = await engine.analyzeFailures();
     return reply.send({ proposals, count: proposals.length });
   });
 
@@ -202,7 +201,7 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.post("/api/evolution/proposals/:id/approve", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const result = engine.approveProposal(id);
+    const result = await engine.approveProposal(id);
     if (!result) return reply.status(404).send({ error: "Proposal not found" });
     return reply.send(result);
   });
@@ -216,9 +215,29 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.post("/api/evolution/proposals/:id/apply", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const result = engine.applyProposal(id);
+    const result = await engine.applyProposal(id);
     if (!result) return reply.status(404).send({ error: "Proposal not found or apply failed" });
     return reply.send(result);
+  });
+
+  // 代码提案专用审批端点：人工审核通过后执行沙箱验证 + 源码修改
+  app.post("/api/evolution/proposals/:id/approve-code", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      // Step 1: 标记人工审核通过
+      const approved = engine.approveCodeProposal(id);
+      if (!approved) return reply.status(404).send({ error: "Proposal not found or not a code proposal" });
+
+      // Step 2: 执行沙箱验证 + 自修改引擎写入
+      const result = await engine.applyCodeProposal(id);
+      if (!result) {
+        return reply.status(400).send({ error: "代码提案应用失败（沙箱验证未通过或写入错误）" });
+      }
+      return reply.send(result);
+    } catch (err: any) {
+      app.log.error({ route: "/api/evolution/proposals/:id/approve-code", err }, "代码提案应用异常");
+      return reply.status(500).send({ error: "代码提案应用失败" });
+    }
   });
 
   // ─── Snapshots ─────────────────────────────────────────────
@@ -260,6 +279,71 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
     }
     engine.nudge.updateConfig(parsed.data);
     return reply.send(engine.nudge.getConfig());
+  });
+
+  // ─── 分析器 LLM 配置（Provider+Model 选择，纯 LLM 调用不走 Agent）────
+
+  app.get("/api/evolution/analyzer/config", async (_req, reply) => {
+    return reply.send(engine.getAnalyzerLlm());
+  });
+
+  app.put("/api/evolution/analyzer/config", async (req, reply) => {
+    const body = (req.body ?? {}) as { providerId?: string | null; modelId?: string | null };
+    // 校验 Provider 是否存在于 model catalog
+    if (body.providerId) {
+      const { getProviderById } = await import("@super-agent/core");
+      const providerDef = getProviderById(body.providerId);
+      if (!providerDef) {
+        return reply.status(400).send({ error: `Provider ${body.providerId} 不存在` });
+      }
+      // 校验 modelId 是否属于该 provider
+      if (body.modelId) {
+        const modelExists = providerDef.models?.some((m: { id: string }) => m.id === body.modelId);
+        if (!modelExists) {
+          return reply.status(400).send({ error: `Model ${body.modelId} 不属于 Provider ${body.providerId}` });
+        }
+      }
+    }
+    engine.setAnalyzerLlm(body.providerId ?? null, body.modelId ?? null);
+    return reply.send(engine.getAnalyzerLlm());
+  });
+
+  // ─── 已配置的 Provider 列表（含模型目录，供前端分析器下拉选择）────
+
+  app.get("/api/evolution/analyzer/providers", async () => {
+    const { getModelCatalog } = await import("@super-agent/core");
+    const catalog = getModelCatalog();
+    const records = ctx.providerStore.list();
+
+    // 只返回已配置 apiKey 且已启用的 Provider
+    const result = catalog
+      .filter((p) => {
+        const record = records.find((r) => r.id === p.id);
+        return record?.apiKey && record?.isEnabled !== false;
+      })
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        models: p.models?.map((m: { id: string; name: string }) => ({ id: m.id, name: m.name })) ?? [],
+      }));
+
+    return { providers: result };
+  });
+
+  // ─── 原始代码读取（审查 P0-2: 为前端 before/after diff 提供数据）────
+
+  app.post("/api/evolution/code/read", async (req, reply) => {
+    const body = (req.body ?? {}) as { modulePath?: string; targetName?: string };
+    if (!body.modulePath) {
+      return reply.status(400).send({ error: "modulePath 不能为空" });
+    }
+    try {
+      const code = engine.readCodeProposal(body.modulePath, body.targetName);
+      return reply.send({ code });
+    } catch (err: any) {
+      app.log.error({ route: "/api/evolution/code/read", err }, "读取原始代码失败");
+      return reply.status(500).send({ error: "读取原始代码失败" });
+    }
   });
 
   app.log.info("Evolution routes registered");

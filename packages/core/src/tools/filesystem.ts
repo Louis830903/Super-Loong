@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import type { ToolDefinition, ToolResult, ToolContext } from "../types/index.js";
-import { validateWritePath, isBinaryFile, isBlockedDevicePath, checkFileSize } from "./shared-security.js";
+import { validateWritePath, isBinaryFile, isBlockedDevicePath, checkFileSize } from "./write-path-security.js";
 
 // B-15: 路径遍历保护 — 白名单根目录校验
 const ALLOWED_ROOTS = [

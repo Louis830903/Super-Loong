@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import type { ToolDefinition, ToolResult, ToolContext } from "../types/index.js";
-import { truncateResult } from "./shared-security.js";
+import { truncateResult } from "./write-path-security.js";
 
 // ── 路径验证（复用 filesystem.ts 的 ALLOWED_ROOTS 逻辑） ──
 

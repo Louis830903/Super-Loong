@@ -22,7 +22,8 @@
 /** 技能提案 — 对应 core EvolutionEngine 产出（wire 形态：createdAt 为 ISO 字符串） */
 export interface SkillProposal {
   id: string;
-  action: "create" | "update" | "patch" | "no_change";
+  /** 提案操作类型 — [审查 P2-6] 补全 modify/delete */
+  action: "create" | "update" | "modify" | "delete" | "patch" | "no_change";
   skillName: string;
   description: string;
   content: string;
@@ -31,6 +32,21 @@ export interface SkillProposal {
   status: "pending" | "approved" | "applied" | "rejected";
   createdAt: string;
   qualityScore?: number;
+  /** Task 3.1: 自修改目标代码 — 当提案包含源码级修改时填充 */
+  targetCode?: {
+    /** 目标模块路径 */
+    modulePath: string;
+    /** 目标函数/类/方法名 */
+    targetName: string;
+    /** 新代码内容 */
+    newCode: string;
+    /** 操作类型 */
+    operation: "modify" | "add" | "delete";
+  };
+  /** Task 3.5: 是否需要人工审核 — modify 操作默认要求人工确认 */
+  requiresHumanReview?: boolean;
+  /** 审核理由 — 解释为何需要人工审核 */
+  reviewReason?: string;
 }
 
 /** 进化统计数据 */

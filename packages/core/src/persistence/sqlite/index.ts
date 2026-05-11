@@ -62,7 +62,7 @@ export {
   logConfigChange,
   queryConfigAuditLog,
 } from "./audit-repo.js";
-export { loadNudgeConfig, saveNudgeConfig } from "./config-store-repo.js";
+export { loadNudgeConfig, saveNudgeConfig, loadConfigValue, saveConfigValue } from "./config-store-repo.js";
 export type { VideoJobRow } from "./video-job-repo.js";
 export {
   insertVideoJob,

@@ -276,7 +276,13 @@ export const terminalTool: ToolDefinition = {
       return executeBackground(command, workdir, env);
     }
 
-    return executeForeground(command, timeout, workdir, env);
+    const result = await executeForeground(command, timeout, workdir, env);
+
+    // Phase 4 Task 4.6: 更新会话状态（当前目录 + 退出码）
+    const exitCode = result.success ? 0 : -1;
+    updateSessionState(context.sessionId, workdir || process.cwd(), exitCode, result.output ?? "");
+
+    return result;
   },
 };
 
@@ -395,9 +401,212 @@ export const approveCommandTool: ToolDefinition = {
     };
   },
 };
+// ─── 会话状态跟踪（Phase 4 Task 4.6）──────────────────
+
+/** 每个会话的当前工作目录 */
+const sessionWorkdirs: Map<string, string> = new Map();
+/** 每个会话的最后退出码 */
+const sessionExitCodes: Map<string, number> = new Map();
+/** 每个会话的最后输出（截断到 2000 字符） */
+const sessionLastOutput: Map<string, string> = new Map();
+
+/** 更新会话状态 */
+function updateSessionState(sessionId: string, workdir: string, exitCode: number, output: string): void {
+  sessionWorkdirs.set(sessionId, workdir);
+  sessionExitCodes.set(sessionId, exitCode);
+  sessionLastOutput.set(sessionId, output.slice(-2000));
+}
+
+// ─── shell_status 工具 ─ 查询当前 Shell 状态 ──────────
+
+/** shell_status 参数 schema */
+const shellStatusSchema = z.object({
+  _dummy: z.string().optional().describe("无需参数"),
+});
+
+/**
+ * shell_status 工具 — 返回当前 Shell 会话的状态快照。
+ *
+ * 包含：当前工作目录、上一次命令的退出码、环境变量快照、
+ * 最后输出（截断）和平台信息。
+ */
+export const shellStatusTool: ToolDefinition = {
+  name: "shell_status",
+  description:
+    "Get the current status of the shell session. " +
+    "Returns: working directory, last exit code, environment snapshot, " +
+    "last command output (truncated), and platform info. " +
+    "Use this to understand the current shell state before running commands.",
+  parameters: shellStatusSchema,
+  execute: async (_params: unknown, context: ToolContext): Promise<ToolResult> => {
+    const workdir = sessionWorkdirs.get(context.sessionId) ?? process.cwd();
+    const exitCode = sessionExitCodes.get(context.sessionId);
+    const lastOutput = sessionLastOutput.get(context.sessionId);
+    const platform = getPlatformInfo();
+
+    // 环境变量快照（仅安全白名单）
+    const safeEnvKeys = ["HOME", "USER", "PATH", "SHELL", "PWD", "LANG", "NODE_ENV",
+      "OS", "TEMP", "TMP", "APPDATA", "LOCALAPPDATA"];
+    const envSnapshot: Record<string, string> = {};
+    for (const key of safeEnvKeys) {
+      if (process.env[key]) {
+        // 脱敏：截断过长的值
+        const val = process.env[key]!;
+        envSnapshot[key] = val.length > 200 ? val.slice(0, 200) + "..." : val;
+      }
+    }
+
+    const lines = [
+      `📂 当前目录: ${workdir}`,
+      `💻 平台: ${platform.osLabel} (${platform.arch})`,
+      `🐚 Shell: ${platform.shell}`,
+      exitCode !== undefined ? `✅ 上次退出码: ${exitCode}` : "ℹ️ 尚未执行命令",
+      "",
+      "📋 环境变量:",
+      ...Object.entries(envSnapshot).map(([k, v]) => `  ${k}=${v}`),
+    ];
+
+    if (lastOutput) {
+      lines.push("", "📄 最后一次输出（截断）:", lastOutput);
+    }
+
+    return {
+      success: true,
+      output: lines.join("\n"),
+      data: { workdir, exitCode, platform, envSnapshot },
+    };
+  },
+};
+
+// ─── shell_wait 工具 ─ 等待上次命令完成 ────────────────
+
+/** shell_wait 参数 schema */
+const shellWaitSchema = z.object({
+  process_id: z.string().describe("要等待的后台进程ID"),
+  poll_interval: z.number().default(2000).describe("轮询间隔（毫秒），默认 2000"),
+  max_wait: z.number().default(300000).describe("最大等待时间（毫秒），默认 300000（5分钟）"),
+});
+
+/**
+ * shell_wait 工具 — 等待后台进程完成。
+ *
+ * 阻塞式轮询 process_poll，直到进程退出或超时。
+ * 适用于需要等待长时间运行命令完成的场景。
+ */
+export const shellWaitTool: ToolDefinition = {
+  name: "shell_wait",
+  description:
+    "Wait for a background process to complete. " +
+    "This will poll the process status at the specified interval " +
+    "until the process exits or the max wait time is reached. " +
+    "Returns the final output and exit code when complete.",
+  parameters: shellWaitSchema,
+  execute: async (params: unknown, context: ToolContext): Promise<ToolResult> => {
+    const { process_id, poll_interval, max_wait } = shellWaitSchema.parse(params);
+
+    const startTime = Date.now();
+    let lastResult: ProcessPollResult | undefined;
+
+    while (Date.now() - startTime < max_wait) {
+      const result = pollProcess(process_id);
+
+      if (!result) {
+        return {
+          success: false,
+          output: `进程 ${process_id} 未找到。可能已过期或ID错误。`,
+          error: "Process not found",
+        };
+      }
+
+      lastResult = result;
+
+      // 进程已退出或被杀
+      if (result.status === "exited" || result.status === "killed") {
+        const lines = [
+          `✅ 进程 ${process_id} 已完成`,
+          `状态: ${result.status}`,
+          `退出码: ${result.exitCode ?? "N/A"}`,
+          `运行时长: ${result.runtimeSeconds}s`,
+          `等待耗时: ${((Date.now() - startTime) / 1000).toFixed(1)}s`,
+        ];
+
+        if (result.recentOutput) {
+          lines.push("", "--- 输出 ---", result.recentOutput);
+        }
+
+        // 更新会话状态
+        updateSessionState(
+          context.sessionId,
+          process.cwd(),
+          result.exitCode ?? -1,
+          result.recentOutput ?? "",
+        );
+
+        return {
+          success: result.exitCode === 0,
+          output: lines.join("\n"),
+          data: result,
+        };
+      }
+
+      // 仍在运行 — 等待下一次轮询
+      await new Promise(resolve => setTimeout(resolve, poll_interval));
+    }
+
+    // 超时
+    return {
+      success: false,
+      output: `⏰ 等待超时（${max_wait / 1000}s）\n进程 ${process_id} 仍在运行中。\n使用 process_poll 手动检查状态，或使用 process_kill 终止。`,
+      data: lastResult,
+    };
+  },
+};
+
+// ─── shell_interrupt 工具 ─ 中断正在运行的命令 ─────────
+
+/** shell_interrupt 参数 schema */
+const shellInterruptSchema = z.object({
+  process_id: z.string().describe("要中断的后台进程ID"),
+});
+
+/**
+ * shell_interrupt 工具 — 发送 Ctrl+C 中断当前命令。
+ *
+ * 相当于在终端按 Ctrl+C。发送 SIGINT 信号。
+ * 如果 SIGINT 无效，可再调用 process_kill(signal="SIGKILL")。
+ */
+export const shellInterruptTool: ToolDefinition = {
+  name: "shell_interrupt",
+  description:
+    "Send an interrupt signal (Ctrl+C equivalent) to a running background process. " +
+    "Use this to stop a long-running command that you no longer need. " +
+    "If the process doesn't respond to SIGINT, use process_kill with SIGKILL instead.",
+  parameters: shellInterruptSchema,
+  execute: async (params: unknown, _context: ToolContext): Promise<ToolResult> => {
+    const { process_id } = shellInterruptSchema.parse(params);
+
+    const success = killProcess(process_id, "SIGINT");
+    if (!success) {
+      return {
+        success: false,
+        output: `无法中断进程 ${process_id}。可能已退出或ID错误。`,
+        error: "Interrupt failed",
+      };
+    }
+
+    return {
+      success: true,
+      output: `已向进程 ${process_id} 发送 SIGINT 信号（Ctrl+C）。\n使用 process_poll 查看进程状态。`,
+    };
+  },
+};
+
 export const terminalTools: ToolDefinition[] = [
   terminalTool,
   processPollTool,
   processKillTool,
   approveCommandTool,
+  shellStatusTool,
+  shellWaitTool,
+  shellInterruptTool,
 ];

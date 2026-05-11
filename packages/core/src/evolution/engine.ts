@@ -26,6 +26,31 @@ import type { AgentRuntime } from "../agent/runtime.js";
 import { scanSkill, shouldAllowInstall, type ScanResult } from "../skills/guard.js";
 import { parseSkillFile } from "../skills/parser.js";
 import { getContentText } from "../utils/content-helpers.js";
+import { RiskEngine } from "./risk-engine.js";
+import type { RiskScore, RiskDecision } from "./risk-engine.js";
+import { safeJsonParseAny } from "../utils/json-guard.js";
+import { EvolutionBudget } from "./evolution-budget.js";
+import { LLMProvider } from "../llm/provider.js";
+import type { LLMProviderConfig } from "../types/index.js";
+import { CascadeDetector } from "./cascade-detector.js";
+import { EvolutionCoordinator } from "./evolution-coordinator.js";
+import { registerOperator } from "./operators/base.js";
+import { RevisionOperator } from "./operators/revision.js";
+import { RecombinationOperator } from "./operators/recombination.js";
+import { RefinementOperator } from "./operators/refinement.js";
+import { SelfModificationEngine } from "./self-modification-engine.js";
+import { SandboxExecutor } from "./sandbox-executor.js";
+import { EvolutionLock } from "./evolution-lock.js";
+import { WorkflowEngine, type WorkflowDefinition } from "./workflow-engine.js";
+// Phase 6 (Task 6.4): 策略缓存与提示词自适应
+import { ProgressiveAutomation, type AutomationLevel } from "./progressive-automation.js";
+import { SessionContinuityManager } from "./session-continuity.js";
+import type { PendingTask } from "./session-continuity.js";
+// P1-1 瘦身: 策略学习器提取到独立模块
+import { StrategyLearner } from "./strategy-learner.js";
+import type { StrategyCacheEntry, ToolPatternStats, PromptFeedbackEntry } from "./strategy-learner.js";
+// P1-2: 编码委托器
+import { CodingDelegator } from "./coding-delegator.js";
 
 const logger = pino({ name: "evolution" });
 
@@ -51,6 +76,8 @@ export interface InteractionCase {
   failureCategory?: "skill_gap" | "wrong_tool" | "bad_response" | "timeout" | "other";
   timestamp: Date;
   metadata?: Record<string, unknown>;
+  /** Task 4.5: 关联的工作流 ID（用于工作流级进化分析） */
+  workflowId?: string;
 }
 
 /** A proposed skill improvement from LLM analysis */
@@ -74,6 +101,27 @@ export interface SkillProposal {
     errors: string[];
     scanVerdict?: string;
   };
+  /** Task 1.1: 风险评分引擎结果 */
+  riskScore?: number;
+  /** Task 1.1: 风险决策级别 */
+  riskDecision?: RiskDecision;
+  /** Task 1.2: 三层技能库类型 */
+  skillType?: "general" | "task_specific" | "common_mistake";
+  /** Task 3.1: 自修改目标代码（提案不再是 .md，而是实际代码片段） */
+  targetCode?: {
+    /** 目标模块路径 */
+    modulePath: string;
+    /** 目标函数/类/方法名 */
+    targetName: string;
+    /** 新代码内容 */
+    newCode: string;
+    /** 操作类型 */
+    operation: "modify" | "add" | "delete";
+  };
+  /** Task 3.5: 是否需要人工审核 */
+  requiresHumanReview?: boolean;
+  /** 审核理由 */
+  reviewReason?: string;
 }
 
 /** Configuration for nudge intervals */
@@ -360,7 +408,8 @@ Respond in JSON format:
   "skillName": "<snake_case_name>",
   "description": "<what the skill does>",
   "content": "<markdown skill content>",
-  "reasoning": "<why this skill is valuable>"
+  "reasoning": "<why this skill is valuable>",
+  "skillType": "common_mistake" | "task_specific" | "general"
 }`;
 
 const COMBINED_REVIEW_PROMPT = `Review the conversation above and consider two things:
@@ -391,6 +440,10 @@ const ANALYSIS_PROMPT = `You are an expert analyst for an AI Agent system. Analy
 1. Group failures into patterns by root cause
 2. For each pattern, identify if a new skill would help or an existing skill needs improvement
 3. Propose concrete, actionable skill changes
+4. Classify each proposal into one of three skill types:
+   - **common_mistake**: Recurring errors to avoid (highest ROI — prevent repeat failures)
+   - **task_specific**: Skills tied to a specific domain/task
+   - **general**: Broad techniques reusable across domains
 
 Respond in JSON:
 {
@@ -409,7 +462,8 @@ Respond in JSON:
       "skillName": "<name>",
       "description": "<what the skill does>",
       "content": "<skill content in markdown>",
-      "reasoning": "<how this addresses the failures>"
+      "reasoning": "<how this addresses the failures>",
+      "skillType": "common_mistake" | "task_specific" | "general"
     }
   ],
   "summary": "<1-2 sentence summary>"
@@ -427,6 +481,28 @@ export class EvolutionEngine extends EventEmitter {
   private proposals: Map<string, SkillProposal> = new Map();
   private snapshots: EvolutionSnapshot[] = [];
   private bestSnapshotIdx: number = -1;
+  private riskEngine: RiskEngine;
+  private budget: EvolutionBudget;
+  private cascadeDetector: CascadeDetector;
+  /** Task 2.1: 进化协调器——编排算子执行、错误匹配、热修复 */
+  readonly coordinator: EvolutionCoordinator;
+  /** Task 3.1: 自修改引擎 */
+  readonly selfModification: SelfModificationEngine;
+  /** Task 3.2: 沙箱执行器 */
+  readonly sandbox: SandboxExecutor;
+  /** Task 3.4: 进化锁 */
+  readonly evoLock: EvolutionLock;
+  /** Task 4.5: 工作流引擎（用于工作流级进化分析） */
+  readonly workflowEngine: WorkflowEngine;
+  /** Phase 6 (Task 6.4): 渐进自动化管理器 */
+  readonly progressiveAutomation: ProgressiveAutomation;
+  /** Phase 6 (Task 6.3): 会话连续性管理器 */
+  readonly sessionContinuity: SessionContinuityManager;
+
+  // P1-1 瘦身: 策略学习器（替代原 strategyCache / toolPatternStats / promptFeedbackLog）
+  readonly strategyLearner: StrategyLearner;
+  // P1-2: 编码委托器（外部 AI 编程工具委托与验证）
+  readonly codingDelegator: CodingDelegator;
 
   // C-4: 内存增长上限，超出时 LRU 淘汰
   private static readonly MAX_PROPOSALS = 1000;
@@ -438,13 +514,43 @@ export class EvolutionEngine extends EventEmitter {
   // C-3: 快照自动触发计数器
   private _proposalsAppliedSinceSnapshot = 0;
   private static readonly AUTO_SNAPSHOT_INTERVAL = 5;
+  // [审查 P0-1]: analyzerAgentId → analyzerProviderId + analyzerModelId（纯 LLM 调用，不走 Agent）
+  private _analyzerProviderId: string | null = null;
+  private _analyzerModelId: string | null = null;
+  /** ProviderStore 引用（可选，用于解析分析器 LLM 的 apiKey/baseUrl） */
+  private providerStore?: { get(id: string): { apiKey?: string; baseUrl?: string; isEnabled?: boolean } | undefined };
 
-  constructor(agentManager: AgentManager, nudgeConfig?: Partial<NudgeConfig>, skillsDir = "./skills") {
+  constructor(
+    agentManager: AgentManager,
+    nudgeConfig?: Partial<NudgeConfig>,
+    skillsDir = "./skills",
+    providerStore?: { get(id: string): { apiKey?: string; baseUrl?: string; isEnabled?: boolean } | undefined },
+  ) {
     super();
     this.agentManager = agentManager;
     this.skillsDir = skillsDir;
     this.nudge = new NudgeTracker(nudgeConfig);
     this.cases = new CaseCollector();
+    this.riskEngine = new RiskEngine();
+    this.budget = new EvolutionBudget();
+    this.cascadeDetector = new CascadeDetector();
+    this.coordinator = new EvolutionCoordinator();
+
+    // Task 2.2: 注册三算子
+    registerOperator("revision", RevisionOperator);
+    registerOperator("recombination", RecombinationOperator);
+    registerOperator("refinement", RefinementOperator);
+    this.selfModification = new SelfModificationEngine();
+    this.sandbox = new SandboxExecutor();
+    this.evoLock = new EvolutionLock();
+    this.workflowEngine = new WorkflowEngine();
+    this.progressiveAutomation = new ProgressiveAutomation();
+    this.sessionContinuity = new SessionContinuityManager();
+    // P1-1 瘦身: 策略学习器注入 CaseCollector
+    this.strategyLearner = new StrategyLearner(this.cases);
+    // P1-2: 编码委托器（供外部调用委托 AI 编程任务）
+    this.codingDelegator = new CodingDelegator();
+    this.providerStore = providerStore;
   }
 
   // ─── Interaction Recording ──────────────────────────────────
@@ -462,6 +568,8 @@ export class EvolutionEngine extends EventEmitter {
     failureCategory?: InteractionCase["failureCategory"];
     /** T2.4：来源/反思详情等额外信息（metadata.source="reflection" 用于去重） */
     metadata?: Record<string, unknown>;
+    /** Task 4.5: 关联的工作流 ID */
+    workflowId?: string;
   }): InteractionCase {
     const interactionCase: InteractionCase = {
       id: `case_${uuid().slice(0, 8)}`,
@@ -476,6 +584,7 @@ export class EvolutionEngine extends EventEmitter {
       failureCategory: data.failureCategory,
       timestamp: new Date(),
       ...(data.metadata ? { metadata: data.metadata } : {}),
+      ...(data.workflowId ? { workflowId: data.workflowId } : {}),
     };
 
     this.cases.addCase(interactionCase);
@@ -499,6 +608,23 @@ export class EvolutionEngine extends EventEmitter {
     if (!interactionCase.success) {
       this.emit("case:failure", interactionCase);
 
+      // Task 1.5: 级联故障检测
+      const cascadeResult = this.cascadeDetector.check(this.cases.getFailureCases());
+      if (cascadeResult.detected) {
+        this.emit("cascade:detected", {
+          signature: cascadeResult.signature,
+          confidence: cascadeResult.confidence,
+          involvedCases: cascadeResult.involvedCaseIds,
+          recommendation: cascadeResult.recommendation,
+          agentId: data.agentId,
+        });
+        logger.warn({
+          agentId: data.agentId,
+          signature: cascadeResult.signature?.id,
+          confidence: cascadeResult.confidence,
+        }, "Cascade failure detected during interaction recording");
+      }
+
       // C-1: 自动失败分析（积累到阈值时触发，1小时冷却期）
       const failures = this.cases.getFailureCases();
       const now = Date.now();
@@ -517,7 +643,11 @@ export class EvolutionEngine extends EventEmitter {
 
   // ─── Skill Evolution (MemSkill-style) ──────────────────────
 
-  /** Trigger evolution analysis using an LLM agent */
+  /**
+   * Trigger evolution analysis using the EvolutionCoordinator.
+   * Phase 6 (P0-1 修复): 优先走 Coordinator 算子体系，
+   * 无可用算子时降级走老 LLM 直接分析路径。
+   */
   async analyzeFailures(analyzerAgentId?: string): Promise<SkillProposal[]> {
     // T2.4 v1.3 防双触发：过滤掉已被在线 reflection 处理过的 case，
     //            避免「在线反思 + 离线 Nudge」对同一失败重复生成技能提案。
@@ -529,36 +659,127 @@ export class EvolutionEngine extends EventEmitter {
       return [];
     }
 
-    // Build analysis prompt
-    const casesText = failures.slice(0, 20).map((c, i) => {
-      return `### Case ${i + 1} [${c.id}]
-- Agent: ${c.agentId}
-- User: ${c.userMessage.slice(0, 200)}
-- Response: ${c.agentResponse.slice(0, 200)}
-- Tools used: ${c.toolCalls.join(", ") || "none"}
-- Failure: ${c.failureReason ?? "unknown"}
-- Category: ${c.failureCategory ?? "other"}`;
-    }).join("\n\n");
+    // P0-1 修复: 预算检查（与 triggerReview 对齐）
+    const budgetCheck = this.budget.canStartCycle();
+    if (budgetCheck.blocked) {
+      logger.info({ reason: budgetCheck.reason }, "Failure analysis blocked by budget");
+      return [];
+    }
+    this.budget.startCycle();
 
-    const prompt = ANALYSIS_PROMPT
-      .replace("{{count}}", String(failures.length))
-      .replace("{{cases}}", casesText);
-
-    // Use an existing agent or the first available one for analysis
     const agentId = analyzerAgentId ?? this.getFirstAgentId();
     if (!agentId) {
       logger.warn("No agent available for evolution analysis");
+      this.budget.skipCycle();
       return [];
     }
 
-    const agent = this.agentManager.getAgent(agentId);
-    if (!agent) {
-      logger.warn({ agentId }, "Analyzer agent not found");
-      return [];
-    }
-
+    // P0-1 修复: 优先尝试 Coordinator 算子体系
     try {
-      const { response } = await agent.chat(prompt, `evolution_analysis_${Date.now()}`);
+      // P2-1: 渐进自动化 — 检查是否需要用户确认
+      const needsConfirmation = this.progressiveAutomation.requiresConfirmation(
+        `进化分析：${failures.length} 个失败案例`,
+        agentId,
+      );
+      if (needsConfirmation) {
+        logger.debug({ agentId, failureCount: failures.length },
+          "Evolution analysis requires confirmation (automation level too low)");
+      }
+
+      const allCases = this.cases.getAllCases();
+      const cycleOutput = await this.coordinator.runCycle({
+        failureCases: failures,
+        allCases,
+        agentManager: this.agentManager,
+        agentId,
+      });
+
+      // P2-1: 记录自动化操作结果
+      this.progressiveAutomation.recordAction({
+        agentId,
+        type: "evolution:analyze",
+        description: `进化分析：${failures.length} 个失败案例 → ${cycleOutput.proposals.length} 个提案`,
+        success: cycleOutput.proposals.length > 0 || cycleOutput.hotfixApplied,
+      });
+
+      // 如果算子生成了提案，直接使用
+      if (cycleOutput.proposals.length > 0) {
+        for (const p of cycleOutput.proposals) {
+          this.proposals.set(p.id, p);
+        }
+        this.pruneProposals();
+
+        this.emit("evolution:analyzed", {
+          proposals: cycleOutput.proposals,
+          failureCount: failures.length,
+          errorMatch: cycleOutput.errorMatch,
+          hotfixApplied: cycleOutput.hotfixApplied,
+          skippedOperators: cycleOutput.skippedOperators,
+          source: "coordinator",
+        });
+
+        logger.info({
+          proposals: cycleOutput.proposals.length,
+          failures: failures.length,
+          hotfixApplied: cycleOutput.hotfixApplied,
+          skippedOperators: cycleOutput.skippedOperators,
+        }, "Evolution analysis complete via Coordinator");
+
+        this.budget.endCycle();
+        return cycleOutput.proposals;
+      }
+
+      // 算子无提案，但触发了热修复——也算成功
+      if (cycleOutput.hotfixApplied) {
+        this.emit("evolution:analyzed", {
+          proposals: [],
+          failureCount: failures.length,
+          errorMatch: cycleOutput.errorMatch,
+          hotfixApplied: true,
+          source: "coordinator",
+        });
+        this.budget.endCycle();
+        return [];
+      }
+
+      // Coordinator 无可用算子 → 降级到老 LLM 路径
+      logger.info({ skippedOperators: cycleOutput.skippedOperators },
+        "Coordinator returned no proposals, fallback to direct LLM analysis");
+    } catch (coordErr: any) {
+      // Coordinator 执行失败，降级到老路径
+      logger.warn({ err: coordErr.message }, "Coordinator cycle failed, fallback to direct LLM analysis");
+    }
+
+    // ── 降级兜底：纯 LLM 直接分析路径（不走 Agent，避免 system prompt/工具污染）──
+    try {
+      const llmConfig = this.resolveAnalyzerLlmConfig();
+      if (!llmConfig) {
+        logger.warn("No LLM config available for evolution analysis");
+        this.budget.skipCycle();
+        return [];
+      }
+
+      // 记录一次 LLM 调用
+      const llmCheck = this.budget.recordLlmCall();
+      if (llmCheck.blocked) {
+        logger.info({ reason: llmCheck.reason }, "LLM call blocked by budget");
+        this.budget.skipCycle();
+        return [];
+      }
+
+      // Build analysis prompt
+      const casesText = failures.slice(0, 20).map((c, i) => {
+        return `### Case ${i + 1} [${c.id}]\n- Agent: ${c.agentId}\n- User: ${c.userMessage.slice(0, 200)}\n- Response: ${c.agentResponse.slice(0, 200)}\n- Tools used: ${c.toolCalls.join(", ") || "none"}\n- Failure: ${c.failureReason ?? "unknown"}\n- Category: ${c.failureCategory ?? "other"}`;
+      }).join("\n\n");
+
+      const prompt = ANALYSIS_PROMPT
+        .replace("{{count}}", String(failures.length))
+        .replace("{{cases}}", casesText);
+
+      // 纯 LLM 调用：不经过 Agent 的 system prompt、工具、对话历史
+      const llm = new LLMProvider(llmConfig);
+      const llmResponse = await llm.complete({ messages: [{ role: "user", content: prompt }] });
+      const response = llmResponse.content ?? "";
 
       // Parse proposals from LLM response
       const proposals = this.parseProposals(response, failures);
@@ -567,11 +788,13 @@ export class EvolutionEngine extends EventEmitter {
       }
       this.pruneProposals(); // C-4: 淘汰超限提案
 
-      this.emit("evolution:analyzed", { proposals, failureCount: failures.length });
-      logger.info({ proposals: proposals.length, failures: failures.length }, "Evolution analysis complete");
+      this.emit("evolution:analyzed", { proposals, failureCount: failures.length, source: "legacy" });
+      logger.info({ proposals: proposals.length, failures: failures.length }, "Evolution analysis complete (legacy path)");
+      this.budget.endCycle();
       return proposals;
     } catch (err: any) {
       logger.error({ err: err.message }, "Evolution analysis failed");
+      this.budget.skipCycle();
       return [];
     }
   }
@@ -580,16 +803,93 @@ export class EvolutionEngine extends EventEmitter {
    * Trigger a background review (Hermes-style nudge).
    * Phase B-1: 使用隔离的 Review Agent 执行（学 Hermes _spawn_background_review），
    * 避免 review prompt 污染主 agent 的对话历史。
+   * P0-1 修复: 优先走 Coordinator 算子体系，无算子时降级到老 review agent.chat() 路径。
    */
   async triggerReview(agentId: string, options: {
     reviewMemory?: boolean;
     reviewSkills?: boolean;
     conversationContext?: string;
   }): Promise<{ memoryActions: number; skillProposals: SkillProposal[] }> {
-    // Phase B-1: 创建隔离的 Review Agent（学 Hermes Fork Agent 模式）
-    const reviewAgent = this.agentManager.createReviewAgent(agentId);
-    const agent = reviewAgent ?? this.agentManager.getAgent(agentId);
-    if (!agent) throw new Error(`Agent '${agentId}' not found`);
+    // Task 1.4: 预算检查——是否允许开始新进化周期
+    const budgetCheck = this.budget.canStartCycle();
+    if (budgetCheck.blocked) {
+      logger.info({ reason: budgetCheck.reason }, "Evolution cycle blocked by budget");
+      return { memoryActions: 0, skillProposals: [] };
+    }
+    this.budget.startCycle();
+
+    // 记录一次 LLM 调用（review agent chat）
+    const llmCheck = this.budget.recordLlmCall();
+    if (llmCheck.blocked) {
+      logger.info({ reason: llmCheck.reason }, "LLM call blocked by budget");
+      this.budget.skipCycle();
+      return { memoryActions: 0, skillProposals: [] };
+    }
+
+    // P0-1 修复: 优先尝试 Coordinator 算子体系
+    let coordinatorProposals: SkillProposal[] = [];
+    try {
+      const failures = this.cases.getFailureCases().filter(
+        (c) => (c.metadata as Record<string, unknown> | undefined)?.source !== "reflection",
+      );
+      if (failures.length > 0 && options.reviewSkills) {
+        // P2-1: 渐进自动化 — 检查是否需要用户确认
+        const needsReviewConfirmation = this.progressiveAutomation.requiresConfirmation(
+          `Review 审查：${failures.length} 个失败案例`,
+          agentId,
+        );
+        if (needsReviewConfirmation) {
+          logger.debug({ agentId, failureCount: failures.length },
+            "Review requires confirmation (automation level too low)");
+        }
+
+        const allCases = this.cases.getAllCases();
+        const cycleOutput = await this.coordinator.runCycle({
+          failureCases: failures,
+          allCases,
+          agentManager: this.agentManager,
+          agentId,
+        });
+
+        // P2-1: 记录自动化操作结果
+        this.progressiveAutomation.recordAction({
+          agentId,
+          type: "evolution:review",
+          description: `Review 审查：${failures.length} 个失败案例 → ${cycleOutput.proposals.length} 个提案`,
+          success: cycleOutput.proposals.length > 0,
+        });
+
+        if (cycleOutput.proposals.length > 0) {
+          for (const p of cycleOutput.proposals) {
+            this.proposals.set(p.id, p);
+          }
+          this.pruneProposals();
+          coordinatorProposals = cycleOutput.proposals;
+
+          logger.info({
+            proposals: coordinatorProposals.length,
+            coordinatorProposals: coordinatorProposals.length,
+            skippedOperators: cycleOutput.skippedOperators,
+          }, "Review complete via Coordinator");
+
+          // 如果 Coordinator 产生了提案，跳过老 LLM review 路径
+          this.emit("review:complete", { agentId, memoryActions: 0, proposals: coordinatorProposals });
+          this.budget.endCycle();
+          return { memoryActions: 0, skillProposals: coordinatorProposals };
+        }
+      }
+    } catch (coordErr: any) {
+      // Coordinator 执行失败，降级到老路径
+      logger.warn({ err: coordErr.message }, "Coordinator review failed, fallback to legacy review");
+    }
+
+    // ── 降级兜底：纯 LLM review（不走 Agent，避免 system prompt/工具/reflection 污染）──
+    const llmConfig = this.resolveAnalyzerLlmConfig();
+    if (!llmConfig) {
+      logger.warn("No LLM config available for review");
+      this.budget.skipCycle();
+      return { memoryActions: 0, skillProposals: [] };
+    }
 
     let prompt: string;
     if (options.reviewMemory && options.reviewSkills) {
@@ -604,10 +904,11 @@ export class EvolutionEngine extends EventEmitter {
       prompt = `Recent conversation:\n${options.conversationContext}\n\n${prompt}`;
     }
 
-    const sessionId = `review_${agentId}_${Date.now()}`;
-
     try {
-      const { response } = await agent.chat(prompt, sessionId);
+      // 纯 LLM 调用：不经过 Agent 的 system prompt、工具、对话历史、reflection
+      const llm = new LLMProvider(llmConfig);
+      const llmResponse = await llm.complete({ messages: [{ role: "user", content: prompt }] });
+      const response = llmResponse.content ?? "";
 
       const proposals: SkillProposal[] = [];
       let memoryActions = 0;
@@ -617,23 +918,28 @@ export class EvolutionEngine extends EventEmitter {
         try {
           const jsonMatch = response.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            if (parsed.action && parsed.action !== "no_change") {
-              const proposal: SkillProposal = {
-                id: `prop_${uuid().slice(0, 8)}`,
-                action: parsed.action,
-                skillName: parsed.skillName ?? "unnamed_skill",
-                description: parsed.description ?? "",
-                content: parsed.content ?? "",
-                reasoning: parsed.reasoning ?? "",
-                basedOnCases: [],
-                status: "pending",
-                createdAt: new Date(),
-                // Phase B-3: 解析 patch 操作
-                patchOperations: parsed.patchOperations ?? undefined,
-              };
-              proposals.push(proposal);
-              this.proposals.set(proposal.id, proposal);
+            const parsed = safeJsonParseAny(jsonMatch[0], "engine-review-skills");
+            if (parsed && typeof parsed === "object") {
+              const data = parsed as Record<string, unknown>;
+              if (data.action && data.action !== "no_change") {
+                const proposal: SkillProposal = {
+                  id: `prop_${uuid().slice(0, 8)}`,
+                  action: data.action as SkillProposal["action"],
+                  skillName: (data.skillName as string) ?? "unnamed_skill",
+                  description: (data.description as string) ?? "",
+                  content: (data.content as string) ?? "",
+                  reasoning: (data.reasoning as string) ?? "",
+                  basedOnCases: [],
+                  status: "pending",
+                  createdAt: new Date(),
+                  // Phase B-3: 解析 patch 操作
+                  patchOperations: data.patchOperations as SkillProposal["patchOperations"],
+                  // Task 1.2: 三层技能库类型
+                  skillType: data.skillType as SkillProposal["skillType"],
+                };
+                proposals.push(proposal);
+                this.proposals.set(proposal.id, proposal);
+              }
             }
           }
         } catch {
@@ -647,12 +953,13 @@ export class EvolutionEngine extends EventEmitter {
       }
 
       this.emit("review:complete", { agentId, memoryActions, proposals });
+      // Task 1.4: 正常结束周期
+      this.budget.endCycle();
       return { memoryActions, skillProposals: proposals };
-    } finally {
-      // Phase B-1: 清理临时 review agent 资源（学 Hermes review_agent.close()）
-      if (reviewAgent) {
-        reviewAgent.destroy();
-      }
+    } catch (err: any) {
+      logger.error({ err: err.message }, "Review LLM call failed");
+      this.budget.skipCycle();
+      return { memoryActions: 0, skillProposals: [] };
     }
   }
 
@@ -730,8 +1037,13 @@ ${options.currentMemoryState}
     return all;
   }
 
-  /** Approve a proposal (auto-applies if autoApplySkills is enabled) */
-  approveProposal(proposalId: string): SkillProposal | null {
+  /**
+   * Approve a proposal (auto-applies if autoApplySkills is enabled).
+   *
+   * 如果提案包含 targetCode（源码级修改），自动路由到
+   * applyCodeProposal() 走完整的沙箱验证 + 人工审核闸门链路。
+   */
+  async approveProposal(proposalId: string): Promise<SkillProposal | null> {
     const p = this.proposals.get(proposalId);
     if (!p) return null;
     p.status = "approved";
@@ -739,6 +1051,10 @@ ${options.currentMemoryState}
 
     // Auto-apply if enabled
     if (this.nudge.getConfig().autoApplySkills) {
+      // 源码级提案走代码修改链路（沙箱 + 人工审核）
+      if (p.targetCode) {
+        return this.applyCodeProposal(proposalId);
+      }
       return this.applyProposal(proposalId);
     }
     return p;
@@ -758,11 +1074,19 @@ ${options.currentMemoryState}
    * and marks the proposal as "applied".
    * Phase B-3: 支持 patch 模式增量修改（学 Hermes _patch_skill）。
    * Spec v3 Task 8: 应用前验证（安全扫描 + 完整性检查）。
+   *
+   * 如果提案包含 targetCode，委托到 applyCodeProposal() 走
+   * 沙箱验证 + 自修改引擎 + 人工审核闸门链路。
    */
-  applyProposal(proposalId: string): SkillProposal | null {
+  async applyProposal(proposalId: string): Promise<SkillProposal | null> {
     const p = this.proposals.get(proposalId);
     if (!p) return null;
     if (p.status === "applied") return p; // Already applied
+
+    // 源码级提案委托到 applyCodeProposal（沙箱 + 自修改引擎 + 人工审核）
+    if (p.targetCode) {
+      return this.applyCodeProposal(proposalId);
+    }
 
     // Spec v3 Task 8: 应用前验证
     const validation = this.validateProposal(p);
@@ -783,6 +1107,13 @@ ${options.currentMemoryState}
     }
 
     try {
+      // Task 1.4: 文件修改配额检查
+      const fileCheck = this.budget.recordFileModification();
+      if (fileCheck.blocked) {
+        logger.warn({ proposalId, reason: fileCheck.reason }, "File modification blocked by budget");
+        return null;
+      }
+
       // Ensure skills directory exists
       if (!existsSync(this.skillsDir)) {
         mkdirSync(this.skillsDir, { recursive: true });
@@ -805,7 +1136,7 @@ ${options.currentMemoryState}
         writeFileSync(filePath, content, "utf-8");
       } else {
         // Create / Update 模式：全量写入（现有逻辑）
-        const fileContent = [
+        const frontmatterLines = [
           "---",
           `name: ${p.skillName}`,
           `description: ${p.description}`,
@@ -814,6 +1145,13 @@ ${options.currentMemoryState}
           `action: ${p.action}`,
           `created_at: ${p.createdAt.toISOString()}`,
           `applied_at: ${new Date().toISOString()}`,
+        ];
+        // Task 1.2: 三层技能库分类标记
+        if (p.skillType) {
+          frontmatterLines.push(`category: ${p.skillType}`);
+        }
+        const fileContent = [
+          ...frontmatterLines,
           "---",
           "",
           p.content,
@@ -842,8 +1180,175 @@ ${options.currentMemoryState}
   }
 
   /** Mark a proposal as applied (alias for applyProposal — actually deploys) */
-  markApplied(proposalId: string): SkillProposal | null {
+  async markApplied(proposalId: string): Promise<SkillProposal | null> {
     return this.applyProposal(proposalId);
+  }
+
+  /**
+   * Task 3.1: 应用代码级提案（对标 Gödel action_adjust_logic）
+   *
+   * 不是写入 .md 技能文件，而是直接修改 TypeScript 源码。
+   * 需要 targetCode 字段、沙箱验证、进化锁保护。
+   */
+  async applyCodeProposal(proposalId: string): Promise<SkillProposal | null> {
+    const p = this.proposals.get(proposalId);
+    if (!p?.targetCode) return null;
+    if (p.status === "applied") return p;
+
+    // Task 3.5: 人工审核闸门——modify 操作必须人工审核
+    if (p.targetCode.operation === "modify" && !p.requiresHumanReview) {
+      p.requiresHumanReview = true;
+      p.reviewReason = "Code modification proposals require human review before application";
+      this.emit("proposal:needs_review", { proposalId, reason: p.reviewReason });
+      logger.info({ proposalId }, "Code modification proposal flagged for human review");
+      return p;
+    }
+
+    // Task 3.4: 进化锁保护
+    const result = await this.evoLock.withLock(async () => {
+      // Task 3.2: 沙箱验证
+      const scanResult = this.sandbox.scanContent(p.targetCode!.newCode);
+      if (!scanResult.passed) {
+        logger.warn({ proposalId, errors: scanResult.errors }, "Sandbox scan failed");
+        p.status = "rejected";
+        return null;
+      }
+
+      // 原子写入 + 编译验证
+      const writeResult = await this.sandbox.atomicWriteAndVerify(
+        p.targetCode!.modulePath,
+        this.selfModification.readLogic(p.targetCode!.modulePath),
+      );
+
+      if (!writeResult.success) {
+        logger.warn({ proposalId, error: writeResult.error }, "Code proposal write failed");
+        return null;
+      }
+
+      // 执行源码修改
+      const changeResult = this.selfModification.adjustLogic({
+        modulePath: p.targetCode!.modulePath,
+        targetName: p.targetCode!.targetName,
+        newCode: p.targetCode!.newCode,
+        operation: p.targetCode!.operation,
+        proposalId: p.id,
+      });
+
+      if (!changeResult.success) {
+        logger.warn({ proposalId, error: changeResult.error }, "Code modification failed");
+        return null;
+      }
+
+      p.status = "applied";
+      this.emit("proposal:code_applied", { ...p, snapshotId: changeResult.snapshotId });
+      logger.info({ proposalId, operation: p.targetCode!.operation, modulePath: p.targetCode!.modulePath },
+        "Code proposal applied");
+      return p;
+    }, `proposal_${proposalId}`);
+
+    return result;
+  }
+
+  /**
+   * Task 3.1: 让 LLM 在生成提案前先读取目标源码（对标 Gödel action_read_logic）
+   */
+  readCodeProposal(modulePath: string, targetName?: string): string {
+    return this.selfModification.readLogic(modulePath, targetName);
+  }
+
+  /**
+   * Task 3.5: 人工审核通过代码级提案
+   */
+  approveCodeProposal(proposalId: string): SkillProposal | null {
+    const p = this.proposals.get(proposalId);
+    if (!p?.targetCode) return null;
+    p.requiresHumanReview = false;
+    p.status = "approved";
+    this.emit("proposal:code_approved", p);
+    logger.info({ proposalId }, "Code proposal approved by human review");
+    return p;
+  }
+
+  // ─── Skill Effectiveness Tracking (Task 2.4) ───────────────
+
+  /**
+   * 追踪提案应用前后的效果对比。
+   * key = proposalId，value = 应用前后的成功率。
+   */
+  private _proposalEffectiveness = new Map<string, { beforeSuccessRate: number; afterSuccessRate: number }>();
+
+  /**
+   * 递归验证闭环（借鉴 SkillRL 的 enable_dynamic_update）
+   *
+   * 比较提案应用前后同类 case 的成功率变化。
+   * 成功率下降超过阈值 → 触发技能更新。
+   */
+  async checkSkillEffectiveness(proposalId: string, updateThreshold: number = 0.4): Promise<{
+    degraded: boolean;
+    beforeRate: number;
+    afterRate: number;
+    delta: number;
+  }> {
+    const proposal = this.proposals.get(proposalId);
+    if (!proposal || proposal.status !== "applied") {
+      return { degraded: false, beforeRate: 0, afterRate: 0, delta: 0 };
+    }
+
+    // 获取相同技能名的所有相关 case
+    const allCases = this.cases.getAllCases();
+    const now = Date.now();
+    const appliedAt = proposal.createdAt.getTime();
+
+    // 应用前的 case（同类 failureCategory）
+    const beforeCases = allCases.filter(
+      (c) => c.timestamp.getTime() < appliedAt
+    );
+    // 应用后的 case
+    const afterCases = allCases.filter(
+      (c) => c.timestamp.getTime() >= appliedAt
+    );
+
+    const beforeRate = beforeCases.length > 0
+      ? beforeCases.filter((c) => c.success).length / beforeCases.length
+      : 1;
+    const afterRate = afterCases.length > 0
+      ? afterCases.filter((c) => c.success).length / afterCases.length
+      : beforeRate;
+
+    const delta = afterRate - beforeRate;
+    const degraded = delta < -updateThreshold;
+
+    // 存储效果数据
+    this._proposalEffectiveness.set(proposalId, {
+      beforeSuccessRate: beforeRate,
+      afterSuccessRate: afterRate,
+    });
+
+    if (degraded) {
+      logger.warn({
+        proposalId,
+        beforeRate: beforeRate.toFixed(2),
+        afterRate: afterRate.toFixed(2),
+        delta: delta.toFixed(2),
+      }, "Skill effectiveness degraded — may need rollback or re-evolution");
+
+      this.emit("skill:degraded", {
+        proposalId,
+        skillName: proposal.skillName,
+        beforeRate,
+        afterRate,
+        delta,
+      });
+    }
+
+    return { degraded, beforeRate, afterRate, delta };
+  }
+
+  /**
+   * 获取所有已追踪的提案效果数据
+   */
+  getProposalEffectiveness(): Map<string, { beforeSuccessRate: number; afterSuccessRate: number }> {
+    return new Map(this._proposalEffectiveness);
   }
 
   // ─── Proposal Validation (Spec v3 Task 8) ─────────────────
@@ -895,6 +1400,20 @@ ${options.currentMemoryState}
     } catch (err: any) {
       // 解析失败不阻止应用，但记录警告
       logger.debug({ err: err.message }, "Proposal content parse warning");
+    }
+
+    // 3. Task 1.1: 风险评分引擎
+    const fixType = proposal.action === "patch" ? "patch" : "heal";
+    const riskResult = this.riskEngine.score(proposal.skillName, proposal.description, fixType);
+    proposal.riskScore = riskResult.score;
+    proposal.riskDecision = riskResult.decision;
+
+    // escalate 级别自动拒绝
+    if (riskResult.decision === "escalate") {
+      errors.push(`Risk escalated: score=${riskResult.score}, profile=${riskResult.profile}`);
+      proposal.status = "rejected";
+      this.emit("proposal:escalated", { ...proposal, riskResult });
+      logger.warn({ proposalId: proposal.id, riskResult }, "Proposal escalated and auto-rejected");
     }
 
     return { valid: errors.length === 0, errors, scanVerdict };
@@ -1082,8 +1601,316 @@ ${options.currentMemoryState}
     }
   }
 
+  // ─── Workflow Evolution (Task 4.5) ──────────────────────────
+
+  /**
+   * 记录工作流执行失败，触发工作流级进化分析。
+   *
+   * 当工作流中某个步骤失败时调用此方法。
+   * 系统会自动分析失败步骤的根因，并生成工作流 patch 提案。
+   */
+  async recordWorkflowFailure(
+    workflowId: string,
+    agentId: string,
+    sessionId: string,
+    failedStepIndex: number,
+    error: string,
+  ): Promise<void> {
+    const workflow = this.workflowEngine.getWorkflow(workflowId);
+    if (!workflow) {
+      logger.warn({ workflowId }, "Workflow not found for failure recording");
+      return;
+    }
+
+    // 记录为失败 case（标记 workflowId）
+    const failedStep = workflow.steps[failedStepIndex];
+    this.recordInteraction({
+      agentId,
+      sessionId,
+      userMessage: `[Workflow] ${workflow.name}`,
+      agentResponse: `工作流步骤 ${failedStepIndex + 1}（${failedStep?.tool ?? "unknown"}）执行失败`,
+      toolCalls: [failedStep?.tool ?? "unknown"],
+      success: false,
+      failureReason: error,
+      failureCategory: "wrong_tool",
+      workflowId,
+    });
+
+    logger.info({
+      workflowId,
+      workflowName: workflow.name,
+      failedStepIndex,
+      tool: failedStep?.tool,
+    }, "Workflow failure recorded for evolution analysis");
+  }
+
+  /**
+   * 分析工作流失败并生成改进提案。
+   *
+   * 三算子可对工作流定义执行 patch 操作：
+   * - Revision: 替换失败步骤为替代方案
+   * - Recombination: 混合不同工作流的成功步骤
+   * - Refinement: 增量调整参数/重试次数
+   */
+  async analyzeWorkflow(
+    workflowId: string,
+    analyzerAgentId?: string,
+  ): Promise<SkillProposal[]> {
+    const workflow = this.workflowEngine.getWorkflow(workflowId);
+    if (!workflow) return [];
+
+    // 获取所有与此工作流相关的失败 case
+    const relatedCases = this.cases.getAllCases().filter(
+      c => c.workflowId === workflowId && !c.success,
+    );
+    if (relatedCases.length === 0) return [];
+
+    // 构建工作流分析 prompt
+    const casesText = relatedCases.slice(0, 10).map((c, i) =>
+      `### Failure ${i + 1}
+- Step: ${c.toolCalls.join(", ")}
+- Error: ${c.failureReason ?? "unknown"}
+- Time: ${c.timestamp.toISOString()}`
+    ).join("\n\n");
+
+    const workflowStepsText = workflow.steps.map((s, i) =>
+      `${i + 1}. ${s.tool}: ${s.description}`
+    ).join("\n");
+
+    const prompt = `You are analyzing a workflow that has failed. Suggest improvements.
+
+## Workflow
+Name: ${workflow.name}
+Description: ${workflow.description}
+Steps:
+${workflowStepsText}
+
+## Failures (${relatedCases.length} cases)
+${casesText}
+
+## Instructions
+1. Identify which step(s) are most problematic
+2. Suggest concrete changes: adjust parameters, increase retries, replace tool, add fallback
+3. Propose as a patch to the workflow definition
+
+Respond in JSON:
+{
+  "analysis": "<root cause summary>",
+  "proposals": [{
+    "action": "patch",
+    "skillName": "${workflow.name}",
+    "description": "<what changed>",
+    "content": "<updated workflow YAML>",
+    "reasoning": "<why this helps>",
+    "skillType": "task_specific"
+  }]
+}`;
+
+    const agentId = analyzerAgentId ?? this.getFirstAgentId();
+    if (!agentId) return [];
+
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) return [];
+
+    // 纯 LLM 直接分析路径（不走 Agent，避免 system prompt/工具污染）
+    try {
+      const llmConfig = this.resolveAnalyzerLlmConfig();
+      if (!llmConfig) {
+        logger.warn("No LLM config available for workflow analysis");
+        return [];
+      }
+
+      const llm = new LLMProvider(llmConfig);
+      const llmResponse = await llm.complete({ messages: [{ role: "user", content: prompt }] });
+      const response = llmResponse.content ?? "";
+      const proposals = this.parseProposals(response, relatedCases);
+
+      // 标记提案与工作流相关
+      for (const p of proposals) {
+        (p as any)._workflowId = workflowId;
+        this.proposals.set(p.id, p);
+      }
+      this.pruneProposals();
+
+      this.emit("workflow:analyzed", { workflowId, proposals: proposals.length });
+      logger.info({ workflowId, proposals: proposals.length }, "Workflow analysis complete");
+      return proposals;
+    } catch (err: any) {
+      logger.error({ workflowId, err: err.message }, "Workflow analysis failed");
+      return [];
+    }
+  }
+
+  // ─── Phase 6 (Task 6.4): 策略缓存与行为进化 ── 委托给 StrategyLearner ──
+
+  /** 从成功案例中学习高频策略并缓存。 */
+  learnStrategy(params: {
+    name: string;
+    description: string;
+    toolSequence: string[];
+    paramTemplate?: Record<string, unknown>;
+    triggerKeywords: string[];
+    intentPattern?: string;
+  }): void {
+    this.strategyLearner.learnStrategy(params);
+  }
+
+  /** 查找匹配的高频策略。 */
+  findStrategy(intent: string): StrategyCacheEntry | undefined {
+    return this.strategyLearner.findStrategy(intent);
+  }
+
+  /** 根据历史案例优化工具调用顺序。 */
+  optimizeToolOrder(targetIntent: string): Array<{
+    recommendedOrder: string[];
+    confidence: number;
+    basedOnCases: number;
+    reasoning: string;
+  }> {
+    return this.strategyLearner.optimizeToolOrder(targetIntent);
+  }
+
+  /** 更新工具调用模式统计。 */
+  updateToolPatternStats(
+    toolName: string,
+    success: boolean,
+    duration: number,
+    params?: Record<string, unknown>,
+    context?: string,
+    predecessor?: string,
+    successor?: string,
+  ): void {
+    this.strategyLearner.updateToolPatternStats(toolName, success, duration, params, context, predecessor, successor);
+  }
+
+  /** 获取工具的模式统计。 */
+  getToolPatternStats(toolName: string): ToolPatternStats | undefined {
+    return this.strategyLearner.getToolPatternStats(toolName);
+  }
+
+  /**
+   * 记录用户对 Agent 回复的提示词反馈。
+   * 反馈分析后若负面率高，emit prompt:negative_feedback_trend 事件。
+   */
+  recordPromptFeedback(params: {
+    type: PromptFeedbackEntry["type"];
+    agentResponse: string;
+    userFeedback: string;
+    templateName?: string;
+  }): void {
+    this.strategyLearner.recordPromptFeedback(params);
+
+    // 负面反馈趋势检测（事件发射保留在 engine 侧）
+    const analysis = this.strategyLearner.analyzePromptFeedback();
+    if (analysis && analysis.negativeRatio >= 0.4) {
+      this.emit("prompt:negative_feedback_trend", {
+        negativeRatio: analysis.negativeRatio,
+        topIssue: analysis.topIssue,
+        totalRecent: analysis.totalRecent,
+        suggestion: "考虑调整系统提示词以改善用户体验",
+      });
+    }
+  }
+
+  /** 获取策略缓存统计。 */
+  getStrategyCacheStats(): {
+    totalStrategies: number;
+    mostUsed?: { name: string; useCount: number };
+    totalUseCount: number;
+  } {
+    return this.strategyLearner.getStrategyCacheStats();
+  }
+
   // ─── Helpers ───────────────────────────────────────────────
 
+  // ─── 分析器 LLM 配置（Provider+Model 选择，不走 Agent）───
+
+  /** 设置进化分析器 LLM（Provider ID + Model ID） */
+  setAnalyzerLlm(providerId: string | null, modelId: string | null): void {
+    this._analyzerProviderId = providerId;
+    this._analyzerModelId = modelId;
+    this.persistAnalyzerConfig();
+  }
+
+  /** 获取当前分析器 LLM 配置 */
+  getAnalyzerLlm(): { providerId: string | null; modelId: string | null } {
+    return { providerId: this._analyzerProviderId, modelId: this._analyzerModelId };
+  }
+
+  /**
+   * 解析分析器 LLM 配置。
+   * 优先级：用户配置的 provider+model > 首个 Agent 的 LLM 配置。
+   */
+  private resolveAnalyzerLlmConfig(): LLMProviderConfig | null {
+    // 1. 用户配置了 provider+model：从 ProviderStore 获取 apiKey/baseUrl
+    if (this._analyzerProviderId && this._analyzerModelId) {
+      if (this.providerStore) {
+        const record = this.providerStore.get(this._analyzerProviderId);
+        if (record?.apiKey && record?.isEnabled !== false) {
+          return {
+            type: "custom",
+            model: this._analyzerModelId,
+            apiKey: record.apiKey,
+            baseUrl: record.baseUrl,
+            providerId: this._analyzerProviderId,
+          };
+        }
+      }
+      // ProviderStore 不可用或 apiKey 缺失 → 降级到 Agent 配置
+      logger.warn({ providerId: this._analyzerProviderId },
+        "Analyzer provider not available in ProviderStore, falling back to Agent LLM config");
+    }
+
+    // 2. 降级：使用第一个可用 Agent 的 LLM 配置（纯 LLM 调用，不走 Agent.chat()）
+    const agents = this.agentManager.listAgents();
+    if (agents.length === 0) return null;
+    const firstAgent = this.agentManager.getAgent(agents[0].id);
+    if (!firstAgent?.config?.llmProvider) return null;
+    return firstAgent.config.llmProvider;
+  }
+
+  /** 持久化分析器 LLM 配置到 SQLite（独立 key） */
+  private persistAnalyzerConfig(): void {
+    import("../persistence/sqlite.js").then(({ saveConfigValue }) => {
+      saveConfigValue("evolution.analyzerProviderId", this._analyzerProviderId ?? "");
+      saveConfigValue("evolution.analyzerModelId", this._analyzerModelId ?? "");
+    }).catch(() => { /* 持久化失败不影响运行时 */ });
+  }
+
+  /** 从 SQLite 恢复分析器 LLM 配置（兼容旧版 analyzerAgentId → 自动迁移） */
+  async loadAnalyzerConfig(): Promise<void> {
+    try {
+      const { loadConfigValue } = await import("../persistence/sqlite.js");
+      const savedProviderId = loadConfigValue("evolution.analyzerProviderId");
+      const savedModelId = loadConfigValue("evolution.analyzerModelId");
+      if (savedProviderId && savedProviderId.length > 0 && savedModelId && savedModelId.length > 0) {
+        this._analyzerProviderId = savedProviderId;
+        this._analyzerModelId = savedModelId;
+        logger.info({ providerId: savedProviderId, modelId: savedModelId },
+          "Analyzer LLM config restored from SQLite");
+        return;
+      }
+
+      // 兼容旧版：尝试从 evolution.analyzerAgentId 迁移
+      const savedAgentId = loadConfigValue("evolution.analyzerAgentId");
+      if (savedAgentId && savedAgentId.length > 0) {
+        const agent = this.agentManager.getAgent(savedAgentId);
+        if (agent?.config?.llmProvider) {
+          this._analyzerProviderId = agent.config.llmProvider.providerId ?? null;
+          this._analyzerModelId = agent.config.llmProvider.model ?? null;
+          this.persistAnalyzerConfig(); // 写入新 key
+          logger.info({ oldAgentId: savedAgentId, providerId: this._analyzerProviderId, modelId: this._analyzerModelId },
+            "Migrated analyzer config from AgentId to Provider+Model");
+        }
+      }
+    } catch {
+      /* 加载失败不影响引擎初始化 */
+    }
+  }
+
+  /**
+   * 获取第一个可用 Agent ID（Coordinator 算子执行降级用）。
+   */
   private getFirstAgentId(): string | null {
     const agents = this.agentManager.listAgents();
     return agents.length > 0 ? agents[0].id : null;
@@ -1095,23 +1922,28 @@ ${options.currentMemoryState}
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return proposals;
 
-      const parsed = JSON.parse(jsonMatch[0]);
-      const rawProposals = parsed.proposals ?? [];
+      const parsed = safeJsonParseAny(jsonMatch[0], "engine-parse-proposals");
+      if (!parsed || typeof parsed !== "object") return proposals;
+      const data = parsed as Record<string, unknown>;
+      const rawProposals = (data.proposals as Array<Record<string, unknown>>) ?? [];
 
-      for (const raw of rawProposals) {
+      for (const item of rawProposals) {
+        const raw = item as Record<string, unknown>;
         if (!raw.action || raw.action === "no_change") continue;
         proposals.push({
           id: `prop_${uuid().slice(0, 8)}`,
-          action: raw.action,
-          skillName: raw.skillName ?? "unnamed",
-          description: raw.description ?? "",
-          content: raw.content ?? "",
-          reasoning: raw.reasoning ?? "",
+          action: raw.action as SkillProposal["action"],
+          skillName: (raw.skillName as string) ?? "unnamed",
+          description: (raw.description as string) ?? "",
+          content: (raw.content as string) ?? "",
+          reasoning: (raw.reasoning as string) ?? "",
           basedOnCases: cases.slice(0, 5).map((c) => c.id),
           status: "pending",
           createdAt: new Date(),
           // Phase B-3: 解析 patch 操作
-          patchOperations: raw.patchOperations ?? undefined,
+          patchOperations: raw.patchOperations as SkillProposal["patchOperations"],
+          // Task 1.2: 三层技能库类型
+          skillType: raw.skillType as SkillProposal["skillType"],
         });
       }
     } catch {

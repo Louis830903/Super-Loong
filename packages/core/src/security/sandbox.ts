@@ -27,6 +27,7 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:
 import { EventEmitter } from "eventemitter3";
 
 import { saveSecurityPolicy, loadSecurityPolicies, deleteSecurityPolicy as deleteSecurityPolicyDB, saveCredentialToDB, loadCredentialsFromDB, deleteCredentialFromDB } from "../persistence/sqlite.js";
+import { getEncryptionKey } from "./encryption-key.js";
 
 const logger = pino({ name: "security" });
 
@@ -362,18 +363,34 @@ export class CredentialVault {
   readonly persistent: boolean;
 
   constructor(masterKey?: string) {
-    // P1-09: Require an explicit master key — falling back to randomBytes means
-    // all encrypted credentials become unrecoverable after restart.
+    // 三层密钥源策略（防双重哈希）：
+    //   1. masterKey 参数或 CREDENTIAL_MASTER_KEY 环境变量（旧版兼容）→ 自哈希
+    //   2. SA_ENCRYPTION_KEY（新版统一标准）→ getEncryptionKey() 已哈希，直接使用
+    //   3. 都未设置 → 临时密钥 + 告警（重启后凭据不可恢复）
     const keySource = masterKey ?? process.env.CREDENTIAL_MASTER_KEY;
-    this.persistent = !!keySource;
-    if (!keySource) {
-      logger.error(
-        "[SECURITY] CREDENTIAL_MASTER_KEY is NOT set! " +
-        "Credentials will use an ephemeral key and become UNRECOVERABLE after restart. " +
-        "Set CREDENTIAL_MASTER_KEY in your .env file for production use.",
-      );
+    let keyFromLegacy = false;
+
+    if (keySource) {
+      // 旧版路径：CREDENTIAL_MASTER_KEY — 自哈希
+      this.encryptionKey = createHash("sha256").update(keySource).digest();
+      this.persistent = true;
+      keyFromLegacy = true;
+    } else {
+      // 新版路径：SA_ENCRYPTION_KEY — 直接使用已哈希密钥（不二次哈希！）
+      try {
+        this.encryptionKey = getEncryptionKey();
+        this.persistent = true;
+      } catch {
+        // SA_ENCRYPTION_KEY 未设置或弱密钥：降级到临时密钥
+        logger.error(
+          "[SECURITY] SA_ENCRYPTION_KEY 未设置或不符合安全要求！" +
+          "凭据将使用临时密钥，重启后不可恢复。" +
+          "请在 .env 中设置 SA_ENCRYPTION_KEY（推荐：openssl rand -hex 32）",
+        );
+        this.encryptionKey = createHash("sha256").update(randomBytes(32).toString("hex")).digest();
+        this.persistent = false;
+      }
     }
-    this.encryptionKey = createHash("sha256").update(keySource ?? randomBytes(32).toString("hex")).digest();
 
     // B-17: 持久化模式下，从 SQLite 加载已存储的凭证
     if (this.persistent) {
@@ -393,7 +410,60 @@ export class CredentialVault {
           });
         }
         if (saved.length > 0) {
-          logger.info({ count: saved.length }, "Credentials restored from SQLite");
+          logger.info({ count: saved.length, keyFromLegacy }, "Credentials restored from SQLite");
+
+          // Task 1a: 凭据迁移 — 如果用旧密钥加载了凭据但新密钥已配置，自动迁移
+          if (keyFromLegacy) {
+            // 尝试用新密钥（若已配置），无法获取则不迁移
+            try {
+              const newKey = getEncryptionKey();
+              if (!newKey.equals(this.encryptionKey)) {
+                logger.info({ count: saved.length },
+                  "检测到 SA_ENCRYPTION_KEY 已配置，正在将旧凭据迁移到新密钥...");
+                this.encryptionKey = newKey;
+                let migrated = 0;
+                let failed = 0;
+                for (const row of saved) {
+                  try {
+                    // 用旧密钥解密
+                    const oldKey = createHash("sha256").update(keySource!).digest();
+                    const oldIv = Buffer.from(row.iv, "hex");
+                    const decipher = createDecipheriv("aes-256-cbc", oldKey, oldIv);
+                    let plaintext = decipher.update(row.encryptedValue, "hex", "utf8");
+                    plaintext += decipher.final("utf8");
+                    // 用新密钥重加密
+                    const newIv = randomBytes(16);
+                    const cipher = createCipheriv("aes-256-cbc", newKey, newIv);
+                    let reEncrypted = cipher.update(plaintext, "utf8", "hex");
+                    reEncrypted += cipher.final("hex");
+                    // 写回 SQLite
+                    saveCredentialToDB({
+                      name: row.name,
+                      encryptedValue: reEncrypted,
+                      iv: newIv.toString("hex"),
+                      description: row.description,
+                      allowedAgents: row.allowedAgents,
+                      allowedTools: row.allowedTools,
+                    });
+                    // 更新内存中的条目
+                    const memEntry = this.credentials.get(row.name);
+                    if (memEntry) {
+                      memEntry.encryptedValue = reEncrypted;
+                      memEntry.iv = newIv.toString("hex");
+                    }
+                    migrated++;
+                  } catch {
+                    failed++;
+                  }
+                }
+                logger.info({ migrated, failed },
+                  `凭据迁移完成：${migrated} 个成功${failed > 0 ? `，${failed} 个失败` : ""}`);
+              }
+            } catch {
+              // SA_ENCRYPTION_KEY 不可用，保持旧密钥（不迁移）
+              logger.info("SA_ENCRYPTION_KEY 不可用，凭据保持 CREDENTIAL_MASTER_KEY 加密");
+            }
+          }
         }
       } catch {
         // DB might not be initialized yet

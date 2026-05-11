@@ -26,6 +26,7 @@ import * as hrr from "./hrr.js";
 import { extractEntities, extractEntitiesWithAliases } from "./entity-resolver.js";
 import type { SQLiteBackend } from "../persistence/sqlite.js";
 import { KnowledgeGraph } from "./knowledge-graph.js";
+import type { SessionContinuityManager } from "../evolution/session-continuity.js";
 import pino from "pino";
 
 const logger = pino({ name: "memory-manager" });
@@ -479,6 +480,8 @@ export class MemoryManager {
   private _searchWeights: Required<SearchWeights>;
   /** ✨ T6: 可选知识图谱（启用后记忆写入时自动抽取关系） */
   private kg: KnowledgeGraph | null;
+  /** ✨ P6: 会话连续性管理器（跨会话任务恢复） */
+  private _sessionContinuity: SessionContinuityManager | null = null;
 
   constructor(config: MemoryManagerConfig = {}) {
     this.backend = config.backend ?? new InMemoryBackend();
@@ -511,6 +514,36 @@ export class MemoryManager {
       if (config.coreBlocks) {
         this.initCoreMemory(config.agentId, config.coreBlocks);
       }
+    }
+  }
+
+  // ─── P6: 会话连续性集成 ───────────────────────────────
+
+  /**
+   * 注入会话连续性管理器，使记忆系统能提供跨会话任务恢复上下文。
+   * 由 EvolutionEngine 在初始化时调用。
+   */
+  setSessionContinuity(sm: SessionContinuityManager): void {
+    this._sessionContinuity = sm;
+    logger.info("会话连续性管理器已注入 MemoryManager");
+  }
+
+  /**
+   * 获取 Agent 的跨会话恢复提示词。
+   * 用于新会话开始时恢复上一会话的未完成任务。
+   *
+   * @param agentId - Agent ID
+   * @returns 恢复上下文提示词，若无待恢复任务则返回空字符串
+   */
+  getResumeContext(agentId: string): string {
+    if (!this._sessionContinuity) {
+      return "";
+    }
+    try {
+      return this._sessionContinuity.getResumePrompt(agentId);
+    } catch (err) {
+      logger.warn({ err, agentId }, "获取恢复上下文失败");
+      return "";
     }
   }
 

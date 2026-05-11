@@ -28,8 +28,123 @@ import { systemDataTools } from "./system.js";
 import { configureTools } from "./configure.js";
 import { gitTools } from "./git-tools.js";
 import { productivityTools } from "./productivity.js";
+// P2-2: SQLite 持久化依赖
+import { getDatabase } from "../persistence/sqlite.js";
+import type { SqlJsDatabase } from "../persistence/sqlite/constants.js";
 
 const logger = pino({ name: "tools" });
+
+// ── 动态工具注册（Evolution Phase 4）──────────────────
+
+/** 运行时动态注册的工具记录 */
+const _dynamicToolDefs: Map<string, ToolDefinition[]> = new Map();
+
+/** P2-2: 确保 dynamic_tools 表存在（懒初始化） */
+let _dynamicToolsTableReady = false;
+function ensureDynamicToolsTable(db: SqlJsDatabase): void {
+  if (_dynamicToolsTableReady) return;
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dynamic_tools (
+      name TEXT PRIMARY KEY,
+      tool_defs TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  _dynamicToolsTableReady = true;
+}
+
+/** P2-2: 从 SQLite 恢复动态工具（模块加载时调用） */
+function loadDynamicToolsFromDB(): void {
+  try {
+    const db = getDatabase();
+    ensureDynamicToolsTable(db);
+    const rows = db.prepare("SELECT name, tool_defs FROM dynamic_tools").all() as Array<{
+      name: string;
+      tool_defs: string;
+    }>;
+    for (const row of rows) {
+      try {
+        const toolDefs: ToolDefinition[] = JSON.parse(row.tool_defs);
+        _dynamicToolDefs.set(row.name, toolDefs);
+        logger.info({ name: row.name, count: toolDefs.length }, "动态工具已从 SQLite 恢复");
+      } catch (parseErr: any) {
+        logger.warn({ name: row.name, err: parseErr.message }, "动态工具 JSON 解析失败，跳过");
+      }
+    }
+    if (rows.length > 0) {
+      invalidateToolCache();
+    }
+  } catch (err: any) {
+    // SQLite 读取失败不阻塞，静默降级到空 Map
+    logger.debug({ err: err.message }, "无法从 SQLite 恢复动态工具（数据库可能未就绪）");
+  }
+}
+
+// 模块加载时尝试恢复
+loadDynamicToolsFromDB();
+
+/**
+ * 运行时动态注册工具（无需重启）。
+ * 调用 invalidateToolCache() 后下次 getAllBuiltinTools() 会包含此工具。
+ * P2-2: 同时持久化到 SQLite dynamic_tools 表。
+ *
+ * @param name — 工具唯一名
+ * @param toolDefs — ToolDefinition 数组
+ */
+export function registerDynamicTool(name: string, toolDefs: ToolDefinition[]): void {
+  _dynamicToolDefs.set(name, toolDefs);
+  invalidateToolCache();
+  logger.info({ name, count: toolDefs.length }, "动态工具已注册");
+
+  // P2-2: 持久化到 SQLite
+  try {
+    const db = getDatabase();
+    ensureDynamicToolsTable(db);
+    const json = JSON.stringify(toolDefs);
+    db.prepare(`
+      INSERT OR REPLACE INTO dynamic_tools (name, tool_defs, updated_at)
+      VALUES (?, ?, datetime('now'))
+    `).run(name, json);
+  } catch (err: any) {
+    logger.warn({ name, err: err.message }, "动态工具 SQLite 持久化失败（非致命）");
+  }
+}
+
+/**
+ * 取消注册动态工具。
+ * P2-2: 同时从 SQLite 删除。
+ *
+ * @param name — 工具唯一名
+ * @returns 是否成功取消
+ */
+export function unregisterDynamicTool(name: string): boolean {
+  const existed = _dynamicToolDefs.has(name);
+  if (existed) {
+    _dynamicToolDefs.delete(name);
+    invalidateToolCache();
+    logger.info({ name }, "动态工具已取消注册");
+
+    // P2-2: 从 SQLite 删除
+    try {
+      const db = getDatabase();
+      ensureDynamicToolsTable(db);
+      db.prepare("DELETE FROM dynamic_tools WHERE name = ?").run(name);
+    } catch (err: any) {
+      logger.warn({ name, err: err.message }, "动态工具 SQLite 删除失败（非致命）");
+    }
+  }
+  return existed;
+}
+
+/** 获取当前所有动态注册的工具定义 */
+export function getDynamicToolDefs(): ToolDefinition[] {
+  const all: ToolDefinition[] = [];
+  for (const defs of _dynamicToolDefs.values()) {
+    all.push(...defs);
+  }
+  return all;
+}
 
 /** 核心同步工具（含 configure_service + git + productivity） */
 export const builtinTools: ToolDefinition[] = [
@@ -61,7 +176,8 @@ export function invalidateToolCache(): void {
  */
 export async function getAllBuiltinTools(): Promise<ToolDefinition[]> {
   if (_cachedOptionalTools) {
-    return [...builtinTools, ..._cachedOptionalTools];
+    // Phase 4: 合并动态注册的工具
+    return [...builtinTools, ...getDynamicToolDefs(), ..._cachedOptionalTools];
   }
 
   const optionalTools: ToolDefinition[] = [];
@@ -137,7 +253,7 @@ export async function getAllBuiltinTools(): Promise<ToolDefinition[]> {
   }
 
   _cachedOptionalTools = optionalTools;
-  return [...builtinTools, ...optionalTools];
+  return [...builtinTools, ...getDynamicToolDefs(), ...optionalTools];
 }
 
 /** 按品类获取工具 */

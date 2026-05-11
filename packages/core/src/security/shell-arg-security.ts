@@ -1,5 +1,5 @@
 /**
- * Shared Security — 统一 Shell 参数安全校验
+ * Shell 参数安全校验 — 统一 Shell 参数安全校验
  *
  * 解决的核心问题:
  * 25+ 个工具文件中存在参数直接拼接进 shell 命令的注入风险。
@@ -7,7 +7,7 @@
  *
  * 使用方式:
  * ```typescript
- * import { validateShellArg } from "../security/shared-security.js";
+ * import { validateShellArg } from "../security/shell-arg-security.js";
  * const err = validateShellArg(host, "hostname", "host");
  * if (err) return { success: false, output: `参数校验失败: ${err}` };
  * ```

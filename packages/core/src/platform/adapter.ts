@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import pino from "pino";
-import { validateShellArg } from "../security/shared-security.js";
+import { validateShellArg } from "../security/shell-arg-security.js";
 
 const logger = pino({ name: "platform-adapter" });
 

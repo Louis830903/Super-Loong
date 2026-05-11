@@ -48,6 +48,8 @@ __pycache__/
 
 # ====== 内部工具配置 ======
 .qoder/
+.graphifyignore
+graphify-out/
 package-lock.json
 
 # ====== 系统文件 ======

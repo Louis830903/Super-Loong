@@ -152,7 +152,7 @@ export async function settingsRoutes(app: FastifyInstance, _ctx: AppContext) {
   app.get("/api/migration/preview", {
     preHandler: requirePermission("*"),
   }, async (_req, reply) => {
-    const report = previewMigration();
+    const report = await previewMigration();
     return reply.send(report);
   });
 
@@ -162,7 +162,7 @@ export async function settingsRoutes(app: FastifyInstance, _ctx: AppContext) {
     preHandler: requirePermission("*"),
   }, async (req, reply) => {
     const { overwrite } = (req.body ?? {}) as { overwrite?: boolean };
-    const report = executeMigration({ overwrite: overwrite ?? false });
+    const report = await executeMigration({ overwrite: overwrite ?? false });
 
     // ── 迁移完成后刷新技能加载器 ──
     if (report.success) {

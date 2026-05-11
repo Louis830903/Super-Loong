@@ -8,11 +8,12 @@
  * - preview: 纯只读扫描，不写任何文件
  * - execute: 逐项执行写入，捕获每项的成功/失败状态
  * - 每条迁移项独立 try/catch，单条失败不影响其他项
+ * - Task 6: 所有同步 I/O (existsSync/readFileSync/writeFileSync/...) → 异步 fs.promises
  */
 
 import { paths, saveMCPServer } from "@super-agent/core";
 import JSON5 from "json5";
-import * as fs from "node:fs";
+import { promises as fs } from "node:fs";
 import * as nodePath from "node:path";
 import * as os from "node:os";
 
@@ -58,6 +59,12 @@ export interface MigrationReport {
   summary: string;
 }
 
+// ═══ 异步文件存在性检查（用 stat() 而非 access()，避免权限假阴性）════
+
+async function exists(filePath: string): Promise<boolean> {
+  return fs.stat(filePath).then(() => true).catch(() => false);
+}
+
 // ═══ 工具函数 ═════════════════════════════════════════════════════
 
 /** 获取 OpenClaw 数据目录（与 resolveStateDir 逻辑一致） */
@@ -67,24 +74,27 @@ function getOpenClawHome(): string {
 }
 
 /** 查找 OpenClaw workspace 目录（优先 workspace/，回退 workspace-main/） */
-function findWorkspaceDir(openclawHome: string): string | null {
+async function findWorkspaceDir(openclawHome: string): Promise<string | null> {
   const candidates = [
     nodePath.join(openclawHome, "workspace"),
     nodePath.join(openclawHome, "workspace-main"),
     nodePath.join(openclawHome, "workspace.default"),
   ];
   for (const c of candidates) {
-    if (fs.existsSync(c) && fs.statSync(c).isDirectory()) return c;
+    if (await exists(c)) {
+      const s = await fs.stat(c);
+      if (s.isDirectory()) return c;
+    }
   }
   return null;
 }
 
 /** 加载 OpenClaw 配置文件（JSON5 格式，支持注释和尾逗号） */
-function loadOpenClawConfig(openclawHome: string): Record<string, unknown> | null {
+async function loadOpenClawConfig(openclawHome: string): Promise<Record<string, unknown> | null> {
   const configPath = nodePath.join(openclawHome, "openclaw.json");
-  if (!fs.existsSync(configPath)) return null;
+  if (!(await exists(configPath))) return null;
   try {
-    const raw = fs.readFileSync(configPath, "utf-8");
+    const raw = await fs.readFile(configPath, "utf-8");
     return JSON5.parse(raw);
   } catch {
     return null;
@@ -192,9 +202,9 @@ function extractMarkdownEntries(text: string): string[] {
  * 解析已存在的记忆文件条目（与 Hermes parse_existing_memory_entries 一致）。
  * 如果文件已存在且包含 § 分隔符，按分隔符拆分；否则用标题/列表解析。
  */
-function parseExistingMemoryEntries(filePath: string): string[] {
-  if (!fs.existsSync(filePath)) return [];
-  const raw = fs.readFileSync(filePath, "utf-8");
+async function parseExistingMemoryEntries(filePath: string): Promise<string[]> {
+  if (!(await exists(filePath))) return [];
+  const raw = await fs.readFile(filePath, "utf-8");
   if (!raw.trim()) return [];
   if (raw.includes(ENTRY_DELIMITER)) {
     return raw.split(ENTRY_DELIMITER).map((e) => e.trim()).filter(Boolean);
@@ -244,51 +254,51 @@ function mergeEntries(
 }
 
 /** 确保目标目录存在 */
-function ensureDir(dirPath: string): void {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
+async function ensureDir(dirPath: string): Promise<void> {
+  if (!(await exists(dirPath))) {
+    await fs.mkdir(dirPath, { recursive: true });
   }
 }
 
 // ═══ 六项迁移子函数 ═══════════════════════════════════════════════
 
 /** 迁移 SOUL.md */
-function migrateSoul(
+async function migrateSoul(
   workspaceDir: string | null,
   targetPath: string,
   overwrite: boolean,
   execute: boolean,
-): MigrationResult {
+): Promise<MigrationResult> {
   if (!workspaceDir) {
     return { kind: "soul", label: "SOUL.md", status: "not_found", message: "未找到 OpenClaw workspace 目录" };
   }
 
   const srcPath = nodePath.join(workspaceDir, "SOUL.md");
-  if (!fs.existsSync(srcPath)) {
+  if (!(await exists(srcPath))) {
     return { kind: "soul", label: "SOUL.md", status: "not_found", message: "源文件不存在" };
   }
 
-  const fileExists = fs.existsSync(targetPath);
+  const fileExists = await exists(targetPath);
   if (fileExists && !overwrite) {
     return { kind: "soul", label: "SOUL.md", status: "conflict", message: "目标文件已存在，跳过（可勾选覆盖）" };
   }
 
   if (execute) {
     try {
-      const content = fs.readFileSync(srcPath, "utf-8");
-      fs.writeFileSync(targetPath, content, "utf-8");
+      const content = await fs.readFile(srcPath, "utf-8");
+      await fs.writeFile(targetPath, content, "utf-8");
       return { kind: "soul", label: "SOUL.md", status: "migrated", message: `已迁移 (${(content.length / 1024).toFixed(1)} KB)${fileExists ? " [已覆盖]" : ""}` };
     } catch (err: any) {
       return { kind: "soul", label: "SOUL.md", status: "error", message: `写入失败: ${err.message}` };
     }
   }
 
-  const stat = fs.statSync(srcPath);
+  const stat = await fs.stat(srcPath);
   return { kind: "soul", label: "SOUL.md", status: "found", message: `可迁移 (${(stat.size / 1024).toFixed(1)} KB)${fileExists ? " [将覆盖已有文件]" : ""}` };
 }
 
 /** 通用 Markdown 条目迁移（处理 MEMORY.md / USER.md / 每日记忆） */
-function migrateMemoryMarkdown(
+async function migrateMemoryMarkdown(
   kind: string,
   label: string,
   srcPath: string | null,
@@ -296,17 +306,17 @@ function migrateMemoryMarkdown(
   charLimit: number,
   overwrite: boolean,
   execute: boolean,
-): MigrationResult {
-  if (!srcPath || !fs.existsSync(srcPath)) {
+): Promise<MigrationResult> {
+  if (!srcPath || !(await exists(srcPath))) {
     return { kind, label, status: "not_found", message: "源文件不存在" };
   }
 
-  const incoming = extractMarkdownEntries(fs.readFileSync(srcPath, "utf-8"));
+  const incoming = extractMarkdownEntries(await fs.readFile(srcPath, "utf-8"));
   if (incoming.length === 0) {
     return { kind, label, status: "not_found", message: "无可导入的条目" };
   }
 
-  const existing = parseExistingMemoryEntries(dstPath);
+  const existing = await parseExistingMemoryEntries(dstPath);
   const { merged, added, duplicates, overflowed } = mergeEntries(existing, incoming, charLimit);
 
   if (added === 0 && overflowed.length === 0) {
@@ -315,14 +325,14 @@ function migrateMemoryMarkdown(
 
   if (execute) {
     try {
-      ensureDir(nodePath.dirname(dstPath));
-      fs.writeFileSync(dstPath, merged.join(ENTRY_DELIMITER) + (merged.length > 0 ? "\n" : ""), "utf-8");
+      await ensureDir(nodePath.dirname(dstPath));
+      await fs.writeFile(dstPath, merged.join(ENTRY_DELIMITER) + (merged.length > 0 ? "\n" : ""), "utf-8");
 
       // 超限条目写入 overflow 文件
       let overflowMsg = "";
       if (overflowed.length > 0) {
         const overflowPath = dstPath.replace(/\.md$/, "-overflow.md");
-        fs.writeFileSync(overflowPath, overflowed.join(ENTRY_DELIMITER) + "\n", "utf-8");
+        await fs.writeFile(overflowPath, overflowed.join(ENTRY_DELIMITER) + "\n", "utf-8");
         overflowMsg = `，${overflowed.length} 条超限已写入 overflow 文件`;
       }
 
@@ -343,27 +353,32 @@ function migrateMemoryMarkdown(
 }
 
 /** 迁移 Skills */
-function migrateSkills(
+async function migrateSkills(
   workspaceDir: string | null,
   targetSkillsDir: string,
   overwrite: boolean,
   execute: boolean,
-): MigrationResult {
+): Promise<MigrationResult> {
   if (!workspaceDir) {
     return { kind: "skills", label: "技能 (Skills)", status: "not_found", message: "未找到 OpenClaw workspace 目录" };
   }
 
   const srcSkillsDir = nodePath.join(workspaceDir, "skills");
-  if (!fs.existsSync(srcSkillsDir) || !fs.statSync(srcSkillsDir).isDirectory()) {
+  if (!(await exists(srcSkillsDir))) {
     return { kind: "skills", label: "技能 (Skills)", status: "not_found", message: "源 skills 目录不存在" };
+  }
+  const srcSkillsStat = await fs.stat(srcSkillsDir);
+  if (!srcSkillsStat.isDirectory()) {
+    return { kind: "skills", label: "技能 (Skills)", status: "not_found", message: "源 skills 路径不是目录" };
   }
 
   // 扫描所有含 SKILL.md 的子目录
   const skillDirs: string[] = [];
-  for (const entry of fs.readdirSync(srcSkillsDir, { withFileTypes: true })) {
+  const entries = await fs.readdir(srcSkillsDir, { withFileTypes: true });
+  for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const skillMdPath = nodePath.join(srcSkillsDir, entry.name, "SKILL.md");
-    if (fs.existsSync(skillMdPath)) {
+    if (await exists(skillMdPath)) {
       skillDirs.push(entry.name);
     }
   }
@@ -383,14 +398,14 @@ function migrateSkills(
       const srcDir = nodePath.join(srcSkillsDir, skillName);
       const dstSkillDir = nodePath.join(dstDir, skillName);
 
-      if (fs.existsSync(dstSkillDir)) {
+      if (await exists(dstSkillDir)) {
         if (!overwrite) {
           skipped++;
           continue;
         }
         // 覆盖：先删除再复制
         try {
-          fs.rmSync(dstSkillDir, { recursive: true, force: true });
+          await fs.rm(dstSkillDir, { recursive: true, force: true });
         } catch {
           errors.push(`${skillName}: 无法删除已有目录`);
           continue;
@@ -398,8 +413,8 @@ function migrateSkills(
       }
 
       try {
-        ensureDir(dstDir);
-        copyDirRecursive(srcDir, dstSkillDir);
+        await ensureDir(dstDir);
+        await copyDirRecursive(srcDir, dstSkillDir);
         migrated++;
       } catch (err: any) {
         errors.push(`${skillName}: ${err.message}`);
@@ -428,26 +443,27 @@ function migrateSkills(
 }
 
 /** 递归复制目录 */
-function copyDirRecursive(src: string, dest: string): void {
-  ensureDir(dest);
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+async function copyDirRecursive(src: string, dest: string): Promise<void> {
+  await ensureDir(dest);
+  const entries = await fs.readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
     const srcPath = nodePath.join(src, entry.name);
     const destPath = nodePath.join(dest, entry.name);
     if (entry.isDirectory()) {
-      copyDirRecursive(srcPath, destPath);
+      await copyDirRecursive(srcPath, destPath);
     } else {
-      fs.copyFileSync(srcPath, destPath);
+      await fs.copyFile(srcPath, destPath);
     }
   }
 }
 
 /** 迁移 MCP Servers */
-function migrateMcpServers(
+async function migrateMcpServers(
   openclawHome: string,
   overwrite: boolean,
   execute: boolean,
-): MigrationResult {
-  const config = loadOpenClawConfig(openclawHome);
+): Promise<MigrationResult> {
+  const config = await loadOpenClawConfig(openclawHome);
   if (!config) {
     return { kind: "mcp", label: "MCP 服务器", status: "not_found", message: "无法读取 openclaw.json" };
   }
@@ -514,22 +530,27 @@ function migrateMcpServers(
 }
 
 /** 迁移每日记忆（workspace/memory/*.md → MEMORY.md） */
-function migrateDailyMemory(
+async function migrateDailyMemory(
   workspaceDir: string | null,
   targetMemoryPath: string,
   overwrite: boolean,
   execute: boolean,
-): MigrationResult {
+): Promise<MigrationResult> {
   if (!workspaceDir) {
     return { kind: "daily-memory", label: "每日记忆", status: "not_found", message: "未找到 OpenClaw workspace 目录" };
   }
 
   const srcDir = nodePath.join(workspaceDir, "memory");
-  if (!fs.existsSync(srcDir) || !fs.statSync(srcDir).isDirectory()) {
+  if (!(await exists(srcDir))) {
     return { kind: "daily-memory", label: "每日记忆", status: "not_found", message: "workspace/memory/ 目录不存在" };
   }
+  const srcStat = await fs.stat(srcDir);
+  if (!srcStat.isDirectory()) {
+    return { kind: "daily-memory", label: "每日记忆", status: "not_found", message: "workspace/memory/ 不是目录" };
+  }
 
-  const mdFiles = fs.readdirSync(srcDir)
+  const dirEntries = await fs.readdir(srcDir);
+  const mdFiles = dirEntries
     .filter((f) => f.endsWith(".md"))
     .sort();
 
@@ -540,7 +561,7 @@ function migrateDailyMemory(
   // 收集所有每日记忆条目
   const allIncoming: string[] = [];
   for (const mdFile of mdFiles) {
-    const content = fs.readFileSync(nodePath.join(srcDir, mdFile), "utf-8");
+    const content = await fs.readFile(nodePath.join(srcDir, mdFile), "utf-8");
     const entries = extractMarkdownEntries(content);
     allIncoming.push(...entries);
   }
@@ -549,7 +570,7 @@ function migrateDailyMemory(
     return { kind: "daily-memory", label: "每日记忆", status: "not_found", message: "无可导入的条目" };
   }
 
-  const existing = parseExistingMemoryEntries(targetMemoryPath);
+  const existing = await parseExistingMemoryEntries(targetMemoryPath);
   const { merged, added, duplicates, overflowed } = mergeEntries(existing, allIncoming, MEMORY_CHAR_LIMIT);
 
   if (added === 0 && overflowed.length === 0) {
@@ -558,13 +579,13 @@ function migrateDailyMemory(
 
   if (execute) {
     try {
-      ensureDir(nodePath.dirname(targetMemoryPath));
-      fs.writeFileSync(targetMemoryPath, merged.join(ENTRY_DELIMITER) + (merged.length > 0 ? "\n" : ""), "utf-8");
+      await ensureDir(nodePath.dirname(targetMemoryPath));
+      await fs.writeFile(targetMemoryPath, merged.join(ENTRY_DELIMITER) + (merged.length > 0 ? "\n" : ""), "utf-8");
 
       let overflowMsg = "";
       if (overflowed.length > 0) {
         const overflowPath = targetMemoryPath.replace(/\.md$/, "-overflow.md");
-        fs.writeFileSync(overflowPath, overflowed.join(ENTRY_DELIMITER) + "\n", "utf-8");
+        await fs.writeFile(overflowPath, overflowed.join(ENTRY_DELIMITER) + "\n", "utf-8");
         overflowMsg = `，${overflowed.length} 条超限已写入 overflow 文件`;
       }
 
@@ -590,29 +611,35 @@ function migrateDailyMemory(
  * 预览迁移（纯只读，不写任何文件）。
  * 扫描 OpenClaw 数据目录，返回 6 项数据的预览状态。
  */
-export function previewMigration(): MigrationPreview {
+export async function previewMigration(): Promise<MigrationPreview> {
   const openclawHome = getOpenClawHome();
-  const openclawExists = fs.existsSync(openclawHome) && fs.statSync(openclawHome).isDirectory();
+  const openclawExists = await exists(openclawHome);
   const items: MigrationItem[] = [];
 
   if (!openclawExists) {
     return { openclawExists: false, openclawPath: openclawHome, items: [] };
   }
 
-  const workspaceDir = findWorkspaceDir(openclawHome);
+  // 确认 openclawHome 是目录
+  const homeStat = await fs.stat(openclawHome);
+  if (!homeStat.isDirectory()) {
+    return { openclawExists: false, openclawPath: openclawHome, items: [] };
+  }
+
+  const workspaceDir = await findWorkspaceDir(openclawHome);
   const targetHome = paths.home();
-  const config = loadOpenClawConfig(openclawHome);
+  const config = await loadOpenClawConfig(openclawHome);
   const mcpServers = config ? Object.keys((((config as any).mcp ?? {}) as any).servers ?? {}) : [];
 
   // 1. SOUL.md
   const soulSrc = workspaceDir ? nodePath.join(workspaceDir, "SOUL.md") : null;
-  if (soulSrc && fs.existsSync(soulSrc)) {
-    const stat = fs.statSync(soulSrc);
-    const exists = fs.existsSync(paths.soul());
+  if (soulSrc && (await exists(soulSrc))) {
+    const stat = await fs.stat(soulSrc);
+    const soulExists = await exists(paths.soul());
     items.push({
       kind: "soul", label: "SOUL.md",
-      status: exists ? "will_overwrite" : "found",
-      detail: `源: ${soulSrc} (${(stat.size / 1024).toFixed(1)} KB)${exists ? " [目标文件已存在]" : ""}`,
+      status: soulExists ? "will_overwrite" : "found",
+      detail: `源: ${soulSrc} (${(stat.size / 1024).toFixed(1)} KB)${soulExists ? " [目标文件已存在]" : ""}`,
     });
   } else {
     items.push({ kind: "soul", label: "SOUL.md", status: "not_found", detail: "未找到 SOUL.md" });
@@ -620,8 +647,9 @@ export function previewMigration(): MigrationPreview {
 
   // 2. MEMORY.md
   const memorySrc = workspaceDir ? nodePath.join(workspaceDir, "MEMORY.md") : null;
-  if (memorySrc && fs.existsSync(memorySrc)) {
-    const entries = extractMarkdownEntries(fs.readFileSync(memorySrc, "utf-8"));
+  if (memorySrc && (await exists(memorySrc))) {
+    const content = await fs.readFile(memorySrc, "utf-8");
+    const entries = extractMarkdownEntries(content);
     items.push({
       kind: "memory", label: "MEMORY.md",
       status: "found",
@@ -633,8 +661,9 @@ export function previewMigration(): MigrationPreview {
 
   // 3. USER.md
   const userSrc = workspaceDir ? nodePath.join(workspaceDir, "USER.md") : null;
-  if (userSrc && fs.existsSync(userSrc)) {
-    const entries = extractMarkdownEntries(fs.readFileSync(userSrc, "utf-8"));
+  if (userSrc && (await exists(userSrc))) {
+    const content = await fs.readFile(userSrc, "utf-8");
+    const entries = extractMarkdownEntries(content);
     items.push({
       kind: "user", label: "USER.md",
       status: "found",
@@ -647,19 +676,28 @@ export function previewMigration(): MigrationPreview {
   // 4. Skills
   if (workspaceDir) {
     const skillsDir = nodePath.join(workspaceDir, "skills");
-    if (fs.existsSync(skillsDir) && fs.statSync(skillsDir).isDirectory()) {
-      const skillCount = fs.readdirSync(skillsDir, { withFileTypes: true })
-        .filter((d) => d.isDirectory() && fs.existsSync(nodePath.join(skillsDir, d.name, "SKILL.md")))
-        .length;
-      if (skillCount > 0) {
-        const destExists = fs.existsSync(nodePath.join(paths.skills(), SKILL_IMPORT_DIR));
-        items.push({
-          kind: "skills", label: "技能 (Skills)",
-          status: destExists ? "will_overwrite" : "found",
-          detail: `${skillCount} 个技能${destExists ? " [目标目录已存在]" : ""}`,
-        });
+    if ((await exists(skillsDir))) {
+      const skillsStat = await fs.stat(skillsDir);
+      if (skillsStat.isDirectory()) {
+        const dirEntries = await fs.readdir(skillsDir, { withFileTypes: true });
+        let skillCount = 0;
+        for (const d of dirEntries) {
+          if (d.isDirectory() && (await exists(nodePath.join(skillsDir, d.name, "SKILL.md")))) {
+            skillCount++;
+          }
+        }
+        if (skillCount > 0) {
+          const destExists = await exists(nodePath.join(paths.skills(), SKILL_IMPORT_DIR));
+          items.push({
+            kind: "skills", label: "技能 (Skills)",
+            status: destExists ? "will_overwrite" : "found",
+            detail: `${skillCount} 个技能${destExists ? " [目标目录已存在]" : ""}`,
+          });
+        } else {
+          items.push({ kind: "skills", label: "技能 (Skills)", status: "not_found", detail: "未找到含 SKILL.md 的技能目录" });
+        }
       } else {
-        items.push({ kind: "skills", label: "技能 (Skills)", status: "not_found", detail: "未找到含 SKILL.md 的技能目录" });
+        items.push({ kind: "skills", label: "技能 (Skills)", status: "not_found", detail: "未找到 skills 目录" });
       }
     } else {
       items.push({ kind: "skills", label: "技能 (Skills)", status: "not_found", detail: "未找到 skills 目录" });
@@ -682,16 +720,22 @@ export function previewMigration(): MigrationPreview {
   // 6. 每日记忆
   if (workspaceDir) {
     const dailyDir = nodePath.join(workspaceDir, "memory");
-    if (fs.existsSync(dailyDir) && fs.statSync(dailyDir).isDirectory()) {
-      const mdCount = fs.readdirSync(dailyDir).filter((f) => f.endsWith(".md")).length;
-      if (mdCount > 0) {
-        items.push({
-          kind: "daily-memory", label: "每日记忆",
-          status: "found",
-          detail: `${mdCount} 个记忆文件`,
-        });
+    if ((await exists(dailyDir))) {
+      const dailyStat = await fs.stat(dailyDir);
+      if (dailyStat.isDirectory()) {
+        const dirEntries = await fs.readdir(dailyDir);
+        const mdCount = dirEntries.filter((f) => f.endsWith(".md")).length;
+        if (mdCount > 0) {
+          items.push({
+            kind: "daily-memory", label: "每日记忆",
+            status: "found",
+            detail: `${mdCount} 个记忆文件`,
+          });
+        } else {
+          items.push({ kind: "daily-memory", label: "每日记忆", status: "not_found", detail: "无 .md 文件" });
+        }
       } else {
-        items.push({ kind: "daily-memory", label: "每日记忆", status: "not_found", detail: "无 .md 文件" });
+        items.push({ kind: "daily-memory", label: "每日记忆", status: "not_found", detail: "未找到 memory/ 目录" });
       }
     } else {
       items.push({ kind: "daily-memory", label: "每日记忆", status: "not_found", detail: "未找到 memory/ 目录" });
@@ -711,35 +755,35 @@ export function previewMigration(): MigrationPreview {
  * 执行迁移。
  * @param options.overwrite - 是否覆盖已存在的目标文件（默认 false）
  */
-export function executeMigration(options: { overwrite?: boolean } = {}): MigrationReport {
+export async function executeMigration(options: { overwrite?: boolean } = {}): Promise<MigrationReport> {
   const overwrite = options.overwrite ?? false;
   const openclawHome = getOpenClawHome();
-  const workspaceDir = findWorkspaceDir(openclawHome);
+  const workspaceDir = await findWorkspaceDir(openclawHome);
   const results: MigrationResult[] = [];
 
   // 1. SOUL.md
-  results.push(migrateSoul(workspaceDir, paths.soul(), overwrite, true));
+  results.push(await migrateSoul(workspaceDir, paths.soul(), overwrite, true));
 
   // 2. MEMORY.md
   const memorySrcPath = workspaceDir ? nodePath.join(workspaceDir, "MEMORY.md") : null;
   results.push(
-    migrateMemoryMarkdown("memory", "MEMORY.md", memorySrcPath, paths.memory(), MEMORY_CHAR_LIMIT, overwrite, true),
+    await migrateMemoryMarkdown("memory", "MEMORY.md", memorySrcPath, paths.memory(), MEMORY_CHAR_LIMIT, overwrite, true),
   );
 
   // 3. USER.md
   const userSrcPath = workspaceDir ? nodePath.join(workspaceDir, "USER.md") : null;
   results.push(
-    migrateMemoryMarkdown("user", "USER.md", userSrcPath, paths.user(), USER_CHAR_LIMIT, overwrite, true),
+    await migrateMemoryMarkdown("user", "USER.md", userSrcPath, paths.user(), USER_CHAR_LIMIT, overwrite, true),
   );
 
   // 4. Skills
-  results.push(migrateSkills(workspaceDir, paths.skills(), overwrite, true));
+  results.push(await migrateSkills(workspaceDir, paths.skills(), overwrite, true));
 
   // 5. MCP Servers
-  results.push(migrateMcpServers(openclawHome, overwrite, true));
+  results.push(await migrateMcpServers(openclawHome, overwrite, true));
 
   // 6. 每日记忆
-  results.push(migrateDailyMemory(workspaceDir, paths.memory(), overwrite, true));
+  results.push(await migrateDailyMemory(workspaceDir, paths.memory(), overwrite, true));
 
   const errorCount = results.filter((r) => r.status === "error").length;
   const migratedCount = results.filter((r) => r.status === "migrated").length;
