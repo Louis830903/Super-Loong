@@ -15,7 +15,6 @@ import * as fs from "node:fs";
 import {
   initDatabase,
   closeDatabase,
-  saveDatabase,
   getDatabase,
   saveAgentConfig,
   loadAllAgentConfigs,

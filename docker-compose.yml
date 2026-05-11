@@ -1,0 +1,52 @@
+# Super Agent — Docker Compose 一键部署
+#
+# 用法：
+#   docker compose up -d          # 后台启动
+#   docker compose logs -f        # 查看日志
+#   docker compose down           # 停止
+#   docker compose pull           # 拉取最新镜像
+#
+# 数据持久化：
+#   ./data/ 目录挂载到容器内 /app/data，含 SQLite 数据库和配置
+
+version: "3.9"
+
+services:
+  super-agent:
+    image: ghcr.io/louis830903/super-agent:latest
+    container_name: super-agent
+    restart: unless-stopped
+
+    ports:
+      - "3100:3100"
+
+    volumes:
+      # SQLite 数据库 + 配置文件持久化
+      - ./data:/app/data
+
+    environment:
+      - NODE_ENV=production
+      - SA_DB_PATH=/app/data/super-agent.db
+
+      # LLM API Key（从宿主机 .env 读取，或直接填写）
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+
+      # 版本检查开关（Docker 内通常关闭）
+      - SUPER_AGENT_NO_VERSION_CHECK=true
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 512m
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3100/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

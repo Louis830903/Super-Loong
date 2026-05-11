@@ -17,7 +17,6 @@ import type { MemoryEntry, MemorySearchResult } from "../../types/index.js";
 import type { MemoryBackend, MemoryFilter } from "../../memory/manager.js";
 import type { EntityRow } from "../../memory/entity-resolver.js";
 import { getDatabase, scheduleSave } from "./client.js";
-import { hasFTS5, hasFTS5v6 } from "./fts-repo.js";
 
 /** 实体行类型（从 entity-resolver 重导出以保持上游兼容） */
 export type { EntityRow };
@@ -65,14 +64,8 @@ export class SQLiteBackend implements MemoryBackend {
 
   async get(id: string): Promise<MemoryEntry | null> {
     const stmt = this.db.prepare("SELECT * FROM memories WHERE id = ?");
-    stmt.bind([id]);
-    if (stmt.step()) {
-      const row = stmt.getAsObject();
-      stmt.free();
-      return this.rowToEntry(row);
-    }
-    stmt.free();
-    return null;
+    const row = stmt.get(id);
+    return row ? this.rowToEntry(row) : null;
   }
 
   async update(id: string, updates: Partial<Pick<MemoryEntry, "content" | "metadata" | "embedding" | "trustScore" | "helpfulCount" | "retrievalCount" | "priority" | "relevanceScore">>): Promise<void> {
@@ -148,33 +141,8 @@ export class SQLiteBackend implements MemoryBackend {
   }
 
   async search(query: string, filters: MemoryFilter, topK: number): Promise<MemorySearchResult[]> {
-    // P0-1: FTS5 优先搜索（BM25 排序，O(log N)），LIKE 兜底
-    if (hasFTS5()) {
-      try {
-        const ftsResults = this.searchViaFTS5(query, filters, topK);
-        if (ftsResults.length > 0) return ftsResults;
-      } catch { /* FTS5 查询异常，fallback 到 LIKE */ }
-    }
-
-    // Fallback: 全表遍历 + JS 层关键词匹配（原有逻辑，保持不变）
-    const candidates = await this.list(filters);
-    const queryLower = query.toLowerCase();
-    const words = queryLower.split(/\W+/).filter(Boolean);
-
-    const scored: MemorySearchResult[] = candidates.map((entry) => {
-      const contentLower = entry.content.toLowerCase();
-      let hits = 0;
-      for (const w of words) {
-        if (contentLower.includes(w)) hits++;
-      }
-      const textScore = words.length > 0 ? hits / words.length : 0;
-      return { entry, score: textScore };
-    });
-
-    return scored
-      .filter((r) => r.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, topK);
+    // better-sqlite3 迁移后 FTS5 保证可用，直接走 FTS5 BM25 搜索
+    return this.searchViaFTS5(query, filters, topK);
   }
 
   /**
@@ -185,22 +153,12 @@ export class SQLiteBackend implements MemoryBackend {
   private searchViaFTS5(query: string, filters: MemoryFilter, topK: number): MemorySearchResult[] {
     const safeQuery = '"' + query.replace(/"/g, '""') + '"';
 
-    // BUG-2: 优先使用 v6 内容同步表（rowid 关联，标准 FTS5 维护模式）
-    const useV6 = hasFTS5v6();
-    let sql: string;
-    if (useV6) {
-      sql = `
-        SELECT m.* FROM memories m
-        JOIN memories_fts_v6 f ON m.rowid = f.rowid
-        WHERE f.memories_fts_v6 MATCH ?
-      `;
-    } else {
-      sql = `
-        SELECT m.* FROM memories m
-        JOIN memories_fts f ON m.id = f.id
-        WHERE f.memories_fts MATCH ?
-      `;
-    }
+    // better-sqlite3 迁移后统一使用 v6 内容同步表（rowid JOIN，标准 FTS5 维护模式）
+    let sql = `
+      SELECT m.* FROM memories m
+      JOIN memories_fts_v6 f ON m.rowid = f.rowid
+      WHERE f.memories_fts_v6 MATCH ?
+    `;
     const params: unknown[] = [safeQuery];
 
     if (filters.agentId) { sql += " AND m.agentId = ?"; params.push(filters.agentId); }
@@ -272,6 +230,7 @@ export class SQLiteBackend implements MemoryBackend {
     let embedding: number[] | undefined;
     if (row.embedding && row.embedding instanceof Uint8Array) {
       // P0-01 fix: Copy to aligned buffer to avoid Float32Array alignment crash.
+      // (better-sqlite3 的 Buffer 对象天然对齐，保守保留此复制)
       const aligned = new ArrayBuffer(row.embedding.byteLength);
       new Uint8Array(aligned).set(row.embedding);
       if (embType === "hrr") {
@@ -321,14 +280,8 @@ export class SQLiteBackend implements MemoryBackend {
   /** 按名称精确查找实体 */
   findEntity(name: string): EntityRow | null {
     const stmt = this.db.prepare("SELECT * FROM entities WHERE name = ? COLLATE NOCASE");
-    stmt.bind([name]);
-    if (stmt.step()) {
-      const row = stmt.getAsObject();
-      stmt.free();
-      return this.rowToEntityRow(row);
-    }
-    stmt.free();
-    return null;
+    const row = stmt.get(name);
+    return row ? this.rowToEntityRow(row) : null;
   }
 
   /** 按别名查找实体（搜索 aliases JSON 数组） */
@@ -365,9 +318,8 @@ export class SQLiteBackend implements MemoryBackend {
   /** 为实体添加别名 */
   addAlias(entityId: number, alias: string): void {
     const stmt = this.db.prepare("SELECT aliases FROM entities WHERE id = ?");
-    stmt.bind([entityId]);
-    if (stmt.step()) {
-      const row = stmt.getAsObject();
+    const row = stmt.get(entityId);
+    if (row) {
       const aliases: string[] = JSON.parse((row.aliases as string) || "[]");
       if (!aliases.includes(alias)) {
         aliases.push(alias);
@@ -375,7 +327,6 @@ export class SQLiteBackend implements MemoryBackend {
         scheduleSave();
       }
     }
-    stmt.free();
   }
 
   /** 建立记忆-实体关联 */

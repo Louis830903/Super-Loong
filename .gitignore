@@ -13,6 +13,9 @@ coverage/
 # ====== 数据库文件 ======
 *.db
 *.db-journal
+# better-sqlite3 WAL 模式辅助文件（不应提交到版本控制）
+*.db-wal
+*.db-shm
 *.db.bak
 *.bak
 data/super-agent.db

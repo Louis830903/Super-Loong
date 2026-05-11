@@ -47,6 +47,7 @@ import { a2aAdminRoutes } from "./routes/a2a-admin.js";
 import { videoRoutes } from "./routes/video.js";
 import { videoProviderTemplateRoutes } from "./routes/video-provider-templates.js";
 import { registerTracesRoutes } from "./routes/traces.js";
+import { versionRoutes } from "./routes/version.js";
 import { GatewayLauncher } from "./gateway-launcher.js";
 import { VideoForgeSupervisor } from "./services/video-forge-supervisor.js";
 import { registerWellKnownRoute, a2aPlugin } from "./a2a/server.js";
@@ -278,6 +279,7 @@ async function main() {
   await videoProviderTemplateRoutes(app);
   await authRoutes(app);
   await registerTracesRoutes(app);
+  await versionRoutes(app);
 
   // WebSocket real-time event streaming
   await registerWebSocket(app, ctx);

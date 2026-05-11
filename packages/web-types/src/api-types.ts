@@ -206,3 +206,26 @@ export interface ApprovalItem {
   sessionKey: string;
   createdAt: string;
 }
+
+// ─── 版本更新相关 ─────────────────────────────────────────
+
+/**
+ * 版本检查结果 wire 形态。
+ *
+ * 与 core VersionCheckResult 保持一致（纯 JSON 可序列化类型），
+ * 前端和 API 路由均从此处消费，避免手动复制导致的类型漂移。
+ */
+export interface VersionInfo {
+  /** 当前运行版本 */
+  current: string;
+  /** 远端最新版本（查询失败时为 null） */
+  latest: string | null;
+  /** 是否有更新可用 */
+  outdated: boolean;
+  /** Release 页面 URL（供用户手动下载） */
+  releaseUrl: string | null;
+  /** 查询是否成功（false 表示网络/API 错误，不是版本问题） */
+  success: boolean;
+  /** 数据来源：github / gitee / null */
+  source: "github" | "gitee" | null;
+}

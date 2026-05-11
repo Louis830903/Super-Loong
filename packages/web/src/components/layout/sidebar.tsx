@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { VersionFooter } from "./version-footer";
 
 const navigation = [
   { name: "仪表盘", href: "/dashboard", icon: LayoutDashboard },
@@ -106,7 +107,7 @@ export default function Sidebar() {
 
         {/* Footer */}
         <div className="border-t border-zinc-800 px-4 py-4">
-          <p className="text-xs text-zinc-500">Super Loong v0.1.0</p>
+          <VersionFooter variant="footer" />
         </div>
       </aside>
     </>

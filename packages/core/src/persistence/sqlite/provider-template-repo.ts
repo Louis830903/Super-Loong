@@ -72,16 +72,12 @@ export function updateProviderTemplate(
     (k) => (patch as Record<string, unknown>)[k] as string,
   );
   params.push(id);
-  db.run(
+  // better-sqlite3 迁移：用 .run().changes 替代回查
+  const result = db.run(
     `UPDATE agent_provider_templates SET ${sets} WHERE id = ? AND is_preset = 0`,
     params,
   );
-  // sql.js 无 changes()，通过回查判断是否生效
-  const check = db.exec(
-    "SELECT id FROM agent_provider_templates WHERE id = ? AND is_preset = 0",
-    [id],
-  );
-  const hit = check.length > 0 && check[0].values.length > 0;
+  const hit = result.changes > 0;
   if (hit) scheduleSave();
   return hit;
 }

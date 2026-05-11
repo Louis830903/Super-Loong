@@ -72,16 +72,16 @@ export function purgeSkillProposals(maxRows = 300, retentionDays = 60): number {
   const db = getDatabase();
   const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
 
-  db.run("DELETE FROM skill_proposals WHERE createdAt < ?", [cutoff]);
-  db.run(
+  // better-sqlite3 迁移：直接用 .run().changes 替代 SELECT changes()
+  let deleted = 0;
+  deleted += (db.run("DELETE FROM skill_proposals WHERE createdAt < ?", [cutoff])).changes;
+  deleted += (db.run(
     `DELETE FROM skill_proposals WHERE id NOT IN (
        SELECT id FROM skill_proposals ORDER BY createdAt DESC LIMIT ?
      )`,
     [maxRows],
-  );
+  )).changes;
 
-  const countRes = db.exec("SELECT changes()");
-  const deleted = countRes.length ? (countRes[0].values[0][0] as number) : 0;
   if (deleted > 0) scheduleSave();
   return deleted;
 }

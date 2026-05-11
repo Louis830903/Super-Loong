@@ -133,52 +133,41 @@ function migrateV3(db: SqlJsDatabase): void {
 function migrateV4(db: SqlJsDatabase): void {
   db.run("BEGIN TRANSACTION");
   try {
-    // ── conv_messages FTS5 triggers ──
-    // Only create if FTS5 table exists (sql.js may or may not have FTS5 compiled)
-    const hasCmFts = db.exec(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='conv_messages_fts'"
-    );
-    if (hasCmFts.length > 0 && hasCmFts[0].values.length > 0) {
-      // P0-A10: 修复触发器列定义—conv_messages_fts 只有 content 列，不包含 conversationId
-      // INSERT trigger: auto-index new messages
-      db.run(`CREATE TRIGGER IF NOT EXISTS conv_msg_fts_ai AFTER INSERT ON conv_messages
-        BEGIN
-          INSERT INTO conv_messages_fts(rowid, content)
-          VALUES (NEW.id, NEW.content);
-        END`);
-      // DELETE trigger: auto-remove from FTS on delete
-      db.run(`CREATE TRIGGER IF NOT EXISTS conv_msg_fts_ad AFTER DELETE ON conv_messages
-        BEGIN
-          INSERT INTO conv_messages_fts(conv_messages_fts, rowid, content)
-          VALUES ('delete', OLD.id, OLD.content);
-        END`);
-      logger.info("Migration v4: Created conv_messages FTS5 triggers");
-    }
+    // ── conv_messages FTS5 triggers（better-sqlite3 原生支持 FTS5，表保证存在）──
+    // P0-A10: 修复触发器列定义—conv_messages_fts 只有 content 列，不包含 conversationId
+    // INSERT trigger: auto-index new messages
+    db.run(`CREATE TRIGGER IF NOT EXISTS conv_msg_fts_ai AFTER INSERT ON conv_messages
+      BEGIN
+        INSERT INTO conv_messages_fts(rowid, content)
+        VALUES (NEW.id, NEW.content);
+      END`);
+    // DELETE trigger: auto-remove from FTS on delete
+    db.run(`CREATE TRIGGER IF NOT EXISTS conv_msg_fts_ad AFTER DELETE ON conv_messages
+      BEGIN
+        INSERT INTO conv_messages_fts(conv_messages_fts, rowid, content)
+        VALUES ('delete', OLD.id, OLD.content);
+      END`);
+    logger.info("Migration v4: Created conv_messages FTS5 triggers");
 
-    // ── memories FTS5 triggers ──
-    const hasMemFts = db.exec(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'"
-    );
-    if (hasMemFts.length > 0 && hasMemFts[0].values.length > 0) {
-      // INSERT trigger
-      db.run(`CREATE TRIGGER IF NOT EXISTS mem_fts_ai AFTER INSERT ON memories
-        BEGIN
-          INSERT OR REPLACE INTO memories_fts(id, agentId, content, type)
-          VALUES (NEW.id, NEW.agentId, NEW.content, NEW.type);
-        END`);
-      // UPDATE trigger
-      db.run(`CREATE TRIGGER IF NOT EXISTS mem_fts_au AFTER UPDATE ON memories
-        BEGIN
-          INSERT OR REPLACE INTO memories_fts(id, agentId, content, type)
-          VALUES (NEW.id, NEW.agentId, NEW.content, NEW.type);
-        END`);
-      // DELETE trigger
-      db.run(`CREATE TRIGGER IF NOT EXISTS mem_fts_ad AFTER DELETE ON memories
-        BEGIN
-          DELETE FROM memories_fts WHERE id = OLD.id;
-        END`);
-      logger.info("Migration v4: Created memories FTS5 triggers");
-    }
+    // ── memories FTS5 triggers（better-sqlite3 原生支持 FTS5，表保证存在）──
+    // INSERT trigger
+    db.run(`CREATE TRIGGER IF NOT EXISTS mem_fts_ai AFTER INSERT ON memories
+      BEGIN
+        INSERT OR REPLACE INTO memories_fts(id, agentId, content, type)
+        VALUES (NEW.id, NEW.agentId, NEW.content, NEW.type);
+      END`);
+    // UPDATE trigger
+    db.run(`CREATE TRIGGER IF NOT EXISTS mem_fts_au AFTER UPDATE ON memories
+      BEGIN
+        INSERT OR REPLACE INTO memories_fts(id, agentId, content, type)
+        VALUES (NEW.id, NEW.agentId, NEW.content, NEW.type);
+      END`);
+    // DELETE trigger
+    db.run(`CREATE TRIGGER IF NOT EXISTS mem_fts_ad AFTER DELETE ON memories
+      BEGIN
+        DELETE FROM memories_fts WHERE id = OLD.id;
+      END`);
+    logger.info("Migration v4: Created memories FTS5 triggers");
 
     setSchemaVersion(db, 4, "Add FTS5 auto-maintenance triggers (Hermes pattern)");
     db.run("COMMIT");
@@ -215,7 +204,7 @@ function migrateV5(db: SqlJsDatabase): void {
 
 /**
  * v6: FTS5 全文索引与自动同步触发器（学 Hermes store.py memories_fts 模式）。
- * 注意：sql.js WASM 可能不含 FTS5 扩展，失败时自动跳过。
+ * 注意：better-sqlite3 原生支持 FTS5，try/catch 为防御性保护。
  */
 function migrateV6(db: SqlJsDatabase): void {
   db.run("BEGIN TRANSACTION");
@@ -248,7 +237,7 @@ function migrateV6(db: SqlJsDatabase): void {
     logger.info("Migration v6: FTS5 index created with auto-sync triggers (committed)");
   } catch (e: any) {
     db.run("ROLLBACK");
-    // FTS5 不可用是正常情况（sql.js WASM 可能不含该扩展），记录版本并继续
+    // better-sqlite3 原生支持 FTS5，此 catch 仅作防御性保护
     setSchemaVersion(db, 6, `FTS5 migration skipped: ${e.message?.slice(0, 100)}`);
     logger.warn({ err: e.message }, "Migration v6: FTS5 not available, skipped (non-fatal)");
   }

@@ -338,54 +338,42 @@ export function createInitialSchema(db: SqlJsDatabase): void {
     `);
     db.run(`CREATE INDEX IF NOT EXISTS idx_cmsg_conv ON conv_messages(conversationId, timestamp)`);
 
-    // ─── FTS5 Full-Text Search ─────────────────────────────────
+    // ─── FTS5 Full-Text Search（better-sqlite3 原生支持 FTS5，直接创建） ───
     // FTS5 for memories full-text search
-    try {
-      db.run(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-          id UNINDEXED, agentId, content, type,
-          tokenize='unicode61'
-        )
-      `);
-    } catch (e: any) {
-      logger.warn({ err: e.message }, "FTS5 not available in this sql.js build — full-text search will use LIKE fallback");
-    }
+    db.run(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+        id UNINDEXED, agentId, content, type,
+        tokenize='unicode61'
+      )
+    `);
 
     // FTS5 for session messages search
-    try {
-      db.run(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
-          sessionId UNINDEXED, agentId, content,
-          tokenize='unicode61'
-        )
-      `);
-    } catch (e: any) {
-      logger.warn({ err: e.message }, "FTS5 sessions table not available");
-    }
+    db.run(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+        sessionId UNINDEXED, agentId, content,
+        tokenize='unicode61'
+      )
+    `);
 
-    // FTS5 for conversation messages search
-    try {
-      db.run(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS conv_messages_fts USING fts5(
-          content,
-          content=conv_messages,
-          content_rowid=id,
-          tokenize='unicode61'
-        )
-      `);
-      db.run(`
-        CREATE TRIGGER IF NOT EXISTS conv_fts_insert AFTER INSERT ON conv_messages BEGIN
-          INSERT INTO conv_messages_fts(rowid, content) VALUES (new.id, new.content);
-        END
-      `);
-      db.run(`
-        CREATE TRIGGER IF NOT EXISTS conv_fts_delete AFTER DELETE ON conv_messages BEGIN
-          INSERT INTO conv_messages_fts(conv_messages_fts, rowid, content) VALUES('delete', old.id, old.content);
-        END
-      `);
-    } catch (e: any) {
-      logger.warn({ err: e.message }, "FTS5 conv_messages table not available");
-    }
+    // FTS5 for conversation messages search (content-sync table with triggers)
+    db.run(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS conv_messages_fts USING fts5(
+        content,
+        content=conv_messages,
+        content_rowid=id,
+        tokenize='unicode61'
+      )
+    `);
+    db.run(`
+      CREATE TRIGGER IF NOT EXISTS conv_fts_insert AFTER INSERT ON conv_messages BEGIN
+        INSERT INTO conv_messages_fts(rowid, content) VALUES (new.id, new.content);
+      END
+    `);
+    db.run(`
+      CREATE TRIGGER IF NOT EXISTS conv_fts_delete AFTER DELETE ON conv_messages BEGIN
+        INSERT INTO conv_messages_fts(conv_messages_fts, rowid, content) VALUES('delete', old.id, old.content);
+      END
+    `);
 
     db.run("COMMIT");
   } catch (err) {

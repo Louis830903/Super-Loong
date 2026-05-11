@@ -13,7 +13,6 @@
  */
 
 // ── 批 1：基础设施 ──
-export type { SqlJsDatabase, SqlJsStatic } from "./constants.js";
 export {
   ensureSchemaVersionTable,
   getSchemaVersion,
@@ -24,12 +23,8 @@ export { runMigrations } from "./migrations.js";
 export {
   initDatabase,
   getDatabase,
-  saveDatabase,
-  saveDatabaseSync,
-  scheduleSave,
-  flushPendingSave,
-  flushPendingSaveSync,
   closeDatabase,
+  scheduleSave,
   cleanupOldBackups,
   registerShutdownHandlers,
 } from "./client.js";

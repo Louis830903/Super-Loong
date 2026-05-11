@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { TracesPanel } from "./traces-panel";
 import { OnboardingChecklist } from "./onboarding-checklist";
+import { VersionFooter } from "@/components/layout/version-footer";
 import {
   Bot,
   MessageSquare,
@@ -126,6 +127,9 @@ export default function DashboardPage() {
           color="bg-amber-600/20 text-amber-400"
         />
       </div>
+
+      {/* 新版本更新通知 */}
+      <VersionFooter variant="banner" />
 
       {/* 新用户任务清单 */}
       <OnboardingChecklist systemHealthy={health?.status === "ok"} />

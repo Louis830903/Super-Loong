@@ -21,19 +21,16 @@ export function purgeEvolutionCases(maxRows = 500, retentionDays = 30): number {
   const db = getDatabase();
   const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
 
-  // 1. 先删过期数据
-  db.run("DELETE FROM evolution_cases WHERE timestamp < ?", [cutoff]);
-
-  // 2. 再保留最新的 maxRows 条
-  db.run(
+  // better-sqlite3 迁移：直接用 .run().changes 替代 SELECT changes()，汇总两次 DELETE
+  let deleted = 0;
+  deleted += (db.run("DELETE FROM evolution_cases WHERE timestamp < ?", [cutoff])).changes;
+  deleted += (db.run(
     `DELETE FROM evolution_cases WHERE id NOT IN (
        SELECT id FROM evolution_cases ORDER BY timestamp DESC LIMIT ?
      )`,
     [maxRows],
-  );
+  )).changes;
 
-  const countRes = db.exec("SELECT changes()");
-  const deleted = countRes.length ? (countRes[0].values[0][0] as number) : 0;
   if (deleted > 0) scheduleSave();
   return deleted;
 }

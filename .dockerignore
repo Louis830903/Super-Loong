@@ -1,0 +1,38 @@
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 构建产物（Docker 内重新编译）
+dist/
+packages/*/dist/
+dist-portable/
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# 测试
+**/__tests__/
+**/*.test.ts
+**/*.spec.ts
+coverage/
+
+# 文档
+*.md
+docs/
+
+# 环境
+.env
+.env.local
+
+# 其他
+.qoder/
+.sixth/
+temp/
+tmp/
+*.log

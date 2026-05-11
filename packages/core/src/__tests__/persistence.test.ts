@@ -10,7 +10,6 @@ import * as fs from "node:fs";
 import {
   initDatabase,
   closeDatabase,
-  saveDatabase,
   getDatabase,
   // Agent
   saveAgentConfig,
@@ -308,7 +307,6 @@ describe("Evolution Tables Cleanup", () => {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ["new-case-1", "a1", "s1", "msg", "resp", 0, new Date().toISOString()]
     );
-    await saveDatabase();
 
     purgeEvolutionCases(500, 30);
 
@@ -331,7 +329,6 @@ describe("Evolution Tables Cleanup", () => {
        VALUES (?, ?, ?, ?, ?)`,
       ["new-prop-1", "new-skill", "create", "approved", new Date().toISOString()]
     );
-    await saveDatabase();
 
     purgeSkillProposals(300, 60);
 

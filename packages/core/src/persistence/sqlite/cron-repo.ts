@@ -98,8 +98,7 @@ export function loadCronHistory(jobId: string, limit = 20): Array<Record<string,
 export function cleanupOldCronHistory(retentionDays = 30): number {
   const db = getDatabase();
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
-  db.run("DELETE FROM cron_history WHERE startedAt < ?", [cutoff]);
-  // sql.js 没有 changes()，返回 -1 表示已执行但无法知道具体数量
+  const result = db.run("DELETE FROM cron_history WHERE startedAt < ?", [cutoff]);
   scheduleSave();
-  return -1;
+  return result.changes;
 }

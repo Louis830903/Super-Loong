@@ -53,11 +53,11 @@ export function loadChannels(): Array<{
 /**
  * 按 id 删除 IM 通道配置.
  *
- * 返回 true 以兼容旧 API（sql.js 无 changes()，无法区分是否真删除行）。
+ * better-sqlite3 迁移：用 .run().changes 精确判断是否真删除行。
  */
 export function deleteChannel(id: string): boolean {
   const db = getDatabase();
-  db.run("DELETE FROM channels WHERE id = ?", [id]);
+  const result = db.run("DELETE FROM channels WHERE id = ?", [id]);
   scheduleSave();
-  return true;
+  return result.changes > 0;
 }

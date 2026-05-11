@@ -5,7 +5,7 @@
  *   - ConversationRecord / ConvMessageRecord 结构
  *   - conversations / conv_messages 表的 CRUD（含事务保护）
  *   - JSONL 双写（createConversation / deleteConversation / appendConvMessage）
- *   - searchConvMessages：conv_messages_fts 自建探测（与 memories_fts 无关，本地按需判断）
+ *   - searchConvMessages：better-sqlite3 原生支持 FTS5，直接 MATCH conv_messages_fts
  *
  * 设计说明：
  *   - 本 repo 的 FTS 查询是 conv_messages_fts，与 fts-repo.ts 中的 memories_fts /
@@ -232,73 +232,48 @@ export function getConvMessages(
   if (!results.length) return [];
   return results[0].values.map((v: unknown[]) => ({
     id: v[0] as number, conversationId: v[1] as string, role: v[2] as string,
-    // sql.js 有时会把 TEXT 列返回为 Uint8Array，必须运行时检查并转为字符串
-    content: v[3] instanceof Uint8Array ? new TextDecoder().decode(v[3]) : (v[3] as string | null),
-    toolCallId: v[4] instanceof Uint8Array ? new TextDecoder().decode(v[4]) : (v[4] as string | null),
-    toolCalls: v[5] instanceof Uint8Array ? new TextDecoder().decode(v[5]) : (v[5] as string | null),
-    toolName: v[6] instanceof Uint8Array ? new TextDecoder().decode(v[6]) : (v[6] as string | null),
-    timestamp: v[7] instanceof Uint8Array ? new TextDecoder().decode(v[7]) : (v[7] as string),
+    // better-sqlite3 保证 TEXT 列返回 string | null，无需 Uint8Array 检查
+    content: v[3] as string | null,
+    toolCallId: v[4] as string | null,
+    toolCalls: v[5] as string | null,
+    toolName: v[6] as string | null,
+    timestamp: v[7] as string,
     tokenCount: v[8] as number | null,
   }));
 }
 
-/** FTS5 search across conversation messages */
+/** FTS5 search across conversation messages（better-sqlite3 原生支持 FTS5，直接 MATCH） */
 export function searchConvMessages(
   query: string,
   opts?: { agentId?: string; limit?: number },
 ): Array<{ id: number; conversationId: string; role: string; snippet: string; timestamp: string }> {
   const db = getDatabase();
   const limit = opts?.limit ?? 30;
-  // Check if FTS5 table exists
-  try {
-    const check = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='conv_messages_fts'");
-    if (!check.length || !check[0].values.length) throw new Error("no fts");
 
-    let sql: string;
-    // P0-A8: FTS5 查询注入防护
-    const safeQuery = '"' + query.replace(/"/g, '""') + '"';
-    const params: unknown[] = [safeQuery];
-    if (opts?.agentId) {
-      sql = `SELECT m.id, m.conversationId, m.role, snippet(conv_messages_fts, 0, '>>>', '<<<', '...', 40) AS snip, m.timestamp
-             FROM conv_messages_fts
-             JOIN conv_messages m ON m.id = conv_messages_fts.rowid
-             JOIN conversations c ON c.id = m.conversationId
-             WHERE conv_messages_fts MATCH ? AND c.agentId = ?
-             ORDER BY rank LIMIT ?`;
-      params.push(opts.agentId, limit);
-    } else {
-      sql = `SELECT m.id, m.conversationId, m.role, snippet(conv_messages_fts, 0, '>>>', '<<<', '...', 40) AS snip, m.timestamp
-             FROM conv_messages_fts
-             JOIN conv_messages m ON m.id = conv_messages_fts.rowid
-             WHERE conv_messages_fts MATCH ?
-             ORDER BY rank LIMIT ?`;
-      params.push(limit);
-    }
-    const results = db.exec(sql, params);
-    if (!results.length) return [];
-    return results[0].values.map((v: unknown[]) => ({
-      id: v[0] as number, conversationId: v[1] as string, role: v[2] as string,
-      snippet: v[3] as string, timestamp: v[4] as string,
-    }));
-  } catch {
-    // Fallback: LIKE search
-    let sql = `SELECT m.id, m.conversationId, m.role, m.content, m.timestamp
-               FROM conv_messages m`;
-    const params: unknown[] = [];
-    if (opts?.agentId) {
-      sql += ` JOIN conversations c ON c.id = m.conversationId WHERE m.content LIKE ? AND c.agentId = ?`;
-      params.push(`%${query}%`, opts.agentId);
-    } else {
-      sql += ` WHERE m.content LIKE ?`;
-      params.push(`%${query}%`);
-    }
-    sql += ` ORDER BY m.timestamp DESC LIMIT ?`;
+  let sql: string;
+  // P0-A8: FTS5 查询注入防护
+  const safeQuery = '"' + query.replace(/"/g, '""') + '"';
+  const params: unknown[] = [safeQuery];
+  if (opts?.agentId) {
+    sql = `SELECT m.id, m.conversationId, m.role, snippet(conv_messages_fts, 0, '>>>', '<<<', '...', 40) AS snip, m.timestamp
+           FROM conv_messages_fts
+           JOIN conv_messages m ON m.id = conv_messages_fts.rowid
+           JOIN conversations c ON c.id = m.conversationId
+           WHERE conv_messages_fts MATCH ? AND c.agentId = ?
+           ORDER BY rank LIMIT ?`;
+    params.push(opts.agentId, limit);
+  } else {
+    sql = `SELECT m.id, m.conversationId, m.role, snippet(conv_messages_fts, 0, '>>>', '<<<', '...', 40) AS snip, m.timestamp
+           FROM conv_messages_fts
+           JOIN conv_messages m ON m.id = conv_messages_fts.rowid
+           WHERE conv_messages_fts MATCH ?
+           ORDER BY rank LIMIT ?`;
     params.push(limit);
-    const results = db.exec(sql, params);
-    if (!results.length) return [];
-    return results[0].values.map((v: unknown[]) => ({
-      id: v[0] as number, conversationId: v[1] as string, role: v[2] as string,
-      snippet: ((v[3] as string) ?? "").slice(0, 120), timestamp: v[4] as string,
-    }));
   }
+  const results = db.exec(sql, params);
+  if (!results.length) return [];
+  return results[0].values.map((v: unknown[]) => ({
+    id: v[0] as number, conversationId: v[1] as string, role: v[2] as string,
+    snippet: v[3] as string, timestamp: v[4] as string,
+  }));
 }

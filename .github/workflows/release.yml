@@ -1,0 +1,94 @@
+# Super Agent — 自动构建与发布
+#
+# 触发条件：推送 tag 匹配 v*（如 v0.2.0）
+# 流程：
+#   1. 构建 core / api / web
+#   2. 打包为 portable 分发包（含 launcher）
+#   3. 创建 GitHub Release 并上传附件
+
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # 允许手动触发（Actions 页面 → Run workflow）
+  workflow_dispatch:
+
+permissions:
+  contents: write # 上传 Release 附件需要
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建 core
+        run: pnpm --filter @super-agent/core build
+
+      - name: 构建 api
+        run: pnpm --filter @super-agent/api build
+
+      - name: 构建 web
+        run: pnpm --filter @super-agent/web build
+
+      - name: 打包 portable 分发包
+        run: pnpm tsx scripts/package-portable.ts
+
+      - name: 获取版本号
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "tag=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Super Agent ${{ steps.version.outputs.tag }}"
+          body: |
+            ## Super Agent ${{ steps.version.outputs.tag }}
+
+            ### 安装方式
+
+            #### 便携版（推荐）
+            1. 下载 `super-agent-portable-v${{ steps.version.outputs.version }}.zip`
+            2. 解压到任意目录
+            3. 运行 `start.bat`（Windows）或 `./start.sh`（Linux/macOS）
+
+            #### 开发者模式
+            ```bash
+            git clone https://github.com/Louis830903/Super-Loong.git
+            cd Super-Loong
+            git checkout ${{ steps.version.outputs.tag }}
+            pnpm install
+            pnpm build
+            pnpm dev
+            ```
+
+            ### 更新内容
+            详见 [CHANGELOG](https://github.com/Louis830903/Super-Loong/blob/main/CHANGELOG.md)
+
+          files: |
+            dist-portable/super-agent-portable-v${{ steps.version.outputs.version }}.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
