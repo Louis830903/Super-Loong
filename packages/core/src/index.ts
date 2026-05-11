@@ -554,6 +554,42 @@ export type { CronJobConfig, CronHistory } from "./cron/index.js";
 export { HeartbeatRunner, DEFAULT_HEARTBEAT_CONFIG, HEARTBEAT_PROMPT, HEARTBEAT_SYSTEM_SECTION } from "./cron/index.js";
 export type { HeartbeatConfig, HeartbeatExecuteFn, HeartbeatDeliverFn } from "./cron/index.js";
 
+// Platform — 跨平台适配层（adapter + cli-detector 统一 barrel）
+export {
+  getPlatformInfo,
+  getCommand,
+  buildShellArgs,
+  normalizePath,
+  getAvailableCommands,
+  _resetPlatformCache,
+  PLATFORM_COMMANDS,
+} from "./platform/index.js";
+export type {
+  OSPlatform,
+  PlatformInfo,
+  PlatformCommand,
+  PlatformCommandMap,
+} from "./platform/index.js";
+export {
+  hasBinary,
+  scanInstalledCLIs,
+  detectCLIsByCategory,
+  detectCLIs,
+  getInstalledCLISummary,
+  _resetCLICache,
+  SYSTEM_CLIS,
+  DEV_CLIS,
+  OPS_CLIS,
+  DESKTOP_CLIS,
+  EXTERNAL_CLIS,
+  CLI_CATEGORIES,
+} from "./platform/index.js";
+export type {
+  CLICategory,
+  CLIDetectionResult,
+  CLIScanResult,
+} from "./platform/index.js";
+
 // Voice (TTS/STT)
 export { AliyunVoiceProvider } from "./voice/index.js";
 export type { VoiceProvider, VoiceConfig, STTOptions, TTSOptions, STTResult, AliyunVoiceConfig } from "./voice/index.js";
