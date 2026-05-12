@@ -19,7 +19,7 @@ import dotenv from "dotenv";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createAppContext } from "./context.js";
-import { closeDatabase, loadAllAgentConfigs, saveAgentConfig, setTracingEnabled, ensureBuiltinAgents, HeartbeatRunner, DEFAULT_HEARTBEAT_CONFIG } from "@super-agent/core";
+import { closeDatabase, loadAllAgentConfigs, saveAgentConfig, setTracingEnabled, ensureBuiltinAgents, HeartbeatRunner, DEFAULT_HEARTBEAT_CONFIG, checkForUpdates } from "@super-agent/core";
 import { getProviderById, getModelById, getModelCatalog } from "@super-agent/core";
 
 import { registerMiddleware } from "./middleware/index.js";
@@ -48,13 +48,20 @@ import { videoRoutes } from "./routes/video.js";
 import { videoProviderTemplateRoutes } from "./routes/video-provider-templates.js";
 import { registerTracesRoutes } from "./routes/traces.js";
 import { versionRoutes } from "./routes/version.js";
+import { startUpdatePoller } from "./update-poller.js";
 import { GatewayLauncher } from "./gateway-launcher.js";
 import { VideoForgeSupervisor } from "./services/video-forge-supervisor.js";
 import { registerWellKnownRoute, a2aPlugin } from "./a2a/server.js";
 
 // Load .env from monorepo root (two levels up from packages/api/)
-dotenv.config({ path: path.resolve(process.cwd(), "../../.env") });
-// Also load local .env if exists (overrides root)
+// 使用 import.meta.dirname 绝对路径，避免 PM2 从 monorepo 根目录运行时 cwd 路径错误
+const monorepoRoot = path.resolve(import.meta.dirname ?? __dirname, "../..");
+dotenv.config({ path: path.join(monorepoRoot, ".env") });
+// 生产环境时叠加加载 .env.production（后加载覆盖前加载）
+if (process.env.NODE_ENV === "production") {
+  dotenv.config({ path: path.join(monorepoRoot, ".env.production") });
+}
+// 本地 .env 最后加载（最高优先级）
 dotenv.config();
 
 // 同步追踪状态：dotenv 加载后的环境变量可能和模块加载时不同
@@ -281,6 +288,10 @@ async function main() {
   await registerTracesRoutes(app);
   await versionRoutes(app);
 
+// 启动定时版本轮询 + WebSocket 主动推送（每 6h 检查，发现更新推送给所有在线前端）
+const stopUpdatePoller = startUpdatePoller(app);
+app.addHook("onClose", () => stopUpdatePoller());
+
   // WebSocket real-time event streaming
   await registerWebSocket(app, ctx);
 
@@ -457,6 +468,29 @@ async function main() {
     app.log.info(`Super Agent API running at http://${HOST}:${PORT}`);
     app.log.info(`OpenAI-compatible endpoint: http://${HOST}:${PORT}/v1/chat/completions`);
     app.log.info(`Health check: http://${HOST}:${PORT}/api/system/health`);
+
+    // 通知 PM2 进程就绪（仅在 PM2 管理下生效，直接运行时 process.send 为 undefined）
+    if (process.send) {
+      process.send("ready");
+      app.log.info("PM2 ready signal sent");
+    }
+
+    // 启动时异步检查版本更新（不阻塞后续逻辑）
+    checkForUpdates().then((result) => {
+      if (result.outdated && result.latest) {
+        app.log.info(
+          "\n" +
+          "  ╔══════════════════════════════════════════════════════════╗\n" +
+          `  ║  新版本可用！ v${result.current} → v${result.latest}` +
+          "\n" +
+          `  ║  下载: ${result.releaseUrl}` +
+          "\n" +
+          `  ║  来源: ${result.source}` +
+          "\n" +
+          "  ╚══════════════════════════════════════════════════════════╝\n"
+        );
+      }
+    });
 
     // 所有核心模块已初始化 + HTTP 端口已就绪 → 安全启动 IM Gateway
     if (process.env.DISABLE_IM_GATEWAY !== "true") {

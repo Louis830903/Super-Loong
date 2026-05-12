@@ -31,6 +31,11 @@
     "build": "pnpm -r build",
     "build:api": "pnpm --filter @super-agent/api build",
     "build:web": "pnpm --filter @super-agent/web build",
+    "start:prod": "pm2 start ecosystem.config.cjs --env production",
+    "stop:prod": "pm2 stop ecosystem.config.cjs",
+    "restart:prod": "pm2 restart ecosystem.config.cjs",
+    "logs:prod": "pm2 logs super-agent-api",
+    "status:prod": "pm2 status",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "clean": "pnpm -r clean"

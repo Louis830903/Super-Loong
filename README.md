@@ -625,6 +625,81 @@ kill -9 <PID>
 
 ---
 
+## 🚀 生产部署
+
+> 使用 PM2 进程守护，实现崩溃自动重启、开机自启、日志管理。
+
+### 一键启动
+
+```powershell
+# Windows
+.\start.bat
+
+# Linux / macOS
+chmod +x start.sh && ./start.sh
+```
+
+脚本会自动完成：
+1. 检查并安装 PM2（如未安装）
+2. 检查构建产物（如不存在则自动 `pnpm build`）
+3. 启动 API + Web 服务（IM 网关由 API 内部 GatewayLauncher 自动管理）
+4. 配置开机自启
+
+### 环境配置
+
+生产模式会加载 `.env.production` 文件（叠加在 `.env` 之上）：
+
+```powershell
+copy .env.example .env.production
+notepad .env.production  # 至少填入 JWT_SECRET 和 API Key
+```
+
+### 常用管理命令
+
+| 命令 | 说明 |
+|------|------|
+| `pm2 status` | 查看所有服务运行状态 |
+| `pm2 logs super-agent-api` | 查看 API 日志 |
+| `pm2 logs super-agent-web` | 查看前端日志 |
+| `pm2 restart all` | 重启所有服务 |
+| `pm2 stop all` | 停止所有服务 |
+| `npm run logs:prod` | 快捷查看 API 日志 |
+| `npm run status:prod` | 快捷查看状态 |
+
+### 开机自启
+
+首次运行 `start.bat` / `start.sh` 后，PM2 会自动配置开机自启：
+
+- **Windows**：通过 `pm2-windows-startup` 注册为 Windows 服务
+- **Linux**：通过 `pm2 startup systemd` 注册 systemd 服务
+- **macOS**：通过 `pm2 startup launchd` 注册 launchd 服务
+
+> 💡 如需取消开机自启：`pm2 unstartup`
+
+### 日志查看
+
+日志文件位于 `super-agent/logs/` 目录：
+
+```bash
+# 实时查看
+pm2 logs
+
+# 查看文件
+cat logs/pm2-api-out.log
+cat logs/pm2-web-out.log
+```
+
+### 进程架构
+
+```
+PM2 (进程守护)
+├── super-agent-api   ← Node.js Fastify 服务
+│   └── GatewayLauncher ← 内部管理 IM Gateway 子进程
+└── super-agent-web   ← Next.js 前端
+```
+
+---
+
 ## 🏗️ 架构一览
 
 ```
