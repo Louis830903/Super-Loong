@@ -231,7 +231,7 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 | 🔧 内置工具 | **36** | 文件/桌面/运维/Docker/Git/浏览器/视频/安全 |
 | 🧬 进化模块 | **34** | 自适应执行器 · 自修改引擎 · 算子体系 · 质量关卡 |
 | 📄 知识库格式 | **10+** | PDF/Word/Excel/PPT/Markdown/HTML/EPUB/CSV/JSON |
-| 🏭 微服务 | **4** | IM 网关 · 视频引擎 · 文档解析器 · 定时任务调度 |
+| 🏭 Python 微服务 | **3** | IM 网关 · 视频引擎 · 文档解析器 |
 | 🔒 沙箱层级 | **3** | Process → Docker → SSH 自动降级 |
 | 📝 提示层级 | **10** | L1-L6 缓存 + L7-L10 动态注入 |
 | 💾 持久化表 | **6** | SQLite WAL，配置持久化加密存储 |
@@ -277,8 +277,8 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 | 阶段 | 状态 | 内容 |
 |------|:----:|------|
 | 🏗️ **v0.1 Alpha** | ✅ 已完成 | 核心运行时 + 211 专家 + 记忆系统 + 三平台 IM + 安全沙箱 + MCP 生态 + 技能市场 |
-| 🚀 **v0.2 Beta** | ✅ 已完成 | 进化引擎 Phase 2（34 个模块）· 自修改引擎 · 编码委派 · FTS5 原生支持 · A2A 跨进程打通 · 电商运营技能 · 进化 UI 完善 |
-| 🎯 **v0.5 里程碑** | 🔨 进行中 | 多模态 Agent 打通 · 视频生成端到端出片 · 分布式 Agent 协作 · SSE 流稳定性 |
+| 🚀 **v0.2 Beta** | ✅ 已完成 | 进化引擎 Phase 2（34 个模块）· 自修改引擎 · 编码委派 · FTS5 原生支持 · A2A 跨进程打通 · 电商运营技能 · 进化 UI 完善 · IM 网关 PM2 直管 · 视频引擎 PM2 直管 · kb-parser 标准化 |
+| 🎯 **v0.5 里程碑** | 🔨 进行中 | 多模态 Agent 打通 · 视频端到端出片 · 分布式 Agent 协作 · SSE 流稳定性 |
 | 🌟 **v1.0 正式版** | 📋 规划中 | 插件市场 · 云端一键部署 · Agent 商店 · 企业级权限系统 · 社区贡献生态 |
 
 ---
@@ -467,9 +467,13 @@ cd Super-Loong
 npm install -g pnpm  # 如已安装可跳过
 pnpm install
 
-# ③ 安装 IM 网关 Python 依赖
+# ③ 安装 Python 微服务依赖（IM 网关 + 视频引擎 + 文档解析）
 cd services/im-gateway
-uv sync  # 或: pip install -e .
+pip install -r requirements.txt
+cd ../video-forge
+pip install -r requirements.txt
+cd ../kb-parser
+pip install -r requirements.txt
 cd ../..
 
 # ④ 复制环境变量模板并编辑
@@ -513,11 +517,16 @@ git clone https://github.com/Louis830903/Super-Loong.git && cd Super-Loong
 npm install -g pnpm  # 如已安装可跳过
 pnpm setup
 
-# ③ 编辑 .env 填入 API Key
+# ③ 安装 Python 微服务依赖
+cd services/im-gateway && pip install -r requirements.txt && cd ../..
+cd services/video-forge && pip install -r requirements.txt && cd ../..
+cd services/kb-parser && pip install -r requirements.txt && cd ../..
+
+# ④ 编辑 .env 填入 API Key
 nano .env
 # 或者: vim .env / code .env
 
-# ④ 启动
+# ⑤ 启动
 pnpm dev
 ```
 
@@ -590,21 +599,18 @@ pnpm config set registry https://registry.npmmirror.com
 </details>
 
 <details>
-<summary><b>Q: Python 依赖安装失败（uv sync 报错）</b></summary>
+<summary><b>Q: Python 依赖安装失败（pip install -r requirements.txt 报错）</b></summary>
 
 确保 Python ≥ 3.11，然后重试：
 
 ```bash
 python --version  # 确认版本
 cd services/im-gateway
-uv venv            # 创建虚拟环境
-uv sync            # 安装依赖
-```
-
-如果 `uv` 不可用，改用 pip：
-
-```bash
-pip install -e services/im-gateway/
+pip install -r requirements.txt
+cd ../video-forge
+pip install -r requirements.txt
+cd ../kb-parser
+pip install -r requirements.txt
 ```
 
 </details>
@@ -656,7 +662,7 @@ chmod +x start.sh && ./start.sh
 脚本会自动完成：
 1. 检查并安装 PM2（如未安装）
 2. 检查构建产物（如不存在则自动 `pnpm build`）
-3. 启动 API + Web 服务（IM 网关由 API 内部 GatewayLauncher 自动管理）
+3. 启动 4 个 PM2 进程：API + Web + IM 网关 + 视频引擎
 4. 配置开机自启
 
 ### 环境配置
@@ -675,6 +681,8 @@ notepad .env.production  # 至少填入 JWT_SECRET 和 API Key
 | `pm2 status` | 查看所有服务运行状态 |
 | `pm2 logs super-agent-api` | 查看 API 日志 |
 | `pm2 logs super-agent-web` | 查看前端日志 |
+| `pm2 logs super-agent-gateway` | 查看 IM 网关日志 |
+| `pm2 logs super-agent-video-forge` | 查看视频引擎日志 |
 | `pm2 restart all` | 重启所有服务 |
 | `pm2 stop all` | 停止所有服务 |
 | `npm run logs:prod` | 快捷查看 API 日志 |
@@ -701,15 +709,21 @@ pm2 logs
 # 查看文件
 cat logs/pm2-api-out.log
 cat logs/pm2-web-out.log
+cat logs/pm2-gateway-out.log
+cat logs/pm2-video-forge-out.log
 ```
 
 ### 进程架构
 
 ```
-PM2 (进程守护)
-├── super-agent-api   ← Node.js Fastify 服务
-│   └── GatewayLauncher ← 内部管理 IM Gateway 子进程
-└── super-agent-web   ← Next.js 前端
+PM2 (进程守护) — 4 进程平级，统一管理崩溃重启与日志
+├── super-agent-api         ← Node.js Fastify 服务  :3001
+├── super-agent-web         ← Next.js 16 前端        :3000
+├── super-agent-gateway     ← Python IM 网关          :8642
+└── super-agent-video-forge ← Python 视频生成引擎     :8199
+
+注：kb-parser（文档解析）由 API 按需懒启动，不常驻。
+    生产环境通过 DISABLE_* 环境变量禁止 API 内部嵌套 spawn。
 ```
 
 ---
