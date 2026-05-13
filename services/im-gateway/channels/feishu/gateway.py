@@ -203,8 +203,17 @@ class FeishuGateway:
         
         正确做法：为线程创建全新事件循环，并猴子补丁 SDK 的模块级 loop 变量，
         使 SDK 的 run_until_complete() 在新循环上执行，完全不影响 uvicorn。
+        
+        P1 修复：WebSocket 协议级 keepalive 超时加固
+        lark_oapi SDK 在 _connect() 中调用 websockets.connect(conn_url) 时
+        未指定 ping_interval/ping_timeout，使用库默认值 20s/20s。
+        网络波动时 PONG 超时 20s 即断连。此处 monkey-patch websockets.connect
+        提升为 ping_interval=60s / ping_timeout=120s，避免频繁误断连。
         """
         import asyncio
+        import functools
+        import websockets
+
         # 为当前线程创建全新的事件循环
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -221,6 +230,24 @@ class FeishuGateway:
                 "飞书 SDK lark_oapi.ws.client 缺少 loop 属性，"
                 "猴子补丁已跳过。请检查 SDK 版本是否升级，可能导致 WS 连接异常"
             )
+
+        # ── P1 修复：WebSocket 协议级 keepalive 参数加固 ──
+        # SDK 的 _connect() 调用 websockets.connect(conn_url) 时未传 keepalive 参数，
+        # 使用库默认值 ping_interval=20s / ping_timeout=20s，太短容易误断连。
+        _websockets_connect_orig = websockets.connect
+
+        @functools.wraps(_websockets_connect_orig)
+        async def _ws_connect_patched(uri, **kwargs):
+            # 为飞书长连接设置宽松的 keepalive 参数
+            kwargs.setdefault("ping_interval", 60)   # 每 60s 发一次协议级 ping
+            kwargs.setdefault("ping_timeout", 120)    # 120s 内收不到 pong 才判定超时
+            kwargs.setdefault("close_timeout", 10)    # 关闭握手超时
+            return await _websockets_connect_orig(uri, **kwargs)
+
+        websockets.connect = _ws_connect_patched
+
+        # 同时将 SDK 应用层 ping 间隔从 120s 缩短到 60s，与协议层对齐
+        ws_cli._ping_interval = 60
 
         try:
             ws_cli.start()

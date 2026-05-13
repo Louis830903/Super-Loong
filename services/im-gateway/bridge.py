@@ -543,9 +543,9 @@ class AgentBridge:
             self._ws = await websockets.connect(
                 uri,
                 additional_headers=extra_headers,
-                ping_interval=30,
-                ping_timeout=10,
-                close_timeout=5,
+                ping_interval=60,
+                ping_timeout=120,
+                close_timeout=10,
             )
             self._ws_connected = True
             # 启动接收循环
