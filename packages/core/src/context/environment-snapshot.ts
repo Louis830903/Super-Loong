@@ -14,9 +14,12 @@
 
 import { platform, release, cpus, totalmem, freemem, homedir, hostname, networkInterfaces } from "node:os";
 import { existsSync, readdirSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { exec, execSync } from "node:child_process";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import pino from "pino";
+
+const execAsync = promisify(exec);
 
 const logger = pino({ name: "environment-snapshot" });
 
@@ -355,20 +358,22 @@ export class EnvironmentSnapshotCollector {
 
   /**
    * 采集已安装应用列表。
+   * 🔧 P1 修复：execSync → exec（异步），避免阻塞事件循环。
+   * 15 秒超时 + 失败静默降级（不影响 Agent 正常运行）。
    */
   private async collectInstalledApps(): Promise<InstalledApp[]> {
     try {
       const cmd = this.config.appListCommands[process.platform];
       if (!cmd) return [];
 
-      const output = execSync(cmd, {
+      const { stdout } = await execAsync(cmd, {
         encoding: "utf-8",
         timeout: 15000,
         windowsHide: true,
       });
 
-      const lines = output.split("\n").filter(l => l.trim().length > 0);
-      return lines.slice(0, 200).map(line => ({
+      const lines = stdout.split("\n").filter((l: string) => l.trim().length > 0);
+      return lines.slice(0, 200).map((line: string) => ({
         name: line.trim(),
       }));
     } catch (err) {

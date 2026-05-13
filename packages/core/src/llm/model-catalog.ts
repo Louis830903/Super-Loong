@@ -20,8 +20,10 @@ export interface ModelDef {
   /** Fixed temperature required by the model (e.g. Kimi K2 only allows 1). */
   fixedTemperature?: number;
   tags: string[];
-  /** 模型价格（CNY / 1M tokens），Ollama 本地模型为 0 */
-  pricing?: { input: number; output: number; unit: "CNY/1M_tokens" };
+  /** 模型价格（/1M tokens），Ollama 本地模型为 0 */
+  pricing?: { input: number; output: number; unit: "CNY/1M_tokens" | "USD/1M_tokens" };
+  /** 废弃信息（遗留别名标记） */
+  deprecation?: { sunsetDate: string; migratedTo: string };
 }
 
 export interface ProviderDef {
@@ -513,7 +515,7 @@ const qwenModels: ModelDef[] = [
 // ─── DeepSeek ─────────────────────────────────────────────────
 
 const deepseekModels: ModelDef[] = [
-  // ── DeepSeek V4 系列（最新）───────────────────────
+  // ── DeepSeek V4 系列（2026-04 发布，最新）───────────
   {
     id: "deepseek-v4-pro",
     name: "DeepSeek V4 Pro (旗舰)",
@@ -524,7 +526,8 @@ const deepseekModels: ModelDef[] = [
     supportsReasoning: true,
     supportsStreaming: true,
     tags: ["flagship", "reasoning", "agent"],
-    pricing: { input: 3.1, output: 6.2, unit: "CNY/1M_tokens" },
+    // 75% 折扣价，有效期至 2026-05-31；原始价 $1.74/$3.48
+    pricing: { input: 0.435, output: 0.87, unit: "USD/1M_tokens" },
   },
   {
     id: "deepseek-v4-flash",
@@ -535,33 +538,37 @@ const deepseekModels: ModelDef[] = [
     supportsVision: false,
     supportsReasoning: true,
     supportsStreaming: true,
-    tags: ["flagship", "fast", "functions"],
-    pricing: { input: 1.0, output: 2.0, unit: "CNY/1M_tokens" },
+    tags: ["fast", "functions", "reasoning"],
+    pricing: { input: 0.14, output: 0.28, unit: "USD/1M_tokens" },
   },
-  // ── 向后兼容（自动路由到 V4 Flash）───────────────
+  // ── 遗留别名（2026-07-24 后废弃）───────────────────
+  // deepseek-chat → deepseek-v4-flash 非思考模式
   {
     id: "deepseek-chat",
-    name: "DeepSeek V4 Flash (对话)",
+    name: "DeepSeek Chat (遗留别名 → V4 Flash)",
     contextWindow: 1000000,
     maxOutputTokens: 384000,
     supportsFunctions: true,
     supportsVision: false,
     supportsReasoning: false,
     supportsStreaming: true,
-    tags: ["general", "functions"],
-    pricing: { input: 1.0, output: 2.0, unit: "CNY/1M_tokens" },
+    tags: ["legacy", "general", "functions"],
+    deprecation: { sunsetDate: "2026-07-24", migratedTo: "deepseek-v4-flash" },
+    pricing: { input: 0.14, output: 0.28, unit: "USD/1M_tokens" },
   },
+  // deepseek-reasoner → deepseek-v4-flash 思考模式
   {
     id: "deepseek-reasoner",
-    name: "DeepSeek V4 Flash (推理)",
+    name: "DeepSeek Reasoner (遗留别名 → V4 Flash 思考)",
     contextWindow: 1000000,
     maxOutputTokens: 384000,
     supportsFunctions: true,
     supportsVision: false,
     supportsReasoning: true,
     supportsStreaming: true,
-    tags: ["reasoning"],
-    pricing: { input: 1.0, output: 2.0, unit: "CNY/1M_tokens" },
+    tags: ["legacy", "reasoning"],
+    deprecation: { sunsetDate: "2026-07-24", migratedTo: "deepseek-v4-flash" },
+    pricing: { input: 0.14, output: 0.28, unit: "USD/1M_tokens" },
   },
 ];
 

@@ -171,8 +171,14 @@ export class AgentManager extends EventEmitter<AgentManagerEvents> {
       .filter((n): n is string => typeof n === "string" && n.length > 0);
   }
 
-  /** Create a new agent from config. */
-  createAgent(config: Partial<AgentConfig> & { name: string }): AgentRuntime {
+  /**
+   * Create a new agent from config.
+   * @param config - Agent 配置（Partial<AgentConfig> & { name: string }）
+   * @param opts - 创建选项
+   * @param opts.lightweight - 轻量模式：跳过环境快照采集、Markdown 快照等重型初始化，
+   *   用于批量注册内置 Agent 时避免 I/O 风暴
+   */
+  createAgent(config: Partial<AgentConfig> & { name: string }, opts?: { lightweight?: boolean }): AgentRuntime {
     const id = config.id ?? uuid();
     const fullConfig: AgentConfig = {
       id,
@@ -210,6 +216,8 @@ export class AgentManager extends EventEmitter<AgentManagerEvents> {
       skillLoader: this.skillLoader,
       platform: this.platform,
       manager: this, // Phase A-1: 反向引用，用于 evolution 闭环
+      // 🔧 P0 修复：透传 lightweight 标志，批量注册内置 Agent 时跳过重型初始化
+      lightweight: opts?.lightweight,
     });
 
     this.agents.set(id, runtime);

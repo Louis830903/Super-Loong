@@ -93,6 +93,12 @@ export interface AgentRuntimeOptions {
   heartbeatConfig?: Partial<HeartbeatConfig>;
   /** T2: ReflectionEngine 配置（工具失败自愈） */
   reflectionConfig?: Partial<ReflectionConfig>;
+  /**
+   * 🔧 P0 修复：轻量模式 — 跳过重型初始化操作（环境快照采集、Markdown 快照等），
+   * 用于批量注册内置 Agent 时避免 I/O 风暴导致启动卡死。
+   * 运行时首次 chat/chatStream 会惰性补全必要初始化。
+   */
+  lightweight?: boolean;
   onStream?: (chunk: string) => void;
   onToolCall?: (name: string, args: unknown) => void;
   onToolResult?: (name: string, result: ToolResult) => void;
@@ -147,7 +153,10 @@ export class AgentRuntime {
     this.markdownMemory = new MarkdownMemory();
     this.markdownMemory.ensureFiles();
     // B-1: 初始化时冻结快照（学 Hermes _system_prompt_snapshot）
-    this.markdownMemory.captureSnapshot();
+    // 🔧 P0 修复：轻量模式下跳过 captureSnapshot，首次 promptEngine.build() 时惰性求值
+    if (!options.lightweight) {
+      this.markdownMemory.captureSnapshot();
+    }
 
     // P0-3: Initialize context compressor with model's context window size
     const modelDef = getModelById(
@@ -166,11 +175,10 @@ export class AgentRuntime {
         modelDef?.supportsVision ?? supportsVision(this.config.llmProvider.model);
     }
 
-    // P2: 注入 LLM 结构化摘要器（使用同一个 LLM provider）
-    // 压缩中间对话时用 LLM 生成结构化摘要，替代直接丢弃
+    // P2: 注入 LLM 结构化摘要器（复用主 LLM 实例，避免重复实例化）
+    // 🔧 P0 修复：复用 this.llm 而非 new LLMProvider，消除 211 次重复构造开销
     if (options.config.llmProvider) {
-      const summarizerLLM = new LLMProvider(options.config.llmProvider);
-      const summarizer = new ContextSummarizer({ llmProvider: summarizerLLM });
+      const summarizer = new ContextSummarizer({ llmProvider: this.llm });
       compressor.setSummarizer(summarizer);
     }
 
@@ -205,18 +213,25 @@ export class AgentRuntime {
     }
 
     // Phase 5 (Task 5.4): 预采集环境快照（后台异步，不阻塞构造）
-    this.envSnapshotPromise = captureEnvironmentPrompt()
-      .then(text => { this.envSnapshotText = text; return text; })
-      .catch(err => { logger.warn({ err }, "Environment snapshot capture failed"); return ""; });
+    // 🔧 P0 修复：轻量模式下跳过环境快照（首次 chat/chatStream 惰性采集），
+    // 避免 211 次 execSync 并发导致的 I/O 风暴
+    if (!options.lightweight) {
+      this.envSnapshotPromise = captureEnvironmentPrompt()
+        .then(text => { this.envSnapshotText = text; return text; })
+        .catch(err => { logger.warn({ err }, "Environment snapshot capture failed"); return ""; });
+    }
 
     // Task 4: 启动 sessions 定时清理（unref 不阻止进程退出）
-    const ttlMs = this.config.sessionTtlMs ?? 30 * 60 * 1000; // 默认 30 分钟
-    if (ttlMs > 0) {
-      const intervalMs = Math.max(ttlMs / 6, 60_000); // TTL/6，最少 1 分钟
-      this._cleanupTimer = setInterval(() => this.cleanupStaleSessions(), intervalMs);
-      // unref 确保定时器不阻止 Node 进程退出
-      if (this._cleanupTimer.unref) this._cleanupTimer.unref();
-      logger.info({ ttlMs, intervalMs, agentId: this.id }, "Session TTL cleanup timer started");
+    // 🔧 P0 修复：轻量模式下跳过定时器（内置 Agent 不会产生 session，无需清理）
+    if (!options.lightweight) {
+      const ttlMs = this.config.sessionTtlMs ?? 30 * 60 * 1000; // 默认 30 分钟
+      if (ttlMs > 0) {
+        const intervalMs = Math.max(ttlMs / 6, 60_000); // TTL/6，最少 1 分钟
+        this._cleanupTimer = setInterval(() => this.cleanupStaleSessions(), intervalMs);
+        // unref 确保定时器不阻止 Node 进程退出
+        if (this._cleanupTimer.unref) this._cleanupTimer.unref();
+        logger.info({ ttlMs, intervalMs, agentId: this.id }, "Session TTL cleanup timer started");
+      }
     }
   }
 
