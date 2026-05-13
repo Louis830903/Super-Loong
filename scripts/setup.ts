@@ -18,6 +18,7 @@
 
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { execSync, spawnSync } from "node:child_process";
 
@@ -177,16 +178,61 @@ function main() {
     fs.writeFileSync(envPath, cleaned + "\n", "utf-8");
   }
 
-  // ── Step 4: Node.js 依赖 ──
-  console.log("[4/5] 安装 Node.js 依赖（pnpm install）...");
+  // ── Step 4: Seed 内置技能 ──
+  console.log("[4/7] Seed 内置技能到运行时目录...");
+
+  const builtinSkillsDir = path.join(root, "packages", "api", "data", "skills");
+  const runtimeSkillsDir = path.join(os.homedir(), ".super-agent", "skills");
+
+  if (fs.existsSync(builtinSkillsDir)) {
+    // 确保运行时目录存在
+    fs.mkdirSync(runtimeSkillsDir, { recursive: true });
+
+    // 递归复制内置技能文件（幂等：已存在的文件不会被覆盖）
+    let copiedCount = 0;
+    const entries = fs.readdirSync(builtinSkillsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const src = path.join(builtinSkillsDir, entry.name);
+      const dest = path.join(runtimeSkillsDir, entry.name);
+      if (!fs.existsSync(dest)) {
+        fs.cpSync(src, dest, { recursive: true });
+        copiedCount++;
+      }
+    }
+    console.log(`  ✅ 已 Seed ${copiedCount} 个内置技能${copiedCount === 0 ? "（均已就位）" : ""}`);
+  } else {
+    console.warn(`  ⚠️  内置技能目录不存在: ${builtinSkillsDir}`);
+  }
+
+  // ── Step 5: 自动开启高级功能 ──
+  console.log("[5/7] 配置高级功能开关...");
+
+  // 全链路追踪 —— 自动开启，方便用户发现问题
+  if (!parseEnvFile(envPath)["ENABLE_TRACING"]) {
+    writeEnvKey(envPath, "ENABLE_TRACING", "true");
+    console.log("  ✅ ENABLE_TRACING=true（全链路追踪已开启）");
+  } else {
+    console.log("  ENABLE_TRACING 已配置，跳过");
+  }
+
+  // A2A 协作协议 —— 自动开启，跨 Agent 通信
+  if (!parseEnvFile(envPath)["ENABLE_A2A"]) {
+    writeEnvKey(envPath, "ENABLE_A2A", "true");
+    console.log("  ✅ ENABLE_A2A=true（A2A 协作协议已开启）");
+  } else {
+    console.log("  ENABLE_A2A 已配置，跳过");
+  }
+
+  // ── Step 6: Node.js 依赖 ──
+  console.log("[6/7] 安装 Node.js 依赖（pnpm install）...");
   try {
     execSync("pnpm install", { cwd: root, stdio: "inherit", timeout: 300000 });
   } catch {
     console.warn("[警告] pnpm install 失败，请手动运行。");
   }
 
-  // ── Step 5: Python 微服务依赖自举 ──
-  console.log("[5/5] Python 微服务依赖...");
+  // ── Step 7: Python 微服务依赖自举 ──
+  console.log("[7/7] Python 微服务依赖...");
 
   const python = detectPython();
   if (!python) {
@@ -237,6 +283,9 @@ function main() {
 
   const checks: { label: string; ok: boolean; hint?: string }[] = [
     { label: "SA_ENCRYPTION_KEY", ok: !!finalEnv["SA_ENCRYPTION_KEY"] && !isWeakKey(finalEnv["SA_ENCRYPTION_KEY"]) },
+    { label: "内置技能", ok: fs.existsSync(path.join(os.homedir(), ".super-agent", "skills")) },
+    { label: "ENABLE_TRACING", ok: finalEnv["ENABLE_TRACING"] === "true" },
+    { label: "ENABLE_A2A", ok: finalEnv["ENABLE_A2A"] === "true" },
     { label: "Node.js 依赖", ok: fs.existsSync(path.join(root, "node_modules")) },
     { label: "DASHSCOPE_API_KEY", ok: !!finalEnv["DASHSCOPE_API_KEY"], hint: "编辑 .env 填入 API Key" },
     { label: "DEEPSEEK_API_KEY", ok: !!finalEnv["DEEPSEEK_API_KEY"], hint: "编辑 .env 填入 API Key" },

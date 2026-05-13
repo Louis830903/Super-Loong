@@ -463,25 +463,20 @@ git clone https://github.com/Louis830903/Super-Loong.git
 # git clone https://gitee.com/lv--dapang/super-loong.git
 cd Super-Loong
 
-# ② 安装 pnpm + Node.js 依赖
-npm install -g pnpm  # 如已安装可跳过
-pnpm install
+# ② 一键初始化（自动完成全部准备工作）
+pnpm setup
+# setup 自动完成：
+#   ✅ 创建 .env（从 .env.example）
+#   ✅ 生成 SA_ENCRYPTION_KEY（强随机密钥）
+#   ✅ 安装 pnpm + Node.js 依赖
+#   ✅ Seed 内置技能到运行时目录（含电商运营等 7 个技能）
+#   ✅ 自动开启全链路追踪 + A2A 协作协议
+#   ✅ 安装 Python 微服务依赖（IM 网关 + 视频引擎 + 文档解析）
 
-# ③ 安装 Python 微服务依赖（IM 网关 + 视频引擎 + 文档解析）
-cd services/im-gateway
-pip install -r requirements.txt
-cd ../video-forge
-pip install -r requirements.txt
-cd ../kb-parser
-pip install -r requirements.txt
-cd ../..
-
-# ④ 复制环境变量模板并编辑
-copy .env.example .env
-# 用记事本打开 .env，至少填入一个 API Key（如 DASHSCOPE_API_KEY）
+# ③ 编辑 .env 填入至少一个 LLM API Key
 notepad .env
 
-# ⑤ 启动！
+# ④ 启动！
 pnpm dev
 ```
 
@@ -513,20 +508,13 @@ git clone https://github.com/Louis830903/Super-Loong.git && cd Super-Loong
 # Gitee（国内速度快，需私人令牌代替密码）
 # git clone https://gitee.com/lv--dapang/super-loong.git && cd Super-Loong
 
-# ② 安装 pnpm + 一键初始化
-npm install -g pnpm  # 如已安装可跳过
+# ② 一键初始化
 pnpm setup
 
-# ③ 安装 Python 微服务依赖
-cd services/im-gateway && pip install -r requirements.txt && cd ../..
-cd services/video-forge && pip install -r requirements.txt && cd ../..
-cd services/kb-parser && pip install -r requirements.txt && cd ../..
-
-# ④ 编辑 .env 填入 API Key
+# ③ 编辑 .env 填入 API Key
 nano .env
-# 或者: vim .env / code .env
 
-# ⑤ 启动
+# ④ 启动
 pnpm dev
 ```
 
@@ -556,6 +544,10 @@ VIDEO_FORGE_URL=http://127.0.0.1:8199
 # 钉钉: 在钉钉开放平台创建应用，获取 Client ID + Client Secret  
 # 企微: 在企业微信管理后台获取 Corp ID + Secret
 # 详细配置见 services/im-gateway/.env.example
+
+# === 可选：高级功能开关（pnpm setup 已自动开启）===
+ENABLE_TRACING=true          # 全链路追踪（Dashboard 可查看调用链）
+ENABLE_A2A=true              # A2A 跨 Agent 协作协议
 ```
 
 ### ✅ 验证安装
