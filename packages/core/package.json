@@ -14,7 +14,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsup src/index.ts --format esm --dts --external ssh2 --external cpu-features",
+    "build": "tsup src/index.ts --format esm --dts --external ssh2 --external cpu-features --external better-sqlite3",
     "test": "vitest run",
     "clean": "rimraf dist"
   },
