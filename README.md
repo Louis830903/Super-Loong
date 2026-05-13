@@ -456,11 +456,15 @@ deploy_git_pull → deploy_build → deploy_restart → deploy_healthcheck ✅
 <summary><b>Windows（你在用的系统）</b></summary>
 
 ```powershell
-# ① 克隆仓库
+# ① 克隆仓库（二选一）
+# GitHub（推荐，公开仓库，无需认证）
 git clone https://github.com/Louis830903/Super-Loong.git
+# Gitee（国内速度快，需私人令牌代替密码）
+# git clone https://gitee.com/lv--dapang/super-loong.git
 cd Super-Loong
 
-# ② 安装 Node.js 依赖
+# ② 安装 pnpm + Node.js 依赖
+npm install -g pnpm  # 如已安装可跳过
 pnpm install
 
 # ③ 安装 IM 网关 Python 依赖
@@ -478,6 +482,10 @@ pnpm dev
 ```
 
 > ⚠️ **Windows 用户注意**：PowerShell 不支持 `&&` 作为语句分隔符，请逐行执行或用 `;` 代替。
+>
+> 🔐 **Gitee 用户注意**：Gitee 已禁用密码登录，clone 时密码栏需填入 [私人令牌](https://gitee.com/profile/personal_access_tokens)（Personal Access Token），不能填 Gitee 密码。
+>
+> 🛡️ **pnpm 安全提示**：安装后如看到 `ERR_PNPM_IGNORED_BUILDS`，运行 `pnpm approve-builds` 用空格勾选 `cpu-features`、`electron`、`ssh2` 回车确认。如 Electron 报 `ECONNRESET`，先执行 `$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"` 再重新 `pnpm install`。
 
 启动后访问：
 
@@ -495,10 +503,14 @@ pnpm dev
 <summary><b>macOS / Linux</b></summary>
 
 ```bash
-# ① 克隆仓库
+# ① 克隆仓库（二选一）
+# GitHub（推荐，公开仓库，无需认证）
 git clone https://github.com/Louis830903/Super-Loong.git && cd Super-Loong
+# Gitee（国内速度快，需私人令牌代替密码）
+# git clone https://gitee.com/lv--dapang/super-loong.git && cd Super-Loong
 
-# ② 一键初始化（依赖安装 + 配置生成 + Python 服务自举）
+# ② 安装 pnpm + 一键初始化
+npm install -g pnpm  # 如已安装可跳过
 pnpm setup
 
 # ③ 编辑 .env 填入 API Key
@@ -638,6 +650,8 @@ kill -9 <PID>
 # Linux / macOS
 chmod +x start.sh && ./start.sh
 ```
+
+> ⚠️ **Windows 用户**：脚本已内置 `chcp 65001` 切换 UTF-8 编码，避免中文乱码。如仍遇到乱码，手动执行 `chcp 65001` 后再运行。
 
 脚本会自动完成：
 1. 检查并安装 PM2（如未安装）
