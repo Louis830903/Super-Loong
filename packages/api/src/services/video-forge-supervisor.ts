@@ -62,6 +62,14 @@ export class VideoForgeSupervisor {
   async start(): Promise<void> {
     if (this.isRunning) return;
 
+    // PM2 生产环境由 ecosystem.config.cjs 直接管理 video-forge 进程，API 不再嵌套 spawn
+    if (process.env.DISABLE_VIDEO_FORGE === "true") {
+      logger.info(
+        "[VideoForgeSupervisor] DISABLE_VIDEO_FORGE=true，跳过内置启动（由 PM2 直接管理 video-forge）",
+      );
+      return;
+    }
+
     try {
       this.isRunning = true;
       this.restartAttempts = 0;

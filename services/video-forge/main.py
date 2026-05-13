@@ -111,4 +111,6 @@ app.include_router(analysis_router, prefix="/forge")
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="127.0.0.1", port=8199, reload=True)
+    # PM2/生产环境不启用 reload，开发时可设 VIDEO_FORGE_RELOAD=1
+    reload = os.environ.get("VIDEO_FORGE_RELOAD", "") == "1"
+    uvicorn.run("main:app", host="127.0.0.1", port=8199, reload=reload)
