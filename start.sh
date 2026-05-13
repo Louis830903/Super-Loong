@@ -104,6 +104,8 @@ echo -e "${YELLOW}[3/3] 启动服务...${NC}"
 # 先停掉旧实例（如果存在），避免端口冲突
 pm2 delete super-agent-api 2>/dev/null || true
 pm2 delete super-agent-web 2>/dev/null || true
+pm2 delete super-agent-gateway 2>/dev/null || true
+pm2 delete super-agent-video-forge 2>/dev/null || true
 pm2 start ecosystem.config.cjs --env production
 pm2 save
 

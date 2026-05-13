@@ -61,6 +61,8 @@ echo [3/3] 启动服务...
 :: 先停掉旧实例（如果存在），避免端口冲突
 call pm2 delete super-agent-api 2>nul
 call pm2 delete super-agent-web 2>nul
+call pm2 delete super-agent-gateway 2>nul
+call pm2 delete super-agent-video-forge 2>nul
 call pm2 start ecosystem.config.cjs --env production
 call pm2 save
 

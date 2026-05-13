@@ -5,7 +5,7 @@
  *   1. 从 .env.example 创建 .env（如不存在）
  *   2. 自动生成 SA_ENCRYPTION_KEY（如未设置或为弱密钥）
  *   3. 安装 Node.js 依赖（pnpm install）
- *   4. 自举 IM Gateway Python venv + 依赖（uv sync）
+ *   4. 自举 Python 微服务依赖（pip install -r requirements.txt）
  *   5. 打印配置清单
  *
  * 用法：npx tsx scripts/setup.ts   （或 `pnpm setup`）
@@ -124,16 +124,6 @@ function detectPython(): { path: string; version: string } | null {
   return null;
 }
 
-/** 检测 uv 是否可用 */
-function hasUv(): boolean {
-  try {
-    execSync("uv --version", { encoding: "utf-8", timeout: 5000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // ==================== 主流程 ====================
 
 function main() {
@@ -195,32 +185,46 @@ function main() {
     console.warn("[警告] pnpm install 失败，请手动运行。");
   }
 
-  // ── Step 5: IM Gateway Python 自举 ──
-  console.log("[5/5] IM Gateway Python 依赖...");
+  // ── Step 5: Python 微服务依赖自举 ──
+  console.log("[5/5] Python 微服务依赖...");
 
   const python = detectPython();
   if (!python) {
-    console.warn("  [警告] 未检测到 Python 3.11+，跳过 IM Gateway 自举。");
-    console.warn("  安装 Python 后请手动运行: cd services/im-gateway && uv sync");
-  } else if (!hasUv()) {
-    console.warn(`  [警告] 检测到 Python ${python.version}，但 uv 未安装，跳过自举。`);
-    console.warn("  安装 uv 后请手动运行: cd services/im-gateway && uv sync");
+    console.warn("  [警告] 未检测到 Python 3.11+，跳过 Python 微服务自举。");
+    console.warn("  安装 Python 后请手动运行: pip install -r requirements.txt（分别进入 services/im-gateway, services/video-forge, services/kb-parser）");
   } else {
-    const gatewayDir = path.join(root, "services", "im-gateway");
-    if (fs.existsSync(path.join(gatewayDir, "pyproject.toml"))) {
-      console.log(`  Python ${python.version} + uv 已就绪，正在创建 venv 并安装依赖...`);
-      const result = spawnSync("uv", ["sync"], {
-        cwd: gatewayDir,
-        stdio: "inherit",
-        timeout: 180000,
-      });
-      if (result.status === 0) {
-        console.log("  IM Gateway 自举成功！");
+    const serviceDirs = [
+      { dir: "services/im-gateway", name: "IM Gateway" },
+      { dir: "services/video-forge", name: "Video-Forge" },
+      { dir: "services/kb-parser", name: "KB-Parser" },
+    ];
+    let installedCount = 0;
+    for (const svc of serviceDirs) {
+      const svcPath = path.join(root, svc.dir);
+      if (fs.existsSync(path.join(svcPath, "requirements.txt"))) {
+        console.log(`  ${svc.name}: pip install -r requirements.txt...`);
+        try {
+          const result = spawnSync(python.path, ["-m", "pip", "install", "-r", "requirements.txt"], {
+            cwd: svcPath,
+            stdio: "pipe",
+            timeout: 180000,
+          });
+          if (result.status === 0) {
+            console.log(`  ${svc.name} 依赖安装成功！`);
+            installedCount++;
+          } else {
+            const stderr = result.stderr?.toString() || "";
+            console.warn(`  [警告] ${svc.name} pip install 退出码 ${result.status}${stderr ? ": " + stderr.slice(0, 120) : ""}`);
+          }
+        } catch (err: any) {
+          console.warn(`  [警告] ${svc.name} pip install 失败: ${err.message}`);
+        }
       } else {
-        console.warn(`  [警告] uv sync 退出码 ${result.status}，IM Gateway 首次启动可能需要手动安装。`);
+        console.warn(`  [警告] ${svc.dir}/requirements.txt 不存在，跳过`);
       }
-    } else {
-      console.warn("  [警告] 未找到 services/im-gateway/pyproject.toml");
+    }
+    if (installedCount > 0) {
+      console.log(`  共 ${installedCount}/${serviceDirs.length} 个 Python 微服务依赖已安装`);
     }
   }
 
@@ -240,7 +244,9 @@ function main() {
     { label: "MOONSHOT_API_KEY", ok: !!finalEnv["MOONSHOT_API_KEY"], hint: "编辑 .env 填入 API Key" },
     { label: "ARK_API_KEY", ok: !!finalEnv["ARK_API_KEY"], hint: "编辑 .env 填入 API Key（豆包/图片生成）" },
     { label: "Python 3.11+", ok: !!python },
-    { label: "IM Gateway venv", ok: fs.existsSync(path.join(root, "services", "im-gateway", ".venv")) },
+    { label: "IM Gateway 依赖", ok: fs.existsSync(path.join(root, "services", "im-gateway", "requirements.txt")) },
+    { label: "Video-Forge 依赖", ok: fs.existsSync(path.join(root, "services", "video-forge", "requirements.txt")) },
+    { label: "KB-Parser 依赖", ok: fs.existsSync(path.join(root, "services", "kb-parser", "requirements.txt")) },
   ];
 
   console.log("配置检查：");
