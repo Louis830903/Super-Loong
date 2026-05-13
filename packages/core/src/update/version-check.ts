@@ -23,6 +23,8 @@ export interface VersionCheckResult {
   outdated: boolean;
   /** Release 页面 URL（供用户手动下载） */
   releaseUrl: string | null;
+  /** 自动下载 URL（便携包 zip，供一键安装使用） */
+  downloadUrl: string | null;
   /** 查询是否成功（false 表示网络/API 错误，不是版本问题） */
   success: boolean;
   /** 数据来源：github / gitee / null（查询失败） */
@@ -71,6 +73,7 @@ export async function checkForUpdates(
     latest: null,
     outdated: false,
     releaseUrl: null,
+    downloadUrl: null,
     success: false,
     source: null,
   };
@@ -90,6 +93,7 @@ export async function checkForUpdates(
         latest: latestTag,
         outdated: compareVersions(latestTag, current) > 0,
         releaseUrl: ghResult.html_url ?? GITHUB_PAGE,
+        downloadUrl: buildDownloadUrl("github", latestTag),
         success: true,
         source: "github",
       };
@@ -107,6 +111,7 @@ export async function checkForUpdates(
         latest: latestTag,
         outdated: compareVersions(latestTag, current) > 0,
         releaseUrl: giteeResult.html_url ?? GITEE_PAGE,
+        downloadUrl: buildDownloadUrl("gitee", latestTag),
         success: true,
         source: "gitee",
       };
@@ -177,4 +182,16 @@ function parseSemver(v: string): [number, number, number] {
     isNaN(parts[1]!) ? 0 : parts[1]!,
     isNaN(parts[2]!) ? 0 : parts[2]!,
   ];
+}
+
+/**
+ * 根据 source 和版本号构造便携包下载链接。
+ * 命名约定：super-agent-portable-v{version}.zip（由 package-portable.ts 生成）
+ */
+function buildDownloadUrl(source: "github" | "gitee", version: string): string {
+  const filename = `super-agent-portable-v${version}.zip`;
+  if (source === "github") {
+    return `https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/v${version}/${filename}`;
+  }
+  return `https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/download/v${version}/${filename}`;
 }

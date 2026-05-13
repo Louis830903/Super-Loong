@@ -36,6 +36,7 @@ export function startUpdatePoller(app: FastifyInstance): () => void {
           current: result.current,
           latest: result.latest,
           releaseUrl: result.releaseUrl ?? "",
+          downloadUrl: result.downloadUrl ?? "",
           source: result.source ?? "",
         });
         app.log.info(

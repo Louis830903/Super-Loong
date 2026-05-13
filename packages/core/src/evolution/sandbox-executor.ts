@@ -202,7 +202,7 @@ export class SandboxExecutor {
   }
 
   /**
-   * 纯文本内容的安全扫描（语法层面）
+   * 纯文本内容的安全扫描（语法层面，审查修正版）
    */
   scanContent(content: string): EvolutionSandboxResult {
     const startMs = Date.now();
@@ -243,6 +243,34 @@ export class SandboxExecutor {
     if (singleQuotes % 2 !== 0) warnings.push("Unmatched single quotes");
     if (doubleQuotes % 2 !== 0) warnings.push("Unmatched double quotes");
     if (backticks % 2 !== 0) warnings.push("Unmatched backticks");
+
+    // 4. 审查修正：检查模板字符串 ${} 未闭合
+    const templateOpens = (content.match(/\$\{/g) ?? []).length;
+    // 仅在 template string 已正确闭合的前提下才做精细化检查
+    // 每个 ${} 在模板字符串上下文中贡献一对额外的花括号
+    if (backticks % 2 === 0 && templateOpens > 0) {
+      // 模板内的花括号数 = 总花括号数 - 模板表达式数
+      // 若模板表达式未闭合，模板内花括号不会成对
+      const templateBraces = openBraces + templateOpens;
+      if (closeBraces < templateBraces) {
+        warnings.push(
+          `Possible unclosed template expression: ${templateOpens} template openings detected (close braces: ${closeBraces}, expected >= ${templateBraces})`,
+        );
+      }
+    }
+
+    // 5. 审查修正：检查 import 路径格式（P2-2：支持 import type 语法）
+    const importMatches = content.matchAll(
+      /import\s+(?:type\s+)?(?:{[^}]*}|\*\s+as\s+\w+|\w+)?\s*(?:,\s*{[^}]*})?\s*from\s*['"]([^'"]+)['"]/g,
+    );
+    for (const m of importMatches) {
+      const importPath = m[1];
+      // 相对路径（./ 或 ../）是合法的
+      if (importPath.startsWith("./") || importPath.startsWith("../")) continue;
+      // 包名格式：字母开头，可包含 @scope/package
+      if (/^@?[a-zA-Z]/.test(importPath) && !/\s/.test(importPath)) continue;
+      warnings.push(`Suspicious import path: "${importPath}"`);
+    }
 
     return { passed: errors.length === 0, errors, warnings, durationMs: Date.now() - startMs };
   }

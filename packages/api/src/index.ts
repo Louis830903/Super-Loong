@@ -48,6 +48,7 @@ import { videoRoutes } from "./routes/video.js";
 import { videoProviderTemplateRoutes } from "./routes/video-provider-templates.js";
 import { registerTracesRoutes } from "./routes/traces.js";
 import { versionRoutes } from "./routes/version.js";
+import { updateRoutes } from "./routes/update.js";
 import { startUpdatePoller } from "./update-poller.js";
 import { GatewayLauncher } from "./gateway-launcher.js";
 import { VideoForgeSupervisor } from "./services/video-forge-supervisor.js";
@@ -287,6 +288,7 @@ async function main() {
   await authRoutes(app);
   await registerTracesRoutes(app);
   await versionRoutes(app);
+  await updateRoutes(app);
 
 // 启动定时版本轮询 + WebSocket 主动推送（每 6h 检查，发现更新推送给所有在线前端）
 const stopUpdatePoller = startUpdatePoller(app);
@@ -400,7 +402,7 @@ app.addHook("onClose", () => stopUpdatePoller());
       systemPrompt: "You are a helpful AI assistant powered by Super Agent platform.",
       llmProvider: llmConfig,
     });
-    saveAgentConfig(defaultAgent.id, defaultAgent.config);
+    saveAgentConfig(defaultAgent.id, defaultAgent.config as unknown as Record<string, unknown>);
     ctx.router.setDefaultAgent(defaultAgent.id);
     app.log.info({ agentId: defaultAgent.id, model: llmConfig.model }, "Default agent created and persisted");
   } else {

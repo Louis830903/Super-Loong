@@ -96,13 +96,13 @@ const FORBIDDEN_TARGETS: RegExp[] = [
   /credentialVault/i,
 ];
 
-/** 禁止修改的核心文件 */
+/** 禁止修改的核心文件（审查修正：增加路径前缀边界） */
 const FORBIDDEN_FILES: RegExp[] = [
-  /security\/sandbox\.ts$/i,
-  /security\/docker-sandbox\.ts$/i,
-  /agent\/runtime\.ts$/i,
-  /agent\/manager\.ts$/i,
-  /llm\/index\.ts$/i,
+  /(?:^|\/)security\/sandbox\.ts$/i,
+  /(?:^|\/)security\/docker-sandbox\.ts$/i,
+  /(?:^|\/)agent\/runtime\.ts$/i,
+  /(?:^|\/)agent\/manager\.ts$/i,
+  /(?:^|\/)llm\/index\.ts$/i,
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -222,11 +222,12 @@ export class SelfModificationEngine {
       // 从备份恢复
       const targetPath = join(this.srcDir, modulePath);
       copyFileSync(snapshot.backupPath, targetPath);
-      logger.info({ modulePath, targetName, snapshotId: snapshot.id }, "Rollback completed");
-      return { success: true, operation: "modify", snapshotId: snapshot.id, filePath: targetPath };
+      logger.info({ modulePath, targetName, snapshotId: snapshot.id, operation: snapshot.operation }, "Rollback completed");
+      // 修正P2-1：使用快照中保存的原始操作类型，而非硬编码 "modify"
+      return { success: true, operation: snapshot.operation, snapshotId: snapshot.id, filePath: targetPath };
     } catch (err: any) {
       logger.error({ modulePath, err: err.message }, "Rollback failed");
-      return { success: false, operation: "modify", error: err.message };
+      return { success: false, operation: snapshot.operation, error: err.message };
     }
   }
 
@@ -353,14 +354,69 @@ export class SelfModificationEngine {
   }
 
   /**
-   * 替换函数体
+   * 替换函数体（审查修正版：增强替换精度与安全验证）
    */
   private applyModify(content: string, targetName: string, newCode: string): string {
     const oldFunc = this.extractFunction(content, targetName);
     if (!oldFunc || oldFunc.startsWith("// Function")) {
       throw new Error(`Function '${targetName}' not found in source`);
     }
-    return content.replace(oldFunc, newCode);
+
+    const beforeLines = content.split("\n").length;
+    const newContent = content.replace(oldFunc, newCode);
+
+    // 替换后验证：确保替换确实发生了（新内容与旧内容不同）
+    if (newContent === content) {
+      throw new Error(`Function '${targetName}' replacement had no effect (string match failed)`);
+    }
+
+    // 验证一：旧函数名不应再出现（remove=true 表示不应该存在）
+    const oldNameRegex = new RegExp(
+      `\\b(?:function|const|async)\\s+${this.escapeRegex(targetName)}\\b`,
+    );
+    const oldOccurrences = newContent.match(oldNameRegex);
+    if (oldOccurrences && oldOccurrences.length > 0) {
+      throw new Error(
+        `Function '${targetName}' still appears ${oldOccurrences.length} time(s) after replacement`,
+      );
+    }
+
+    // 验证二：新函数名应恰好出现一次
+    const newFuncMatch = newCode.match(
+      /(?:function|const|async)\s+(\w+)\s*[<(]/,
+    );
+    if (newFuncMatch) {
+      const newFuncName = newFuncMatch[1];
+      const newNameRegex = new RegExp(
+        `\\b(?:function|const|async)\\s+${this.escapeRegex(newFuncName)}\\b`,
+      );
+      const newOccurrences = newContent.match(newNameRegex);
+      if (!newOccurrences || newOccurrences.length !== 1) {
+        throw new Error(
+          `New function '${newFuncName}' appears ${newOccurrences?.length ?? 0} time(s), expected exactly 1`,
+        );
+      }
+    }
+
+    // 验证三：替换后文件语法结构完整性（括号匹配）
+    const openBraces = (newContent.match(/\{/g) ?? []).length;
+    const closeBraces = (newContent.match(/\}/g) ?? []).length;
+    if (openBraces !== closeBraces) {
+      throw new Error(
+        `Brace mismatch after replacement: ${openBraces} open vs ${closeBraces} close`,
+      );
+    }
+
+    const afterLines = newContent.split("\n").length;
+    const delta = afterLines - beforeLines;
+    logger.info({
+      targetName,
+      beforeLines,
+      afterLines,
+      delta: `${delta >= 0 ? "+" : ""}${delta} lines`,
+    }, "Function modified with validation");
+
+    return newContent;
   }
 
   /**

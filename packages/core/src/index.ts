@@ -714,6 +714,6 @@ export type {
 // Tools — video-forge 原子工具
 export { videoForgeTools } from "./tools/video-forge.js";
 
-// Update — 内置版本检查
-export { checkForUpdates, getCurrentVersion } from "./update/index.js";
-export type { VersionCheckResult } from "./update/index.js";
+// Update — 内置版本检查 + 一键自动安装
+export { checkForUpdates, getCurrentVersion, installUpdate, detectRunMode } from "./update/index.js";
+export type { VersionCheckResult, InstallResult, ProgressCallback, RunMode } from "./update/index.js";

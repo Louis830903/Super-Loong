@@ -359,7 +359,11 @@ export type PlatformEventType =
   | "video:created"
   | "video:progress"
   | "video:completed"
-  | "video:failed";
+  | "video:failed"
+  // 版本更新事件
+  | "update:available"
+  // Agent 动态更新事件
+  | "agent:updated";
 
 export interface PlatformEvent {
   type: PlatformEventType;

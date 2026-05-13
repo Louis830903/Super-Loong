@@ -230,7 +230,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     // 合并 Fastify 中间件（含 CORS）已设置的响应头与 SSE 头
     // reply.raw.writeHead 会绕过 Fastify 响应管道，必须手动合并
     reply.raw.writeHead(200, {
-      ...reply.getHeaders(),
+      ...(reply.getHeaders() as Record<string, string | number | string[]>),
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
@@ -304,7 +304,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     if (stream) {
       // 合并 Fastify 中间件（含 CORS）已设置的响应头与 SSE 头
       reply.raw.writeHead(200, {
-        ...reply.getHeaders(),
+        ...(reply.getHeaders() as Record<string, string | number | string[]>),
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",

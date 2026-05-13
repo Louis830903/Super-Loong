@@ -518,13 +518,13 @@ export class EvolutionEngine extends EventEmitter {
   private _analyzerProviderId: string | null = null;
   private _analyzerModelId: string | null = null;
   /** ProviderStore 引用（可选，用于解析分析器 LLM 的 apiKey/baseUrl） */
-  private providerStore?: { get(id: string): { apiKey?: string; baseUrl?: string; isEnabled?: boolean } | undefined };
+  private providerStore?: { get(id: string): { apiKey?: string; baseUrl?: string; isEnabled?: boolean } | null | undefined };
 
   constructor(
     agentManager: AgentManager,
     nudgeConfig?: Partial<NudgeConfig>,
     skillsDir = "./skills",
-    providerStore?: { get(id: string): { apiKey?: string; baseUrl?: string; isEnabled?: boolean } | undefined },
+    providerStore?: { get(id: string): { apiKey?: string; baseUrl?: string; isEnabled?: boolean } | null | undefined },
   ) {
     super();
     this.agentManager = agentManager;
@@ -1189,43 +1189,56 @@ ${options.currentMemoryState}
    *
    * 不是写入 .md 技能文件，而是直接修改 TypeScript 源码。
    * 需要 targetCode 字段、沙箱验证、进化锁保护。
+   *
+   * 安全流程（审查修正版）：
+   *   scanContent（语法安全扫描）→ adjustLogic（写入+快照）→
+   *   verifyCompile（单文件 tsc 编译验证）→ 失败自动 rollback
    */
   async applyCodeProposal(proposalId: string): Promise<SkillProposal | null> {
     const p = this.proposals.get(proposalId);
     if (!p?.targetCode) return null;
     if (p.status === "applied") return p;
 
-    // Task 3.5: 人工审核闸门——modify 操作必须人工审核
-    if (p.targetCode.operation === "modify" && !p.requiresHumanReview) {
+    // Task 3.5（审查修正）: 人工审核闸门——所有操作类型（modify/add/delete）必须人工审核
+    // 修正P0：增加 status !== "approved" 判断，区分"尚未审核"与"已审核通过"两种状态，
+    // 避免 approveCodeProposal 设置 requiresHumanReview=false 后再次误触发闸门导致死循环
+    if (!p.requiresHumanReview && p.status !== "approved") {
       p.requiresHumanReview = true;
-      p.reviewReason = "Code modification proposals require human review before application";
+      const opLabel = { modify: "modification", add: "addition", delete: "deletion" }[p.targetCode.operation] ?? "change";
+      p.reviewReason = `Code ${opLabel} proposals require human review before application`;
+
+      // delete 额外审计增强：将被删除函数的源码写入 newCode 字段，保留在审计日志中
+      if (p.targetCode.operation === "delete") {
+        const deletedContent = this.selfModification.readLogic(
+          p.targetCode.modulePath,
+          p.targetCode.targetName,
+        );
+        p.targetCode.newCode = deletedContent; // 覆盖 newCode 为被删除源码，便于恢复
+        logger.info({ proposalId, targetName: p.targetCode.targetName },
+          "Delete proposal: captured original source for audit");
+      }
+
       this.emit("proposal:needs_review", { proposalId, reason: p.reviewReason });
-      logger.info({ proposalId }, "Code modification proposal flagged for human review");
+      logger.info({ proposalId, operation: p.targetCode.operation },
+        "Code proposal flagged for human review");
       return p;
     }
 
     // Task 3.4: 进化锁保护
     const result = await this.evoLock.withLock(async () => {
-      // Task 3.2: 沙箱验证
-      const scanResult = this.sandbox.scanContent(p.targetCode!.newCode);
-      if (!scanResult.passed) {
-        logger.warn({ proposalId, errors: scanResult.errors }, "Sandbox scan failed");
-        p.status = "rejected";
-        return null;
+      // Task 3.2: 沙箱安全扫描（防御第一层：括号匹配、危险模式检测）
+      // 修正P1：delete 操作跳过 scanContent，因为 newCode 已被覆盖为被删除函数的旧源码，
+      // 不应因旧代码含危险模式而拒绝删除提案（删除危险代码恰是进化引擎的目标）
+      if (p.targetCode!.operation !== "delete") {
+        const scanResult = this.sandbox.scanContent(p.targetCode!.newCode);
+        if (!scanResult.passed) {
+          logger.warn({ proposalId, errors: scanResult.errors }, "Sandbox scan failed");
+          p.status = "rejected";
+          return null;
+        }
       }
 
-      // 原子写入 + 编译验证
-      const writeResult = await this.sandbox.atomicWriteAndVerify(
-        p.targetCode!.modulePath,
-        this.selfModification.readLogic(p.targetCode!.modulePath),
-      );
-
-      if (!writeResult.success) {
-        logger.warn({ proposalId, error: writeResult.error }, "Code proposal write failed");
-        return null;
-      }
-
-      // 执行源码修改
+      // 执行源码修改（写入 + 自动快照）
       const changeResult = this.selfModification.adjustLogic({
         modulePath: p.targetCode!.modulePath,
         targetName: p.targetCode!.targetName,
@@ -1239,10 +1252,25 @@ ${options.currentMemoryState}
         return null;
       }
 
+      // 审查修正：写入后立即用 tsc 编译验证新代码（修复原 P0 bug——旧代码未经验证）
+      const compileCheck = await this.sandbox.verifyCompile(changeResult.filePath!);
+      if (!compileCheck.passed) {
+        logger.warn({ proposalId, errors: compileCheck.errors },
+          "Code proposal failed compile verification, auto-rolling back");
+        // 自动回滚到快照
+        this.selfModification.rollback(
+          p.targetCode!.modulePath,
+          p.targetCode!.targetName,
+          changeResult.snapshotId,
+        );
+        p.status = "rejected";
+        return null;
+      }
+
       p.status = "applied";
       this.emit("proposal:code_applied", { ...p, snapshotId: changeResult.snapshotId });
       logger.info({ proposalId, operation: p.targetCode!.operation, modulePath: p.targetCode!.modulePath },
-        "Code proposal applied");
+        "Code proposal applied and compile-verified");
       return p;
     }, `proposal_${proposalId}`);
 

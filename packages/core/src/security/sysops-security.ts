@@ -19,7 +19,7 @@
  * 🔴 极危工具 → sandboxLevel: "process" + restrictions (2个)
  */
 
-import type { ToolPermission } from "./sandbox.js";
+import type { ToolPermission, SecurityPolicy } from "./sandbox.js";
 
 /**
  * 所有新增系统操作工具的安全规则
@@ -122,8 +122,8 @@ export const SYSOPS_TOOL_PERMISSIONS: ToolPermission[] = [
  * @param securityManager 安全管理器实例
  */
 export function injectSysopsSecurityRules(securityManager: {
-  getPolicy: (id: string) => { toolPermissions: ToolPermission[] } | undefined;
-  setPolicy: (policy: { toolPermissions: ToolPermission[] }) => void;
+  getPolicy: (id: string) => SecurityPolicy | undefined;
+  setPolicy: (policy: SecurityPolicy) => void;
 }): void {
   const defaultPolicy = securityManager.getPolicy("default");
   if (!defaultPolicy) {
