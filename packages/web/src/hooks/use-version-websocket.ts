@@ -8,6 +8,7 @@
  * - 监听 "update:available" 事件，解析为 VersionInfo 状态
  * - 返回 null 表示尚未收到推送（与初始状态区分）
  * - 不做 Notification.requestPermission()，仅更新 UI 状态（避免突兀弹窗）
+ * - 🔧 自动重连：onclose 触发指数退避重连（1s→2s→4s→…→60s），onopen 重置计数器
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -24,9 +25,32 @@ function getWsUrl(): string {
 let globalSocket: WebSocket | null = null;
 const listeners = new Set<(info: VersionInfo) => void>();
 
+// ── 重连状态 ──────────────────────────────────────────
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
+/** 指数退避上限 60s（1s, 2s, 4s, 8s, 16s, 32s, 60s, 60s...） */
+const MAX_RECONNECT_DELAY = 60_000;
+
+/** 在 onclose 后调度重连（仅当仍有活跃监听者时） */
+function scheduleReconnect(): void {
+  if (reconnectTimer) return;
+
+  const delay = Math.min(
+    1000 * Math.pow(2, reconnectAttempts),
+    MAX_RECONNECT_DELAY,
+  );
+  reconnectAttempts++;
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (listeners.size > 0) getSocket();
+  }, delay);
+}
+
 function getSocket(): WebSocket {
   if (!globalSocket || globalSocket.readyState >= WebSocket.CLOSING) {
     globalSocket = new WebSocket(getWsUrl());
+
     globalSocket.onmessage = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data as string) as {
@@ -55,6 +79,21 @@ function getSocket(): WebSocket {
         // 非 JSON 或格式不匹配的消息忽略
       }
     };
+
+    // 🔧 连接成功 → 重置退避计数器，下次断连从 1s 重新开始
+    globalSocket.onopen = () => {
+      reconnectAttempts = 0;
+    };
+
+    // 🔧 被动断连（非主动关闭）→ 自动重连
+    globalSocket.onclose = () => {
+      if (listeners.size > 0) scheduleReconnect();
+    };
+
+    // onerror 之后通常跟随 onclose，重连逻辑集中在 onclose 中
+    globalSocket.onerror = () => {
+      /* 静默，重连由 onclose 触发 */
+    };
   }
   return globalSocket;
 }
@@ -82,6 +121,12 @@ export function useVersionWebSocket(): VersionInfo | null {
     return () => {
       mountedRef.current = false;
       listeners.delete(handler);
+      // 所有订阅者都已卸载 → 取消重连定时器，避免后台泄漏
+      if (listeners.size === 0 && reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        reconnectAttempts = 0;
+      }
     };
   }, []);
 

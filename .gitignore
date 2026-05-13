@@ -61,6 +61,7 @@ package-lock.json
 # ====== 系统文件 ======
 .DS_Store
 *.log
+*.zip
 Thumbs.db
 
 # ====== Video-Forge 运行时产物（便携版 ffmpeg + 调试快照）======
