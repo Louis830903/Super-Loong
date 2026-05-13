@@ -36,6 +36,9 @@ data/sessions/
 *.mp3
 *.png
 *.xlsx
+
+# 项目静态资源（排除 *.png 规则）
+!packages/web/public/logo.png
 test-api.mjs
 tsc_*.txt
 check_mic.ps1
