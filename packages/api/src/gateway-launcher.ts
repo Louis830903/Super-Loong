@@ -44,6 +44,12 @@ export class GatewayLauncher {
   async start(): Promise<void> {
     if (this.isRunning) return;
 
+    // PM2 生产环境由 ecosystem.config.cjs 直接管理 Gateway 进程，API 不再嵌套 spawn
+    if (process.env.DISABLE_IM_GATEWAY === "true") {
+      logger.info("[GatewayLauncher] DISABLE_IM_GATEWAY=true，跳过内置启动（由 PM2 直接管理 Gateway）");
+      return;
+    }
+
     // 启动前先清理可能残留的旧进程（防孤儿进程端口占用）
     await this._freePort();
 
