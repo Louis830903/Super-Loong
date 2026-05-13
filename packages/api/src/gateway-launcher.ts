@@ -26,6 +26,8 @@ export class GatewayLauncher {
   private gatewayDir: string;
   /** 自举结果（首次启动时自动完成 Python venv + 依赖安装），null 表示跳过自举（降级到系统 python） */
   private deps: GatewayDepsResult | null = null;
+  /** 系统 Python 命令缓存（Windows 上可能只有 py 没有 python） */
+  private defaultPythonCmd = process.platform === "win32" ? "python" : "python3";
 
   constructor() {
     // Gateway 目录：相对于 monorepo 根 (../../services/im-gateway)
@@ -48,6 +50,9 @@ export class GatewayLauncher {
     try {
       this.isRunning = true;
       this.restartAttempts = 0;
+
+      // 探测系统可用的 Python 命令（Windows 上可能只有 py 没有 python）
+      this.defaultPythonCmd = await this._detectSystemPython();
 
       // 自举 IM Gateway 的 Python venv + 依赖（首次自动安装，幂等）
       // 失败不阻塞：降级到直接用系统 python，Gateway 可能因缺依赖而崩溃但不会影响 API 主流程
@@ -112,6 +117,34 @@ export class GatewayLauncher {
   /** 获取 Gateway PID */
   get pid(): number | null {
     return this.process?.pid ?? null;
+  }
+
+  /**
+   * 智能探测系统可用的 Python 命令
+   * Windows: 按优先级尝试 python → py → python3（部分系统只安装了 py 启动器）
+   * Unix: 按优先级尝试 python3 → python
+   */
+  private async _detectSystemPython(): Promise<string> {
+    if (process.platform === "win32") {
+      for (const cmd of ["python", "py", "python3"]) {
+        try {
+          await execAsync(`where ${cmd}`);
+          logger.info(`[GatewayLauncher] 探测到系统 Python 命令: ${cmd}`);
+          return cmd;
+        } catch { /* 命令不可用，继续尝试下一个 */ }
+      }
+    } else {
+      for (const cmd of ["python3", "python"]) {
+        try {
+          await execAsync(`which ${cmd}`);
+          return cmd;
+        } catch { /* 命令不可用，继续尝试下一个 */ }
+      }
+    }
+    // 全部探测失败，返回默认值让 spawn 自行报错
+    const fallback = process.platform === "win32" ? "python" : "python3";
+    logger.warn(`[GatewayLauncher] 未探测到可用的 Python 命令，回退到: ${fallback}`);
+    return fallback;
   }
 
   /**
@@ -205,7 +238,7 @@ export class GatewayLauncher {
       ? (process.platform === "win32"
         ? path.join(this.deps.venvDir, "Scripts", "python.exe")
         : path.join(this.deps.venvDir, "bin", "python"))
-      : (process.platform === "win32" ? "python" : "python3");
+      : this.defaultPythonCmd;
 
     const child = spawn(pythonCmd, ["-u", "server.py"], {
       cwd: this.gatewayDir,
