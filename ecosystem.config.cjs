@@ -44,8 +44,9 @@ module.exports = {
     },
     {
       name: "super-agent-web",
-      script: "npx",
-      args: "next start -p 3000",
+      // 直接引用 Next.js 二进制（避免 Windows 上 npx.cmd 被 PM2 当 JS 解析引发 SyntaxError）
+      script: "node_modules/next/dist/bin/next",
+      args: "start -p 3000",
       // 必须在 web 包目录下运行 Next.js
       cwd: "./packages/web",
       env_production: {

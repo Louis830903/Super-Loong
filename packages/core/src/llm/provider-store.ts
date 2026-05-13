@@ -104,10 +104,13 @@ export class ProviderStore {
   init(): void {
     if (this.initialized) return;
     const db = getDatabase();
+    // 创建表时自带 api_key_iv 列（生产环境修复：v1 baseline 不包含此表，
+    // migration v2 在表创建前就跑了，导致 api_key_iv 列永远缺失）
     db.run(`
       CREATE TABLE IF NOT EXISTS llm_providers (
         id TEXT PRIMARY KEY,
         api_key TEXT DEFAULT '',
+        api_key_iv TEXT DEFAULT '',
         base_url TEXT DEFAULT '',
         is_enabled INTEGER DEFAULT 1,
         selected_model TEXT DEFAULT '',
@@ -115,6 +118,12 @@ export class ProviderStore {
         updated_at TEXT NOT NULL
       )
     `);
+    // 兼容旧数据库：表已存在但缺少 api_key_iv 列，补加
+    try {
+      db.run("ALTER TABLE llm_providers ADD COLUMN api_key_iv TEXT DEFAULT ''");
+    } catch {
+      // 列已存在，忽略
+    }
     scheduleSave();
     this.initialized = true;
     logger.info("ProviderStore initialized (llm_providers table ready)");
