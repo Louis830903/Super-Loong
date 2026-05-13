@@ -1,0 +1,17 @@
+# KB-Parser — Python 运行时依赖（知识库 Spec §T7）
+# 安装方式：pip install -r requirements.txt
+# Docling 首次运行会自动拉取 easyocr / torch / transformers 等间接依赖
+#
+# 注意：生产环境不需要 GPU torch，CPU 版本默认足够
+
+# === Web 框架 ===
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0.0
+
+# === 进阶解析引擎 ===
+# IBM Docling 2.x — 扫描件 OCR / 复杂版式 PDF / 图片文本抽取
+docling>=2.0,<3.0
+
+# === 工具库 ===
+loguru>=0.7.0

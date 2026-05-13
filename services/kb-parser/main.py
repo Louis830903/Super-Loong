@@ -202,7 +202,10 @@ async def parse(req: ParseRequest) -> ParseResponse:
 # ── 本地开发入口 ──────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
     # 本地开发：固定 9288 端口；生产由 supervisor 通过动态端口启动
-    uvicorn.run("main:app", host="127.0.0.1", port=9288, reload=True)
+    # 生产环境不启用 reload，避免 watchdog 占用额外文件句柄
+    reload = os.environ.get("KB_PARSER_RELOAD", "") == "1"
+    uvicorn.run("main:app", host="127.0.0.1", port=9288, reload=reload)

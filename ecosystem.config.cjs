@@ -2,7 +2,7 @@
  * PM2 Ecosystem File — Super Agent 生产环境进程管理
  *
  * 管理 4 个进程（平级，PM2 统一负责崩溃重启和日志收集）：
- * - super-agent-api        : Node.js API 服务 (Fastify)，DISABLE_IM_GATEWAY=true + DISABLE_VIDEO_FORGE=true
+ * - super-agent-api        : Node.js API 服务 (Fastify)，DISABLE_IM_GATEWAY=true + DISABLE_VIDEO_FORGE=true + DISABLE_KB_PARSER_SIDECAR=true
  * - super-agent-web        : Next.js 前端 (生产模式)
  * - super-agent-gateway    : IM Gateway (Python)，由 PM2 直接管理，避免嵌套 spawn 权限问题
  * - super-agent-video-forge: 视频生成引擎 (Python)，由 PM2 直接管理，避免嵌套 spawn 权限问题
@@ -31,6 +31,9 @@ module.exports = {
         DISABLE_IM_GATEWAY: "true",
         // 禁用 API 内置 VideoForgeSupervisor，由 PM2 直接管理 video-forge 进程
         DISABLE_VIDEO_FORGE: "true",
+        // 禁用 API 内置 KbParserSupervisor（知识库 Docling 懒启动 sidecar），
+        // Windows PM2 fork 模式下 spawn Python 同样可能因 PATH/权限隔离失败
+        DISABLE_KB_PARSER_SIDECAR: "true",
       },
       // 内存限制：超过 512MB 自动重启
       max_memory_restart: "512M",
