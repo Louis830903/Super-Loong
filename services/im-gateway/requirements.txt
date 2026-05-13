@@ -1,0 +1,25 @@
+# IM Gateway — Python 运行时依赖
+# 安装方式：pip install -r requirements.txt
+# 生产环境确保 lark-oapi 等平台 SDK 全部安装
+
+# === 核心框架 ===
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+httpx>=0.27.0
+python-dotenv>=1.0.0
+pydantic>=2.0
+websockets>=13.0
+
+# === 平台 SDK（所有渠道适配器） ===
+# 飞书
+lark-oapi>=1.0.0
+# 企业微信
+aiohttp>=3.9.0
+# 钉钉
+dingtalk-stream>=1.0.0
+# Telegram
+python-telegram-bot[webhooks]>=22.6
+# Discord
+discord.py>=2.0
+# Slack
+slack-sdk>=3.0
