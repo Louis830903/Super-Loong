@@ -25,8 +25,8 @@ echo.
 :: 切换到脚本所在目录（monorepo 根）
 cd /d "%~dp0"
 
-:: [1/3] 检查 PM2
-echo [1/3] 检查 PM2...
+:: [1/5] 检查 PM2
+echo [1/5] 检查 PM2...
 where pm2 >nul 2>&1
 if %errorlevel% neq 0 (
     echo    PM2 未安装，正在安装...
@@ -41,9 +41,9 @@ if %errorlevel% neq 0 (
 )
 echo    PM2 已就绪
 
-:: [2/3] 检查构建产物
+:: [2/5] 检查 Node.js 构建产物
 echo.
-echo [2/3] 检查构建产物...
+echo [2/5] 检查构建产物...
 if not exist "packages\api\dist\index.js" (
     echo    未找到构建产物，正在构建...
     call pnpm build
@@ -55,9 +55,73 @@ if not exist "packages\api\dist\index.js" (
 )
 echo    构建产物已就绪
 
-:: [3/3] 启动 PM2
+:: [3/5] 检查 Python 微服务依赖（video-forge / IM 网关 / kb-parser）
 echo.
-echo [3/3] 启动服务...
+echo [3/5] 检查 Python 微服务依赖...
+set PY_READY=1
+:: 检测 Python 3.11+
+python --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo    [警告] 未检测到 Python，跳过 Python 微服务依赖检查
+    echo    如需视频生成/IM 网关/文档解析功能，请安装 Python 3.11+ 后重试
+    set PY_READY=0
+)
+if %PY_READY%==1 (
+    for /f "tokens=2" %%v in ('python --version 2^>^&1') do set PY_VER=%%v
+    echo    Python %PY_VER% 已就绪
+
+    :: 检查 video-forge 依赖
+    if exist "services\video-forge\requirements.txt" (
+        python -c "import fastapi" >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo    安装 Video-Forge Python 依赖...
+            python -m pip install -r services\video-forge\requirements.txt -q
+            if %errorlevel% neq 0 (
+                echo    [警告] Video-Forge 依赖安装失败，视频生成功能不可用
+            ) else (
+                echo    Video-Forge 依赖已就绪
+            )
+        ) else (
+            echo    Video-Forge 依赖已就绪
+        )
+    )
+
+    :: 检查 IM 网关依赖
+    if exist "services\im-gateway\requirements.txt" (
+        python -c "import fastapi" >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo    安装 IM Gateway Python 依赖...
+            python -m pip install -r services\im-gateway\requirements.txt -q
+            if %errorlevel% neq 0 (
+                echo    [警告] IM Gateway 依赖安装失败，飞书/钉钉/企微不可用
+            ) else (
+                echo    IM Gateway 依赖已就绪
+            )
+        ) else (
+            echo    IM Gateway 依赖已就绪
+        )
+    )
+
+    :: 检查 kb-parser 依赖
+    if exist "services\kb-parser\requirements.txt" (
+        python -c "import docling" >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo    安装 KB-Parser Python 依赖...
+            python -m pip install -r services\kb-parser\requirements.txt -q
+            if %errorlevel% neq 0 (
+                echo    [警告] KB-Parser 依赖安装失败，文档解析功能不可用
+            ) else (
+                echo    KB-Parser 依赖已就绪
+            )
+        ) else (
+            echo    KB-Parser 依赖已就绪
+        )
+    )
+)
+
+:: [4/5] 启动 PM2
+echo.
+echo [4/5] 启动服务...
 :: 先停掉旧实例（如果存在），避免端口冲突
 call pm2 delete super-agent-api 2>nul
 call pm2 delete super-agent-web 2>nul
