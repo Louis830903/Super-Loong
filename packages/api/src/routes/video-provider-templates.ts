@@ -54,9 +54,15 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
 
   // ─── GET /api/video/provider-templates ───────────────────
   // 返回系统预设 + 用户模板，系统预设始终在前
+  // DB 为空时回退 PROVIDER_PRESETS 内存常量，确保首次使用即可看到 6 套预设
   app.get("/api/video/provider-templates", async (_request, reply) => {
     try {
       const rows = getProviderTemplates();
+
+      // 收集 DB 中已有的预设 ID，用于去重
+      const dbPresetIds = new Set(
+        rows.filter((r: ProviderTemplateRow) => r.is_preset === 1).map((r: ProviderTemplateRow) => r.id)
+      );
 
       // 将 DB 行转为前端友好的 JSON 格式
       // 系统预设优先从内存 PROVIDER_PRESETS 解析（DB 只存标识符）
@@ -78,6 +84,24 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
           createdAt: row.created_at,
         };
       });
+
+      // 回退：DB 中缺失的系统预设从内存 PROVIDER_PRESETS 补全
+      // （迁移 V16 可能未执行或 DB 重建后丢失，6 套预设必须始终可用）
+      const missingPresets = PROVIDER_PRESETS.filter(
+        (p) => !dbPresetIds.has(p.id)
+      );
+      if (missingPresets.length > 0) {
+        const fallbackTemplates = missingPresets.map((p) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          providers: p.providers,
+          isPreset: true,
+          createdAt: 0, // 内存回退无时间戳，前端排序时自然沉底
+        }));
+        // 系统预设插入到数组头部（在 DB 用户模板之前）
+        return reply.send({ templates: [...fallbackTemplates, ...templates] });
+      }
 
       return reply.send({ templates });
     } catch (err) {
