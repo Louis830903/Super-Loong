@@ -114,6 +114,37 @@ async function main() {
     credentials: true,
   });
 
+  // 生产环境：API 直接托管 Web 静态文件（便携包模式不需要独立 Next.js 进程）
+  if (process.env.NODE_ENV === "production") {
+    const fastifyStatic = await import("@fastify/static");
+    // web/ 与 api/ 同级（便携包扁平结构）；monorepo 中 web/ 对应 packages/web/out/
+    const webRoot = path.resolve(import.meta.dirname ?? __dirname, "..", "web");
+    await app.register(fastifyStatic.default ?? fastifyStatic, {
+      root: webRoot,
+      prefix: "/",
+      wildcard: false,
+      setHeaders: (res: any, filePath: string) => {
+        // HTML 文件禁用强缓存，确保更新后前端立即生效
+        if (filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-cache");
+        }
+      },
+    });
+    // 兜底路由：非 API/WS/A2A 请求 → 返回 index.html（React SPA 客户端路由）
+    app.setNotFoundHandler((request, reply) => {
+      if (
+        !request.url.startsWith("/api/") &&
+        !request.url.startsWith("/ws") &&
+        !request.url.startsWith("/a2a") &&
+        !request.url.startsWith("/.well-known")
+      ) {
+        return reply.sendFile("index.html");
+      }
+      reply.code(404).send({ error: "Not found" });
+    });
+    app.log.info({ webRoot }, "Static web serving enabled (production mode)");
+  }
+
   // 纵深防御：容忍 Content-Type: application/json 但 body 为空的请求
   // 解决 Next.js 代理 DELETE/POST 无 body 请求时附带 Content-Length: 0 导致 JSON 解析失败
   app.removeContentTypeParser("application/json");

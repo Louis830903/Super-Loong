@@ -10,6 +10,8 @@
  */
 
 import pino from "pino";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 const logger = pino({ name: "version-check" });
 
@@ -49,11 +51,26 @@ const GITEE_PAGE = `https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/late
 
 /**
  * 获取当前版本号。
- * 优先从运行时环境变量 SUPER_AGENT_VERSION 读取（Docker / CI 覆盖），
- * 否则回退到编译期硬编码版本（与 package.json 保持同步）。
+ * 优先级：SUPER_AGENT_VERSION 环境变量 > package.json version > "0.1.0" 兜底。
+ * 从 __dirname 向上遍历查找 package.json，兼容 monorepo 和便携包两种目录结构。
  */
 export function getCurrentVersion(): string {
-  return process.env.SUPER_AGENT_VERSION ?? "0.1.0";
+  return process.env.SUPER_AGENT_VERSION ?? readVersionFromPackageJson() ?? "0.1.0";
+}
+
+/** 从 __dirname 向上最多 5 层查找 package.json 的 version 字段 */
+function readVersionFromPackageJson(): string | null {
+  let dir = __dirname;
+  for (let i = 0; i < 5; i++) {
+    try {
+      const pkg = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf-8"));
+      if (pkg.version) return pkg.version as string;
+    } catch { /* 目录下无 package.json，继续向上 */ }
+    const parent = path.dirname(dir);
+    if (parent === dir) break; // 到达文件系统根目录
+    dir = parent;
+  }
+  return null;
 }
 
 /**

@@ -58,9 +58,11 @@ const RETRY_DELAYS = [1000, 2000, 4000];
 // Windows PowerShell 引导脚本（模板字符串，运行时写入临时文件）
 // ═══════════════════════════════════════════════════════════════
 
-const POWERSHELL_TEMPLATE = `# Super Agent 自动更新引导脚本（Windows）
+const POWERSHELL_TEMPLATE = `# Super Agent 自动更新引导脚本（Windows）— 增量替换版
 # 设计原则：
 #   C1 — 第一步立即停服，消除 PM2 竞态条件
+#   C2 — 增量替换：只更新 api/core/web/node_modules/ + ecosystem.config.cjs
+#        保留 services/（含 Python venv）、.env、logs/、data/ 不动
 #   C3 — 每步检测退出码，失败时从备份恢复
 #   C5 — 支持 PM2 / 直连双模式
 param($TempDir, $AppDir, $Mode)
@@ -74,6 +76,9 @@ function Write-Log {
     "$ts [Updater] $Message" | Out-File -FilePath $UpdaterLog -Append -Encoding utf8
     Write-Host "[Updater] $Message"
 }
+
+# 增量替换的四个 Node.js 子目录
+$ReplaceDirs = @("api", "core", "web", "node_modules")
 
 try {
     # === 第一步：立即停止所有服务（消除 PM2 竞态） ===
@@ -90,59 +95,55 @@ try {
     }
     Write-Log "Services stopped."
 
-    # === 第二步：备份当前目录 ===
+    # === 第二步：备份 Node.js 子目录（增量，不动 services/） ===
     $ts = Get-Date -Format "yyyyMMdd-HHmmss"
-    $backupDir = "$AppDir.old-$ts"
-    Write-Log "Backing up to $backupDir"
-    Move-Item $AppDir $backupDir
-    Write-Log "Backup complete."
+    $backupSuffix = ".old-$ts"
+    Write-Log "Backing up api/core/web/node_modules (incremental)..."
+    foreach ($dir in $ReplaceDirs) {
+        $src = Join-Path $AppDir $dir
+        if (Test-Path $src) {
+            Move-Item $src "$src$backupSuffix"
+            Write-Log "  $dir -> $dir$backupSuffix"
+        } else {
+            Write-Log "  $dir (not found, skip)"
+        }
+    }
+    # 备份旧 ecosystem（便于回滚）
+    $ecosystemPath = Join-Path $AppDir "ecosystem.config.cjs"
+    if (Test-Path $ecosystemPath) {
+        Copy-Item $ecosystemPath "$ecosystemPath$backupSuffix"
+        Write-Log "  ecosystem.config.cjs (backup copy)"
+    }
+    Write-Log "Backup complete. services/ + .env + logs/ + data/ preserved."
 
-    # === 第三步：部署新版本 ===
-    Write-Log "Deploying new version from $TempDir..."
+    # === 第三步：增量部署新版本 ===
     $srcDir = Join-Path $TempDir "super-agent"
+    Write-Log "Deploying new version (incremental)..."
     if (-not (Test-Path $srcDir)) {
         throw "Extracted directory not found: $srcDir"
     }
-    Move-Item $srcDir $AppDir
-    Write-Log "New version deployed."
-
-    # === 第四步：恢复用户数据 ===
-    Write-Log "Restoring user data..."
-
-    # .env 环境变量
-    if (Test-Path "$backupDir\\.env") {
-        Copy-Item "$backupDir\\.env" $AppDir
-        Write-Log ".env restored from backup"
+    foreach ($dir in $ReplaceDirs) {
+        $src = Join-Path $srcDir $dir
+        if (Test-Path $src) {
+            Move-Item $src (Join-Path $AppDir $dir)
+            Write-Log "  $dir deployed"
+        } else {
+            Write-Log "  WARNING: $dir missing from update package"
+        }
+    }
+    # 替换 ecosystem.config.cjs（便携版用扁平路径）
+    $newEcosystem = Join-Path $srcDir "ecosystem.config.cjs"
+    if (Test-Path $newEcosystem) {
+        Move-Item $newEcosystem $ecosystemPath -Force
+        Write-Log "  ecosystem.config.cjs updated"
     } else {
-        Write-Log "No .env in backup, using new default"
+        Write-Log "  WARNING: ecosystem.config.cjs missing from update package"
     }
+    Write-Log "New version deployed (services/ untouched)."
 
-    # 日志目录
-    if (Test-Path "$backupDir\\logs") {
-        Copy-Item "$backupDir\\logs" $AppDir -Recurse -ErrorAction SilentlyContinue
-        Write-Log "logs restored from backup"
-    }
-
-    # 本地数据目录
-    if (Test-Path "$backupDir\\data") {
-        Copy-Item "$backupDir\\data" $AppDir -Recurse -ErrorAction SilentlyContinue
-        Write-Log "data restored from backup"
-    }
-
-    # === 第五步：新 .env 键检测 ===
-    $newEnv = Join-Path $AppDir ".env"
-    $oldEnv = Join-Path $backupDir ".env"
-    if ((Test-Path $newEnv) -and (Test-Path $oldEnv)) {
-        Write-Log "Comparing .env keys between old and new version..."
-        # 检查新版是否新增了环境变量键（简单对比，忽略值）
-        $warnPath = Join-Path $AppDir "logs\\update-warnings.log"
-        "" | Out-File $warnPath -Encoding utf8
-    }
-
-    # === 第六步：重启服务 ===
+    # === 第四步：重启服务 ===
     Write-Log "Restarting services (mode=$Mode)..."
     if ($Mode -eq "pm2") {
-        $ecosystemPath = Join-Path $AppDir "ecosystem.config.cjs"
         if (-not (Test-Path $ecosystemPath)) {
             throw "ecosystem.config.cjs not found at $ecosystemPath"
         }
@@ -163,25 +164,37 @@ try {
 } catch {
     $errMsg = $_.Exception.Message
     Write-Log "ERROR: $errMsg"
-    Write-Log "Attempting rollback..."
+    Write-Log "Attempting rollback (incremental)..."
 
-    # 回滚：删除部分部署的 AppDir，恢复备份
-    if (Test-Path $AppDir) {
-        Remove-Item $AppDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path $backupDir) {
-        Move-Item $backupDir $AppDir
-        Write-Log "Rollback complete. Old version restored."
-        # 尝试重启旧版服务
-        try {
-            if ($Mode -eq "pm2") {
-                pm2 start (Join-Path $AppDir "ecosystem.config.cjs") --env production
-            } else {
-                Start-Process node -ArgumentList (Join-Path $AppDir "api\\index.js") -WindowStyle Hidden
-            }
-        } catch {
-            Write-Log "WARNING: Failed to restart old version after rollback"
+    # 回滚：删除新部署的子目录，恢复备份
+    foreach ($dir in $ReplaceDirs) {
+        $target = Join-Path $AppDir $dir
+        if (Test-Path $target) {
+            Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
         }
+        $backup = "$target$backupSuffix"
+        if (Test-Path $backup) {
+            Move-Item $backup $target
+            Write-Log "  $dir restored from backup"
+        }
+    }
+    # 恢复旧 ecosystem
+    $ecoBackup = "$ecosystemPath$backupSuffix"
+    if (Test-Path $ecoBackup) {
+        Move-Item $ecoBackup $ecosystemPath -Force
+        Write-Log "  ecosystem.config.cjs restored"
+    }
+    Write-Log "Rollback complete. Old version restored."
+
+    # 尝试重启旧版服务
+    try {
+        if ($Mode -eq "pm2") {
+            pm2 start $ecosystemPath --env production
+        } else {
+            Start-Process node -ArgumentList (Join-Path $AppDir "api\\index.js") -WindowStyle Hidden
+        }
+    } catch {
+        Write-Log "WARNING: Failed to restart old version after rollback"
     }
 
     # 写错误日志
@@ -196,7 +209,7 @@ try {
 // ═══════════════════════════════════════════════════════════════
 
 const BASH_TEMPLATE = `#!/usr/bin/env bash
-# Super Agent 自动更新引导脚本（Linux/macOS）
+# Super Agent 自动更新引导脚本（Linux/macOS）— 增量替换版
 set -euo pipefail
 
 TEMP_DIR="$1"
@@ -204,27 +217,45 @@ APP_DIR="$2"
 MODE="$3"
 UPDATER_LOG="$APP_DIR/logs/update.log"
 
+# 增量替换的四个 Node.js 子目录
+REPLACE_DIRS=("api" "core" "web" "node_modules")
+
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [Updater] $1" | tee -a "$UPDATER_LOG"
 }
 
+# 增量回滚：删除新部署的子目录，恢复备份
 rollback() {
-    log "ERROR: $1"
-    log "Attempting rollback..."
-    if [ -d "$APP_DIR" ]; then
-        rm -rf "$APP_DIR" 2>/dev/null || true
-    fi
-    if [ -n "\${BACKUP_DIR:-}" ] && [ -d "$BACKUP_DIR" ]; then
-        mv "$BACKUP_DIR" "$APP_DIR"
-        log "Rollback complete. Old version restored."
-        # 尝试重启旧版服务
-        if [ "$MODE" = "pm2" ]; then
-            pm2 start "$APP_DIR/ecosystem.config.cjs" --env production || true
-        else
-            nohup node "$APP_DIR/api/index.js" > /dev/null 2>&1 &
+    local err_msg="\$1"
+    log "ERROR: $err_msg"
+    log "Attempting rollback (incremental)..."
+
+    for dir in "\${REPLACE_DIRS[@]}"; do
+        if [ -d "$APP_DIR/$dir" ]; then
+            rm -rf "$APP_DIR/$dir" 2>/dev/null || true
         fi
+        if [ -d "$APP_DIR/$dir$BACKUP_SUFFIX" ]; then
+            mv "$APP_DIR/$dir$BACKUP_SUFFIX" "$APP_DIR/$dir"
+            log "  $dir restored from backup"
+        fi
+    done
+
+    # 恢复旧 ecosystem
+    if [ -f "$APP_DIR/ecosystem.config.cjs$BACKUP_SUFFIX" ]; then
+        mv "$APP_DIR/ecosystem.config.cjs$BACKUP_SUFFIX" "$APP_DIR/ecosystem.config.cjs"
+        log "  ecosystem.config.cjs restored"
     fi
-    echo "$1" > "$APP_DIR/logs/update-error.log" 2>/dev/null || true
+
+    log "Rollback complete. Old version restored."
+
+    # 尝试重启旧版服务
+    if [ "$MODE" = "pm2" ]; then
+        pm2 start "$APP_DIR/ecosystem.config.cjs" --env production || true
+    else
+        nohup node "$APP_DIR/api/index.js" > /dev/null 2>&1 &
+    fi
+
+    echo "$err_msg" > "$APP_DIR/logs/update-error.log" 2>/dev/null || true
     exit 1
 }
 
@@ -241,28 +272,48 @@ else
 fi
 log "Services stopped."
 
-# === 第二步：备份 ===
-BACKUP_DIR="\${APP_DIR}.old-$(date +%s)"
-log "Backing up to $BACKUP_DIR"
-mv "$APP_DIR" "$BACKUP_DIR" || rollback "Backup failed"
+# === 第二步：备份 Node.js 子目录（增量，不动 services/） ===
+BACKUP_SUFFIX=".old-$(date +%s)"
+log "Backing up api/core/web/node_modules (incremental)..."
+for dir in "\${REPLACE_DIRS[@]}"; do
+    if [ -d "$APP_DIR/$dir" ]; then
+        mv "$APP_DIR/$dir" "$APP_DIR/$dir$BACKUP_SUFFIX"
+        log "  $dir -> $dir$BACKUP_SUFFIX"
+    else
+        log "  $dir (not found, skip)"
+    fi
+done
+# 备份旧 ecosystem（便于回滚）
+if [ -f "$APP_DIR/ecosystem.config.cjs" ]; then
+    cp "$APP_DIR/ecosystem.config.cjs" "$APP_DIR/ecosystem.config.cjs$BACKUP_SUFFIX"
+    log "  ecosystem.config.cjs (backup copy)"
+fi
+log "Backup complete. services/ + .env + logs/ + data/ preserved."
 
-# === 第三步：部署新版本 ===
+# === 第三步：增量部署新版本 ===
 SRC_DIR="$TEMP_DIR/super-agent"
 if [ ! -d "$SRC_DIR" ]; then
     rollback "Extracted directory not found: $SRC_DIR"
 fi
-log "Deploying new version from $SRC_DIR..."
-mv "$SRC_DIR" "$APP_DIR" || rollback "Failed to move new version"
+log "Deploying new version (incremental)..."
+for dir in "\${REPLACE_DIRS[@]}"; do
+    if [ -d "$SRC_DIR/$dir" ]; then
+        mv "$SRC_DIR/$dir" "$APP_DIR/$dir"
+        log "  $dir deployed"
+    else
+        log "  WARNING: $dir missing from update package"
+    fi
+done
+# 替换 ecosystem.config.cjs（便携版用扁平路径）
+if [ -f "$SRC_DIR/ecosystem.config.cjs" ]; then
+    mv "$SRC_DIR/ecosystem.config.cjs" "$APP_DIR/ecosystem.config.cjs"
+    log "  ecosystem.config.cjs updated"
+else
+    log "  WARNING: ecosystem.config.cjs missing from update package"
+fi
+log "New version deployed (services/ untouched)."
 
-# === 第四步：恢复用户数据 ===
-log "Restoring user data..."
-[ -f "$BACKUP_DIR/.env" ] && cp "$BACKUP_DIR/.env" "$APP_DIR/" && log ".env restored"
-[ -d "$BACKUP_DIR/logs" ] && cp -r "$BACKUP_DIR/logs" "$APP_DIR/" 2>/dev/null && log "logs restored"
-[ -d "$BACKUP_DIR/data" ] && cp -r "$BACKUP_DIR/data" "$APP_DIR/" 2>/dev/null && log "data restored"
-
-# === 第五步：新 .env 键检测（略，可扩展） ===
-
-# === 第六步：重启 ===
+# === 第四步：重启 ===
 log "Restarting services (mode=$MODE)..."
 if [ "$MODE" = "pm2" ]; then
     [ -f "$APP_DIR/ecosystem.config.cjs" ] || rollback "ecosystem.config.cjs not found"

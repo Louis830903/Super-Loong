@@ -67,12 +67,12 @@ function exec(cmd: string, cwd?: string): void {
 console.log(`\n📦 构建便携式分发包 v${version}\n`);
 
 // 1. 清理输出目录
-console.log("1/6 清理输出目录...");
+console.log("1/7 清理输出目录...");
 fs.rmSync(DIST_PORTABLE, { recursive: true, force: true });
 ensureDir(PACKAGE_DIR);
 
 // 2. 复制构建产物
-console.log("2/6 复制构建产物...");
+console.log("2/7 复制构建产物...");
 const coreDist = path.join(ROOT, "packages", "core", "dist");
 const apiDist = path.join(ROOT, "packages", "api", "dist");
 const webOut = path.join(ROOT, "packages", "web", "out");
@@ -82,7 +82,7 @@ if (fs.existsSync(apiDist)) copyDir(apiDist, path.join(PACKAGE_DIR, "api"));
 if (fs.existsSync(webOut)) copyDir(webOut, path.join(PACKAGE_DIR, "web"));
 
 // 3. 安装生产依赖到 portable 目录
-console.log("3/6 安装生产依赖...");
+console.log("3/7 安装生产依赖...");
 const portablePkg = path.join(PACKAGE_DIR, "package.json");
 fs.writeFileSync(portablePkg, JSON.stringify({
   name: "super-agent-portable",
@@ -126,7 +126,7 @@ try {
 }
 
 // 4. 生成启动脚本
-console.log("4/6 生成启动脚本...");
+console.log("4/7 生成启动脚本...");
 
 // Windows 启动脚本
 fs.writeFileSync(path.join(PACKAGE_DIR, "start.bat"), [
@@ -155,8 +155,93 @@ fs.writeFileSync(path.join(PACKAGE_DIR, "start.sh"), [
   `exec node api/index.js`,
 ].join("\n"));
 
+// 4.5 生成便携版 ecosystem.config.cjs（3 进程：api + gateway + video-forge，去掉 web 进程）
+// 便携包中 API 通过 @fastify/static 直接托管静态 Web 文件，无需独立 Next.js 进程
+console.log("4.5/7 生成便携版 ecosystem.config.cjs...");
+const portableEcosystem = `/**
+ * PM2 Ecosystem File — Super Agent 便携版（自动生成，请勿手动编辑）
+ *
+ * 管理 3 个进程：
+ * - super-agent-api        : Node.js API 服务（含 Web 静态文件托管）
+ * - super-agent-gateway    : IM Gateway (Python)
+ * - super-agent-video-forge: 视频生成引擎 (Python)
+ *
+ * 注意：便携版无 super-agent-web 进程，API 在生产模式下通过 @fastify/static 托管 Web 文件。
+ *
+ * 使用方式：
+ *   pm2 start ecosystem.config.cjs --env production
+ */
+module.exports = {
+  apps: [
+    {
+      name: "super-agent-api",
+      script: "api/index.js",
+      env_production: {
+        NODE_ENV: "production",
+        DISABLE_IM_GATEWAY: "true",
+        DISABLE_VIDEO_FORGE: "true",
+        DISABLE_KB_PARSER_SIDECAR: "true",
+      },
+      max_memory_restart: "512M",
+      max_restarts: 5,
+      min_uptime: 10000,
+      wait_ready: true,
+      listen_timeout: 60000,
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
+      error_file: "./logs/pm2-api-error.log",
+      out_file: "./logs/pm2-api-out.log",
+      merge_logs: true,
+      watch: false,
+      kill_timeout: 5000,
+    },
+    {
+      name: "super-agent-gateway",
+      interpreter: "python",
+      script: "server.py",
+      args: "-u",
+      cwd: "./services/im-gateway",
+      env_production: {
+        PYTHONUNBUFFERED: "1",
+        PYTHONIOENCODING: "utf-8",
+        PYTHONUTF8: "1",
+      },
+      max_restarts: 5,
+      min_uptime: 10000,
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
+      error_file: "./logs/pm2-gateway-error.log",
+      out_file: "./logs/pm2-gateway-out.log",
+      merge_logs: true,
+      watch: false,
+      kill_timeout: 5000,
+    },
+    {
+      name: "super-agent-video-forge",
+      interpreter: "python",
+      script: "main.py",
+      cwd: "./services/video-forge",
+      env_production: {
+        PYTHONUNBUFFERED: "1",
+        PYTHONIOENCODING: "utf-8",
+        PYTHONUTF8: "1",
+        VIDEO_FORGE_RELOAD: "0",
+      },
+      max_restarts: 5,
+      min_uptime: 10000,
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
+      error_file: "./logs/pm2-video-forge-error.log",
+      out_file: "./logs/pm2-video-forge-out.log",
+      merge_logs: true,
+      watch: false,
+      kill_timeout: 5000,
+    },
+  ],
+};
+`;
+fs.writeFileSync(path.join(PACKAGE_DIR, "ecosystem.config.cjs"), portableEcosystem);
+console.log("  已生成便携版 ecosystem.config.cjs（3 进程，无 web）");
+
 // 5. 压缩为 zip
-console.log("5/6 压缩为 zip...");
+console.log("5/7 压缩为 zip...");
 const zipPath = path.join(DIST_PORTABLE, zipName);
 
 // 使用系统命令压缩（避免引入 archiver 依赖）
@@ -167,7 +252,7 @@ if (process.platform === "win32") {
 }
 
 // 6. 清理临时目录
-console.log("6/6 清理...");
+console.log("6/7 清理...");
 fs.rmSync(PACKAGE_DIR, { recursive: true, force: true });
 
 // ─── 输出结果 ──────────────────────────────────────────────

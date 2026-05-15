@@ -3,8 +3,9 @@
 # 触发条件：推送 tag 匹配 v*（如 v0.2.0）
 # 流程：
 #   1. 构建 core / api / web
-#   2. 打包为 portable 分发包（含 launcher）
-#   3. 创建 GitHub Release 并上传附件
+#   2. 打包为 portable 分发包（含便携版 ecosystem.config.cjs）
+#   3. 创建 GitHub Release 并上传 zip
+#   4. 可选：同步到 Gitee Release（需设置 GITEE_TOKEN secret）
 
 name: Build & Release
 
@@ -35,23 +36,8 @@ jobs:
       - name: 安装 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: "pnpm"
-
-      - name: 安装依赖
-        run: pnpm install --frozen-lockfile
-
-      - name: 构建 core
-        run: pnpm --filter @super-agent/core build
-
-      - name: 构建 api
-        run: pnpm --filter @super-agent/api build
-
-      - name: 构建 web
-        run: pnpm --filter @super-agent/web build
-
-      - name: 打包 portable 分发包
-        run: pnpm tsx scripts/package-portable.ts
 
       - name: 获取版本号
         id: version
@@ -60,6 +46,15 @@ jobs:
           echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
           echo "tag=${VERSION}" >> $GITHUB_OUTPUT
 
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建全量
+        run: pnpm build
+
+      - name: 打包 portable 分发包
+        run: pnpm tsx scripts/package-portable.ts --version=${{ steps.version.outputs.version }}
+
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -67,21 +62,29 @@ jobs:
           body: |
             ## Super Agent ${{ steps.version.outputs.tag }}
 
-            ### 安装方式
-
-            #### 便携版（推荐）
+            ### 便携版（推荐）
             1. 下载 `super-agent-portable-v${{ steps.version.outputs.version }}.zip`
-            2. 解压到任意目录
-            3. 运行 `start.bat`（Windows）或 `./start.sh`（Linux/macOS）
+            2. 解压到任意目录（注意：**不要覆盖现有安装目录**）
+            3. 生产部署（PM2）：
+               ```bash
+               pm2 start ecosystem.config.cjs --env production
+               pm2 save
+               ```
+            4. 快速体验：运行 `start.bat`（Windows）或 `./start.sh`（Linux/macOS）
 
-            #### 开发者模式
+            ### 开发者模式
             ```bash
             git clone https://github.com/Louis830903/Super-Loong.git
             cd Super-Loong
             git checkout ${{ steps.version.outputs.tag }}
-            pnpm install
-            pnpm build
+            pnpm install && pnpm build
             pnpm dev
+            ```
+
+            ### 从旧版更新
+            在旧版目录的 Web UI 中点击「版本更新」，或调用 API：
+            ```bash
+            curl -X POST http://localhost:3001/api/update/install
             ```
 
             ### 更新内容
