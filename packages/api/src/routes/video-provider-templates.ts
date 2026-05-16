@@ -14,6 +14,7 @@
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import { sendSuccess, Errors } from "./response-helper.js";
 import {
   getProviderTemplates,
   insertProviderTemplate,
@@ -100,13 +101,13 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
           createdAt: 0, // 内存回退无时间戳，前端排序时自然沉底
         }));
         // 系统预设插入到数组头部（在 DB 用户模板之前）
-        return reply.send({ templates: [...fallbackTemplates, ...templates] });
+        return sendSuccess(reply, { templates: [...fallbackTemplates, ...templates] });
       }
 
-      return reply.send({ templates });
+      return sendSuccess(reply, { templates });
     } catch (err) {
       app.log.error({ err }, "Failed to list provider templates");
-      return reply.status(500).send({ error: "Internal server error" });
+      return Errors.internal(reply, "Internal server error");
     }
   });
 
@@ -115,10 +116,7 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
   app.post("/api/video/provider-templates", async (request, reply) => {
     const parsed = CreateTemplateSchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: "Invalid template data",
-        details: parsed.error.issues,
-      });
+      return Errors.badRequest(reply, "Invalid template data");
     }
 
     const { name, description, providers } = parsed.data;
@@ -136,7 +134,7 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
       };
       insertProviderTemplate(row);
 
-      return reply.status(201).send({
+      return sendSuccess(reply, {
         id,
         name,
         description: description ?? "",
@@ -146,7 +144,7 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
       });
     } catch (err) {
       app.log.error({ err }, "Failed to create provider template");
-      return reply.status(500).send({ error: "Internal server error" });
+      return Errors.internal(reply, "Internal server error");
     }
   });
 
@@ -165,15 +163,12 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
 
     const parsed = UpdateTemplateSchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: "Invalid template data",
-        details: parsed.error.issues,
-      });
+      return Errors.badRequest(reply, "Invalid template data");
     }
 
     const { name, description, providers } = parsed.data;
     if (name === undefined && description === undefined && providers === undefined) {
-      return reply.status(400).send({ error: "At least one of name/description/providers is required" });
+      return Errors.badRequest(reply, "At least one of name/description/providers is required");
     }
 
     try {
@@ -183,9 +178,7 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
         providers_json: providers ? JSON.stringify(providers) : undefined,
       });
       if (!updated) {
-        return reply.status(404).send({
-          error: "Template not found or is a system preset (cannot modify)",
-        });
+        return Errors.notFound(reply, "Template not found or is a system preset (cannot modify)");
       }
 
       // 读回当前记录返回给前端，便于其同步本地 state
@@ -193,9 +186,9 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
       const row = all.find((r) => r.id === id);
       if (!row) {
         // 理论不会发生，兜底处理
-        return reply.status(404).send({ error: "Template disappeared after update" });
+        return Errors.notFound(reply, "Template disappeared after update");
       }
-      return reply.send({
+      return sendSuccess(reply, {
         id: row.id,
         name: row.name,
         description: row.description ?? "",
@@ -205,7 +198,7 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
       });
     } catch (err) {
       app.log.error({ err }, "Failed to update provider template");
-      return reply.status(500).send({ error: "Internal server error" });
+      return Errors.internal(reply, "Internal server error");
     }
   });
 
@@ -217,14 +210,12 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
     try {
       const deleted = deleteProviderTemplate(id);
       if (!deleted) {
-        return reply.status(404).send({
-          error: "Template not found or is a system preset (cannot delete)",
-        });
+        return Errors.notFound(reply, "Template not found or is a system preset (cannot delete)");
       }
-      return reply.status(204).send();
+      return sendSuccess(reply, null);
     } catch (err) {
       app.log.error({ err }, "Failed to delete provider template");
-      return reply.status(500).send({ error: "Internal server error" });
+      return Errors.internal(reply, "Internal server error");
     }
   });
 }

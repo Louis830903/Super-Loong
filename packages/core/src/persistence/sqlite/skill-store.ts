@@ -38,7 +38,7 @@ export function saveInstalledSkill(skill: Record<string, unknown>): void {
 /** 加载全部已安装技能；metadata 会反序列化为对象。 */
 export function loadInstalledSkills(): Array<Record<string, unknown>> {
   const db = getDatabase();
-  const results = db.exec("SELECT * FROM installed_skills");
+  const results = db.exec("SELECT * FROM installed_skills LIMIT 200"); // P3-T6: 防止无限制全表扫描
   if (!results.length) return [];
   return results[0].values.map((vals: unknown[]) => {
     const row: Record<string, unknown> = {};

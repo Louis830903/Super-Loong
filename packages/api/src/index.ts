@@ -161,6 +161,13 @@ async function main() {
     }
   });
 
+  // P4-T2 审查修正: 非生产模式设置通用 404 兜底（生产模式在 @fastify/static 后已设 SPA 兜底）
+  if (process.env.NODE_ENV !== "production") {
+    app.setNotFoundHandler((request, reply) => {
+      reply.code(404).send({ error: "Not Found", message: `Route ${request.method} ${request.url} not found` });
+    });
+  }
+
   // Middleware: request ID, logging, rate limiting, error handling
   await registerMiddleware(app);
 
@@ -454,7 +461,7 @@ app.addHook("onClose", () => stopUpdatePoller());
   // ─── Step 3: 在默认路由已确定之后，注册内置专家 Agent ────────
   // ⚠️ v3 审查关键时序：必须在 setDefaultAgent() 之后调用
   // 否则 211 个内置 Agent 会抢占默认路由目标
-  const { created: builtinCreated, updated: builtinUpdated, skipped: builtinSkipped } = ensureBuiltinAgents(ctx.agentManager, llmConfig as unknown as Record<string, unknown>);
+  const { created: builtinCreated, updated: builtinUpdated, skipped: builtinSkipped } = await ensureBuiltinAgents(ctx.agentManager, llmConfig as unknown as Record<string, unknown>);
   // P2-3: 始终输出摘要日志，不仅限于 created > 0
   app.log.info({ created: builtinCreated, updated: builtinUpdated, skipped: builtinSkipped }, "Builtin expert agents check");
 

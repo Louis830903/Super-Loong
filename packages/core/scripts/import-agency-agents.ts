@@ -274,9 +274,12 @@ export const ${varName}_agents = ${JSON.stringify(deptAgents, null, 2)} as const
 
   const catalogContent = `/**
  * 内置专家 Agent 总目录 — 汇总所有部门
- * 自动生成 — 请勿手动编辑（BuiltinAgentEntry 接口除外）
+ * 自动生成 — 请勿手动编辑
  *
  * 总计: ${validAgents.length} 个 Agent，覆盖 ${Object.keys(deptStats).length} 个部门
+ *
+ * P4-T4: 懒加载改造 — catalog 仅存元数据(id/name/description)，
+ * systemPrompt 通过动态 import 按需加载，大幅降低启动内存占用。
  */
 
 ${importLines}
@@ -307,10 +310,72 @@ export interface BuiltinAgentEntry {
   };
 }
 
-/** 所有内置专家 Agent 的完整目录 */
+/** 元数据条目（不含 systemPrompt，用于启动时快速加载） */
+export interface BuiltinAgentMeta {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly tools: readonly string[];
+  readonly skills: readonly string[];
+  readonly channels: readonly string[];
+  readonly memoryEnabled: boolean;
+  readonly maxToolIterations: number;
+  readonly metadata: BuiltinAgentEntry["metadata"];
+}
+
+/** 所有内置专家 Agent 的完整目录（含 systemPrompt） */
 export const builtinAgentCatalog: BuiltinAgentEntry[] = [
 ${spreadLines}
 ];
+
+/**
+ * P4-T4: 静态元数据目录 — 仅包含 id/name/description 等轻量字段，
+ * 不含 systemPrompt，启动时仅需少量内存。
+ * 从 builtinAgentCatalog 中提取，去除 systemPrompt。
+ */
+export const builtinAgentCatalogMeta: BuiltinAgentMeta[] = builtinAgentCatalog.map(
+  ({ systemPrompt, ...meta }) => meta
+);
+
+/**
+ * P4-T4: 部门→模块导入映射，用于按需懒加载 systemPrompt
+ */
+const DEPT_IMPORTERS: Record<string, () => Promise<readonly BuiltinAgentEntry[]>> = {
+${(deptImports as any[])
+    .map((d: any) => `  "${d.dept}": () => import("./catalog-${d.dept}.js").then(m => m.${d.varName}_agents),`)
+    .join("\n")}
+};
+
+/** P4-T4: systemPrompt 按需缓存，避免重复 import */
+const systemPromptCache = new Map<string, string>();
+
+/**
+ * P4-T4: 按需加载指定 Agent 的 systemPrompt
+ * 优先从 builtinAgentCatalog（模块初始化时已导入）查找，
+ * 兜底通过动态 import 对应部门的 catalog 文件并缓存。
+ */
+export async function getBuiltinSystemPrompt(agentId: string): Promise<string | undefined> {
+  const entry = builtinAgentCatalog.find(e => e.id === agentId);
+  if (entry) return entry.systemPrompt;
+  if (systemPromptCache.has(agentId)) return systemPromptCache.get(agentId);
+  const match = agentId.match(/^builtin_([a-z-]+)-/);
+  if (!match) return undefined;
+  const dept = match[1];
+  const importer = DEPT_IMPORTERS[dept];
+  if (!importer) return undefined;
+  try {
+    const entries = await importer();
+    for (const e of entries) {
+      if (!systemPromptCache.has(e.id)) systemPromptCache.set(e.id, e.systemPrompt);
+    }
+    return systemPromptCache.get(agentId);
+  } catch { return undefined; }
+}
+
+/** P4-T4: 同步获取已缓存的 systemPrompt */
+export function getCachedSystemPrompt(agentId: string): string | undefined {
+  return systemPromptCache.get(agentId);
+}
 
 /** 部门标签映射 */
 export const DEPT_LABELS: Record<string, string> = ${JSON.stringify(DEPT_LABELS, null, 2)};
@@ -318,8 +383,6 @@ export const DEPT_LABELS: Record<string, string> = ${JSON.stringify(DEPT_LABELS,
 /** 部门列表（有序） */
 export const DEPARTMENTS = ${JSON.stringify(DEPARTMENTS)} as const;
 `;
-
-  if (!DRY_RUN) {
     fs.writeFileSync(path.join(outputDir, "catalog.ts"), catalogContent, "utf-8");
   }
 

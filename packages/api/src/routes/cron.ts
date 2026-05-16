@@ -12,6 +12,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 import { parseNaturalLanguageToCron, validateCronExpression } from "@super-agent/core";
 
 export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
@@ -23,8 +24,8 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
   const scheduler = ctx.cronScheduler;
 
   /** List all cron jobs */
-  app.get("/api/cron/jobs", async () => {
-    return { jobs: scheduler.listJobs() };
+  app.get("/api/cron/jobs", async (_request, reply) => {
+    return sendSuccess(reply, { jobs: scheduler.listJobs() });
   });
 
   /** Create a new cron job */
@@ -48,7 +49,7 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
   }>("/api/cron/jobs", async (request, reply) => {
     const body = request.body ?? {};
     if (!body.name || !body.agentId || !body.message) {
-      return reply.status(400).send({ error: "name, agentId, and message are required" });
+      return Errors.badRequest(reply, "name, agentId, and message are required");
     }
 
     // [v3 Task 2-8] 递归防护: 检查是否在 cron 执行上下文中
@@ -62,13 +63,13 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
       expression = parseNaturalLanguageToCron(body.naturalLanguage);
     }
     if (!expression) {
-      return reply.status(400).send({ error: "expression or naturalLanguage is required" });
+      return Errors.badRequest(reply, "expression or naturalLanguage is required");
     }
 
     // [v3 Task 2-5] 校验 cron 表达式合法性
     const validation = validateCronExpression(expression);
     if (!validation.valid) {
-      return reply.status(400).send({ error: `Invalid cron expression "${expression}": ${validation.error}` });
+      return Errors.badRequest(reply, `Invalid cron expression "${expression}": ${validation.error}`);
     }
 
     const job = scheduler.addJob({
@@ -89,7 +90,7 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
       timeoutSeconds: body.timeoutSeconds,
     });
 
-    return reply.status(201).send(job);
+    return sendSuccess(reply, job);
   });
 
   /** Update a cron job (E-3: 支持完整字段更新，不仅是 enabled) */
@@ -113,7 +114,7 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
     }>;
   }>("/api/cron/jobs/:id", async (request, reply) => {
     const job = scheduler.getJob(request.params.id);
-    if (!job) return reply.status(404).send({ error: "Job not found" });
+    if (!job) return Errors.notFound(reply, "Job not found");
 
     const body = request.body ?? {};
 
@@ -126,7 +127,7 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
     if (body.expression !== undefined) {
       const validation = validateCronExpression(body.expression);
       if (!validation.valid) {
-        return reply.status(400).send({ error: `Invalid cron expression "${body.expression}": ${validation.error}` });
+        return Errors.badRequest(reply, `Invalid cron expression "${body.expression}": ${validation.error}`);
       }
     }
 
@@ -154,25 +155,25 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
       scheduler.updateJob(job.id, updates);
     }
 
-    return { job: scheduler.getJob(job.id) };
+    return sendSuccess(reply, { job: scheduler.getJob(job.id) });
   });
 
   /** Delete a cron job */
   app.delete<{ Params: { id: string } }>("/api/cron/jobs/:id", async (request, reply) => {
     const removed = scheduler.removeJob(request.params.id);
-    if (!removed) return reply.status(404).send({ error: "Job not found" });
-    return { status: "deleted" };
+    if (!removed) return Errors.notFound(reply, "Job not found");
+    return sendSuccess(reply, { status: "deleted" });
   });
 
   /** Execute a job immediately */
   app.post<{ Params: { id: string } }>("/api/cron/jobs/:id/run", async (request, reply) => {
     try {
       const response = await scheduler.executeNow(request.params.id);
-      return { status: "executed", response };
+      return sendSuccess(reply, { status: "executed", response });
     } catch (err: any) {
       // API-P1-03：内部栈仅进日志
       app.log.error({ route: "/api/cron/jobs/:id/run", jobId: request.params.id, err }, "Cron job execution failed");
-      return reply.status(500).send({ error: "Cron job execution failed" });
+      return Errors.internal(reply, "Cron job execution failed");
     }
   });
 
@@ -180,17 +181,17 @@ export async function cronRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get<{
     Params: { id: string };
     Querystring: { limit?: string };
-  }>("/api/cron/jobs/:id/history", async (request) => {
+  }>("/api/cron/jobs/:id/history", async (request, reply) => {
     const limit = parseInt(request.query.limit ?? "20", 10);
-    return { history: scheduler.getHistory(request.params.id, limit) };
+    return sendSuccess(reply, { history: scheduler.getHistory(request.params.id, limit) });
   });
 
   /** Parse natural language to cron expression */
   app.post<{ Body: { text: string } }>("/api/cron/parse", async (request, reply) => {
     const { text } = request.body ?? {};
-    if (!text) return reply.status(400).send({ error: "text is required" });
+    if (!text) return Errors.badRequest(reply, "text is required");
     const expression = parseNaturalLanguageToCron(text);
-    return { expression, text };
+    return sendSuccess(reply, { expression, text });
   });
 
   app.log.info("Cron routes registered");

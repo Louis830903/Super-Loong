@@ -9,6 +9,7 @@
  */
 
 import type { FastifyInstance } from "fastify";
+import { sendSuccess, Errors } from "./response-helper.js";
 import {
   getModelCatalog,
   getProviderById,
@@ -27,12 +28,12 @@ import { requirePermission } from "../auth/index.js";
 
 export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
   // ── GET /api/models/catalog ─────────────────────────────────
-  app.get("/api/models/catalog", async () => {
-    return { providers: getModelCatalog() };
+  app.get("/api/models/catalog", async (_request, reply) => {
+    return sendSuccess(reply, { providers: getModelCatalog() });
   });
 
   // ── GET /api/models/providers ───────────────────────────────
-  app.get("/api/models/providers", async () => {
+  app.get("/api/models/providers", async (_request, reply) => {
     const records = ctx.providerStore.list();
     const catalog = getModelCatalog();
 
@@ -53,7 +54,7 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
       };
     });
 
-    return { providers: result };
+    return sendSuccess(reply, { providers: result });
   });
 
   // ── PUT /api/models/providers/:id ───────────────────────────
@@ -69,7 +70,7 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
       // Validate provider exists in catalog (or is "custom")
       const providerDef = getProviderById(id);
       if (!providerDef) {
-        return reply.status(404).send({ error: "Unknown provider" });
+        return Errors.notFound(reply, "Unknown provider");
       }
 
       // SEC-P0-04 · E1 脱敏哨兵：前端 GET 到的是脱敏 key，整体回传时不能覆盖原值。
@@ -136,13 +137,23 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
           });
           // Persist updated agent config to SQLite so it survives restarts
           if (updatedAgent) {
-            saveAgentConfig(updatedAgent.id, updatedAgent.state.config as unknown as Record<string, unknown>);
-            app.log.info({ agent: updatedAgent.id, provider: id, model: record.selectedModel }, "Agent LLM config updated and persisted");
+            try {
+              saveAgentConfig(updatedAgent.id, updatedAgent.state.config as unknown as Record<string, unknown>);
+              app.log.info({ agent: updatedAgent.id, provider: id, model: record.selectedModel }, "Agent LLM config updated and persisted");
+            } catch (persistErr) {
+              // 持久化失败 → 回滚 Agent 内存状态，保证一致性
+              app.log.error({ err: persistErr }, "Failed to persist agent config, rolling back");
+              const prevLlmConfig = defaultAgent.config?.llmProvider;
+              ctx.agentManager.updateAgent(defaultAgent.id, {
+                llmProvider: prevLlmConfig ?? { type: "openai", model: "", apiKey: "", baseUrl: "" },
+              });
+              return Errors.internal(reply, "保存 Agent 配置失败，已回滚");
+            }
           }
         }
       }
 
-      return {
+      return sendSuccess(reply, {
         provider: {
           id: record.id,
           isEnabled: record.isEnabled,
@@ -151,7 +162,7 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
           maskedKey: record.apiKey ? maskApiKey(record.apiKey) : "",
           baseUrl: record.baseUrl || providerDef.baseUrl,
         },
-      };
+      });
     }
   );
 
@@ -163,10 +174,10 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
     async (request, reply) => {
       const ok = ctx.providerStore.clearKey(request.params.id);
       if (!ok) {
-        return reply.status(404).send({ error: "Provider not found" });
+        return Errors.notFound(reply, "Provider not found");
       }
       logConfigChange("config.provider.delete", { providerId: request.params.id, action: "clearKey" });
-      return { success: true };
+      return sendSuccess(reply, { success: true });
     }
   );
 
@@ -190,18 +201,18 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
       const record = ctx.providerStore.get(id);
 
       if (!providerDef) {
-        return reply.status(404).send({ error: "Unknown provider" });
+        return Errors.notFound(reply, "Unknown provider");
       }
 
       // Accept apiKey from request body (for testing before saving) or from DB
       const apiKey = body?.apiKey || record?.apiKey;
       if (!apiKey) {
-        return reply.status(400).send({ error: "API Key not configured" });
+        return Errors.badRequest(reply, "API Key not configured");
       }
 
       const modelId = body?.model || record?.selectedModel || (providerDef.models[0]?.id ?? "");
       if (!modelId) {
-        return reply.status(400).send({ error: "No model specified" });
+        return Errors.badRequest(reply, "No model specified");
       }
 
       const baseUrl = body?.baseUrl || record?.baseUrl || providerDef.baseUrl;
@@ -222,12 +233,12 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
           messages: [{ role: "user", content: "Hi, reply with just 'ok'." }],
         });
 
-        return {
+        return sendSuccess(reply, {
           success: true,
           model: modelId,
           response: result.content?.slice(0, 100) ?? "",
           usage: result.usage,
-        };
+        });
       } catch (err) {
         // API-P1-03：详细错误仅进日志，对外统一 502 不回显内部栈
         app.log.error({ providerId: id, modelId, err }, "Provider connectivity test failed");

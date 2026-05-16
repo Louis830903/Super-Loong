@@ -27,6 +27,7 @@ import {
   type JsonRpcResponse,
   A2A_ERROR_CODES,
 } from "./a2a-types.js";
+import { signA2AMessage } from "./a2a-signature.js";
 import { currentTraceId, withSpan } from "../tracing/tracer.js";
 import { retryWithBackoff } from "./retry.js";
 
@@ -124,6 +125,8 @@ export class A2AClient {
    */
   async sendMessage(request: SendMessageRequest): Promise<SendMessageResponse> {
     return withSpan("a2a.sendMessage", { endpoint: this.endpoint }, async () => {
+      // P0 安全加固：对消息体生成 HMAC-SHA256 签名（防篡改）
+      this.signRequestMessage(request);
       const result = await this.rpcCall<SendMessageResponse>("SendMessage", request);
       return result;
     });
@@ -218,6 +221,9 @@ export class A2AClient {
     signal?: AbortSignal,
   ): Promise<void> {
     return withSpan("a2a.sendStreamingMessage", { endpoint: this.endpoint }, async () => {
+      // P0 安全加固：对消息体生成 HMAC-SHA256 签名（防篡改）
+      this.signRequestMessage(request);
+
       const rpcPayload: JsonRpcRequest = {
         jsonrpc: "2.0",
         id: randomUUID(),
@@ -260,6 +266,17 @@ export class A2AClient {
   }
 
   // ─── 内部方法 ─────────────────────────────────────────────
+
+  /**
+   * 对 SendMessageRequest 中的消息体附加 HMAC-SHA256 签名。
+   * 使用 A2A_TOKEN 作为共享密钥；未配置时跳过签名（向后兼容）。
+   */
+  private signRequestMessage(request: SendMessageRequest): void {
+    const secret = process.env.A2A_TOKEN;
+    if (!secret) return; // 未配置密钥时跳过签名（向后兼容旧服务端）
+    if (!request.message) return;
+    signA2AMessage(request.message as A2AMessage & { timestamp?: number; nonce?: string; signature?: string }, secret);
+  }
 
   /**
    * JSON-RPC 调用（含指数退避重试，委托 retryWithBackoff 公共函数）。

@@ -34,6 +34,7 @@ import {
 } from "@super-agent/core";
 import type { AppContext } from "../context.js";
 import path from "node:path";
+import { sendSuccess, sendError, Errors } from "./response-helper.js";
 
 // ─── 常量 ────────────────────────────────────────────────
 
@@ -107,7 +108,7 @@ export async function knowledgeBaseRoutes(
     const { filename, data, mime, agentId, userId, metadata } = request.body ?? {};
 
     if (!filename || !data) {
-      return reply.status(400).send({ error: "filename and data (base64) are required" });
+      return Errors.badRequest(reply, "filename and data (base64) are required");
     }
 
     // 解码 base64
@@ -115,22 +116,21 @@ export async function knowledgeBaseRoutes(
     try {
       buffer = Buffer.from(data, "base64");
     } catch {
-      return reply.status(400).send({ error: "Invalid base64 data" });
+      return Errors.badRequest(reply, "Invalid base64 data");
     }
 
     if (buffer.length === 0) {
-      return reply.status(400).send({ error: "Empty file buffer after base64 decode" });
+      return Errors.badRequest(reply, "Empty file buffer after base64 decode");
     }
     if (buffer.length > MAX_UPLOAD_BYTES) {
-      return reply.status(413).send({
-        error: `文件过大 (${(buffer.length / 1024 / 1024).toFixed(1)}MB)，最大支持 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB`,
-      });
+      return sendError(reply, 413, "PAYLOAD_TOO_LARGE",
+        `文件过大 (${(buffer.length / 1024 / 1024).toFixed(1)}MB)，最大支持 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB`);
     }
 
     // 校验文件类型白名单（防 exe/dll/sh 等危险格式上传）
     const ext = path.extname(filename).toLowerCase();
     if (!ALLOWED_EXTENSIONS.has(ext)) {
-      return reply.status(400).send({ error: `Unsupported file type: ${ext}` });
+      return Errors.badRequest(reply, `Unsupported file type: ${ext}`);
     }
 
     try {
@@ -163,16 +163,17 @@ export async function knowledgeBaseRoutes(
         },
         "KB document ingested",
       );
-      return reply.status(201).send({
+      return sendSuccess(reply, {
         document: result.document,
         duplicated: result.duplicated,
         skipped: result.skipped,
         chunkCount: result.chunks.length,
-      });
+      }, 201);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       app.log.error({ filename, error: msg }, "KB ingest failed");
-      return reply.status(500).send({ error: `Ingestion failed: ${msg}` });
+      return Errors.internal(reply,
+        process.env.NODE_ENV === "production" ? "知识库录入失败" : `Ingestion failed: ${msg}`);
     }
   });
 
@@ -189,7 +190,7 @@ export async function knowledgeBaseRoutes(
       limit?: string;
       offset?: string;
     };
-  }>("/api/kb/documents", async (request) => {
+  }>("/api/kb/documents", async (request, reply) => {
     const q = request.query;
     const filter: KBDocumentFilter = {
       agentId: parseIsolation(q.agentId),
@@ -201,7 +202,7 @@ export async function knowledgeBaseRoutes(
 
     const documents = listDocuments(filter, { limit, offset });
     const total = countDocuments(filter);
-    return { documents, total, limit, offset };
+    return sendSuccess(reply, { documents, total, limit, offset });
   });
 
   /**
@@ -214,13 +215,13 @@ export async function knowledgeBaseRoutes(
     const { id } = request.params;
     const document = getDocument(id);
     if (!document) {
-      return reply.status(404).send({ error: `Document not found: ${id}` });
+      return Errors.notFound(reply, `Document not found: ${id}`);
     }
     const chunks = listChunksByDoc(id);
-    return {
+    return sendSuccess(reply, {
       document,
       chunkCount: chunks.length,
-    };
+    });
   });
 
   /**
@@ -233,10 +234,10 @@ export async function knowledgeBaseRoutes(
     const { id } = request.params;
     const existed = deleteDocument(id);
     if (!existed) {
-      return reply.status(404).send({ error: `Document not found: ${id}` });
+      return Errors.notFound(reply, `Document not found: ${id}`);
     }
     app.log.info({ docId: id }, "KB document deleted");
-    return { deleted: true };
+    return sendSuccess(reply, { deleted: true });
   });
 
   /**
@@ -256,7 +257,7 @@ export async function knowledgeBaseRoutes(
   }>("/api/kb/search", async (request, reply) => {
     const { query, agentId, userId, topK, docIds, maxTokens } = request.body ?? {};
     if (!query || typeof query !== "string" || query.trim().length === 0) {
-      return reply.status(400).send({ error: "query is required" });
+      return Errors.badRequest(reply, "query is required");
     }
 
     const k = Math.min(MAX_SEARCH_TOPK, Math.max(1, topK ?? DEFAULT_SEARCH_TOPK));
@@ -270,14 +271,15 @@ export async function knowledgeBaseRoutes(
         docIds,
         maxTokens,
       });
-      return {
+      return sendSuccess(reply, {
         hits,
         count: hits.length,
-      };
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       app.log.error({ query, error: msg }, "KB search failed");
-      return reply.status(500).send({ error: `Search failed: ${msg}` });
+      return Errors.internal(reply,
+        process.env.NODE_ENV === "production" ? "搜索失败" : `Search failed: ${msg}`);
     }
   });
 
@@ -291,7 +293,7 @@ export async function knowledgeBaseRoutes(
       agentId?: string;
       userId?: string;
     };
-  }>("/api/kb/stats", async (request) => {
+  }>("/api/kb/stats", async (request, reply) => {
     const agentId = parseIsolation(request.query.agentId);
     const userId = parseIsolation(request.query.userId);
 
@@ -313,12 +315,12 @@ export async function knowledgeBaseRoutes(
       }
     }
 
-    return {
+    return sendSuccess(reply, {
       documentCount,
       indexedCount,
       failedCount,
       totalBytes,
       totalChunks,
-    };
+    });
   });
 }

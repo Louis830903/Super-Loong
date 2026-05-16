@@ -7,7 +7,7 @@
  * - withLock() 高阶函数：自动 acquire/release
  */
 
-import { existsSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
+import { existsSync, writeFileSync, unlinkSync, readFileSync, openSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import pino from "pino";
 
@@ -62,13 +62,15 @@ export class EvolutionLock {
    * @returns true 如果成功获取
    */
   acquireLock(owner: string = "evolution"): boolean {
-    // 1. 检查进程级内存锁
+    // P3-T2: 内存锁提前设置，防止并发 acquireLock 竞态
+    // 先设内存锁再写文件锁，确保同一进程内只有一个调用成功
     if (this.memoryLocked) {
       logger.debug({ holder: this.holder }, "Lock already held in memory");
       return false;
     }
+    this.memoryLocked = true; // 提前锁定，防止并发窗口
 
-    // 2. 检查文件锁是否存在且未过期
+    // 1. 检查文件锁是否存在且未过期
     if (existsSync(this.lockPath)) {
       try {
         const content = readFileSync(this.lockPath, "utf-8");
@@ -76,7 +78,8 @@ export class EvolutionLock {
         const expiresAt = new Date(existing.expiresAt).getTime();
 
         if (Date.now() < expiresAt) {
-          // 锁未过期
+          // 锁未过期 — 释放内存锁并返回失败
+          this.memoryLocked = false;
           logger.debug({ existingHolder: existing.holder }, "Lock held by another process");
           return false;
         }
@@ -87,11 +90,12 @@ export class EvolutionLock {
         this.releaseLock();
       } catch {
         // 文件损坏 → 删除重建
-        try { unlinkSync(this.lockPath); } catch { /* ignore */ }
+        logger.debug({ lockPath: this.lockPath }, "Lock file corrupted, removing and recreating");
+        try { unlinkSync(this.lockPath); } catch { logger.debug({ lockPath: this.lockPath }, "Failed to unlink corrupted lock file"); }
       }
     }
 
-    // 3. 获取锁
+    // 2. P3-T2: 使用 openSync(wx) 独占创建文件锁（原子操作，避免 TOCTOU 竞态）
     const now = new Date();
     const lockData = {
       holder: owner,
@@ -100,8 +104,9 @@ export class EvolutionLock {
     };
 
     try {
-      writeFileSync(this.lockPath, JSON.stringify(lockData), "utf-8");
-      this.memoryLocked = true;
+      const fd = openSync(this.lockPath, "wx"); // wx = 独占创建，文件已存在则失败
+      writeFileSync(fd, JSON.stringify(lockData), "utf-8");
+      closeSync(fd);
       this.holder = owner;
 
       // 设置自动过期定时器
@@ -193,6 +198,7 @@ export class EvolutionLock {
         const existing = JSON.parse(content);
         return Date.now() >= new Date(existing.expiresAt).getTime();
       } catch {
+        logger.debug({ lockPath: this.lockPath }, "Lock file unreadable or corrupted, allowing acquisition");
         return true; // 文件损坏，可以获取
       }
     }

@@ -85,7 +85,7 @@ export class SandboxExecutor {
       const compileResult = await this.verifyCompile(tmpPath);
       if (!compileResult.passed) {
         // 清理临时文件
-        try { unlinkSync(tmpPath); } catch { /* ignore */ }
+        try { unlinkSync(tmpPath); } catch { logger.debug({ tmpPath }, "Failed to clean up temp file on compile failure"); }
         return {
           success: false,
           tmpPath,
@@ -110,7 +110,7 @@ export class SandboxExecutor {
       };
     } catch (err: any) {
       // 清理临时文件
-      try { if (existsSync(tmpPath)) unlinkSync(tmpPath); } catch { /* ignore */ }
+      try { if (existsSync(tmpPath)) unlinkSync(tmpPath); } catch { logger.debug({ tmpPath }, "Failed to clean up temp file on atomic write failure"); }
       logger.error({ filePath, err: err.message }, "Atomic write failed");
       return { success: false, tmpPath, error: err.message };
     }
@@ -126,7 +126,8 @@ export class SandboxExecutor {
 
     try {
       // 尝试 tsc 编译检查（不生成输出）
-      execSync(`npx tsc --noEmit --skipLibCheck "${filePath}" 2>&1 || true`, {
+      // P1 修复：移除 || true，用 try-catch 捕获 tsc 编译错误并解析 stdout/stderr
+      execSync(`npx tsc --noEmit --skipLibCheck "${filePath}"`, {
         cwd: this.projectRoot,
         timeout: this.timeoutMs,
         encoding: "utf-8",
@@ -165,14 +166,17 @@ export class SandboxExecutor {
 
   /**
    * 在 Worker Thread 中验证 import 语句
+   *
+   * P0 安全加固：使用 workerData 传递文件路径，避免通过字符串拼接
+   * 构造 Worker 代码，防止特殊字符注入。
    */
   private verifyImports(filePath: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const workerCode = `
-        const { parentPort } = require("node:worker_threads");
+        const { parentPort, workerData } = require("node:worker_threads");
         try {
           // 尝试动态导入（检查模块路径可达性）
-          import(${JSON.stringify("file://" + filePath.replace(/\\\\/g, "/"))})
+          import(workerData.url)
             .then(() => parentPort?.postMessage({ ok: true }))
             .catch((err) => parentPort?.postMessage({ ok: false, error: err.message }));
         } catch (err) {
@@ -180,7 +184,9 @@ export class SandboxExecutor {
         }
       `;
 
-      const worker = new Worker(workerCode, { eval: true });
+      // P0 安全加固：路径通过 workerData 传递，不拼接到代码字符串中
+      const importUrl = "file://" + filePath.replace(/\\\\/g, "/");
+      const worker = new Worker(workerCode, { eval: true, workerData: { url: importUrl } });
       const timer = setTimeout(() => {
         worker.terminate();
         reject(new Error("Import verification timed out"));

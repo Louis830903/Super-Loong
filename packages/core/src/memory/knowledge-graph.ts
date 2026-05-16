@@ -164,14 +164,14 @@ export class KnowledgeGraph {
    * 用于关系写入路径（实体不存在时自动创建）。
    */
   getOrCreateEntityId(name: string): number {
-    const existing = this.findEntityId(name);
-    if (existing != null) return existing;
-    // 不存在则创建
+    // P1 修复：使用 INSERT OR IGNORE 防止并发创建大小写重复实体
+    // （findEntityId 和 INSERT 之间有竞争窗口，INSERT OR IGNORE + UNIQUE 约束原子化这个操作）
     this.db.run(
-      "INSERT INTO entities (name, entityType, aliases, createdAt) VALUES (?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO entities (name, entityType, aliases, createdAt) VALUES (?, ?, ?, ?)",
       [name, "unknown", "[]", new Date().toISOString()],
     );
     scheduleSave();
+    // INSERT OR IGNORE 后统一用 COLLATE NOCASE 查询获取 ID（无论新建还是已存在）
     const newResults = this.db.exec(
       "SELECT id FROM entities WHERE name = ? COLLATE NOCASE",
       [name],

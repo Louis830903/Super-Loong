@@ -66,7 +66,7 @@ export class LLMProvider {
       apiKey: config.apiKey ?? "dummy",
       baseURL: this.resolveBaseUrl(config),
       timeout: 120_000,        // 120s — align with frontend AbortController timeout
-      maxRetries: 1,           // 1 automatic retry on transient errors (connection reset, 5xx)
+      maxRetries: 3,           // 3 automatic retries on transient errors (+指数退避)
     });
 
     if (config.fallback) {
@@ -304,10 +304,31 @@ export class LLMProvider {
       // Assistant messages with tool calls must include tool_calls array
       // (required by API when subsequent tool-result messages reference them)
       if (m.role === "assistant" && m.toolCalls?.length) {
+        // P1 流式路径双保险：与 complete() 对齐，过滤破损 JSON 的 tool_calls
+        const { valid: safeToolCalls, invalid: droppedToolCalls } =
+          partitionToolCallsByJsonValidity(m.toolCalls);
+        for (const dropped of droppedToolCalls) {
+          logger.warn(
+            {
+              tool: dropped.toolCall.function.name,
+              toolCallId: dropped.toolCall.id,
+              error: dropped.error,
+            },
+            "Stream path: dropped tool_call with invalid JSON arguments",
+          );
+        }
+        // 所有 tool_call 都破损时降级成纯 content 消息
+        if (safeToolCalls.length === 0) {
+          return {
+            role: "assistant" as const,
+            content: m.content ?? "",
+          } as OpenAI.Chat.ChatCompletionMessageParam;
+        }
+
         const msg: Record<string, unknown> = {
           role: "assistant" as const,
           content: m.content,
-          tool_calls: m.toolCalls.map((tc) => ({
+          tool_calls: safeToolCalls.map((tc) => ({
             id: tc.id,
             type: "function" as const,
             function: {

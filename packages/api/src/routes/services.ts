@@ -12,12 +12,13 @@ import type { FastifyInstance } from "fastify";
 import { SERVICE_CATALOG, syncEnvVarToFile } from "@super-agent/core";
 import type { AppContext } from "../context.js";
 import type { ServiceCatalogEntry, ServiceInfo } from "@super-agent/core";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 export async function serviceRoutes(app: FastifyInstance, ctx: AppContext) {
   // ── GET /api/services ──────────────────────────────────
-  app.get("/api/services", async () => {
+  app.get("/api/services", async (_req, reply) => {
     const services = ctx.configStore.listServices();
-    return { services };
+    return sendSuccess(reply, { services });
   });
 
   // ── GET /api/services/:id ──────────────────────────────
@@ -25,11 +26,11 @@ export async function serviceRoutes(app: FastifyInstance, ctx: AppContext) {
     const { id } = request.params;
     const catalog = SERVICE_CATALOG.find((s: ServiceCatalogEntry) => s.id === id);
     if (!catalog) {
-      return reply.status(404).send({ error: `Unknown service: ${id}` });
+      return Errors.notFound(reply, `Unknown service: ${id}`);
     }
     const services = ctx.configStore.listServices();
     const service = services.find((s: ServiceInfo) => s.id === id);
-    return { service: service ?? null };
+    return sendSuccess(reply, { service: service ?? null });
   });
 
   // ── PUT /api/services/:id ──────────────────────────────
@@ -40,7 +41,7 @@ export async function serviceRoutes(app: FastifyInstance, ctx: AppContext) {
       const body = request.body as Record<string, string>;
       const catalog = SERVICE_CATALOG.find((s: ServiceCatalogEntry) => s.id === id);
       if (!catalog) {
-        return reply.status(404).send({ error: `Unknown service: ${id}` });
+        return Errors.notFound(reply, `Unknown service: ${id}`);
       }
       // 逐个保存配置项
       const validKeys = catalog.keys.map((k: { key: string }) => k.key);
@@ -80,7 +81,7 @@ export async function serviceRoutes(app: FastifyInstance, ctx: AppContext) {
       // 返回更新后的状态
       const services = ctx.configStore.listServices();
       const service = services.find((s: ServiceInfo) => s.id === id);
-      return { service };
+      return sendSuccess(reply, { service });
     }
   );
 
@@ -91,16 +92,16 @@ export async function serviceRoutes(app: FastifyInstance, ctx: AppContext) {
       const { id } = request.params;
       const catalog = SERVICE_CATALOG.find((s: ServiceCatalogEntry) => s.id === id);
       if (!catalog) {
-        return reply.status(404).send({ error: `Unknown service: ${id}` });
+        return Errors.notFound(reply, `Unknown service: ${id}`);
       }
       ctx.configStore.delete(id);
-      return { success: true };
+      return sendSuccess(reply, { success: true });
     }
   );
 
   // ── POST /api/services/browser/detect ──────────────────
   // 探测本地安装的浏览器，返回找到的路径
-  app.post("/api/services/browser/detect", async () => {
+  app.post("/api/services/browser/detect", async (_req, reply) => {
     const { existsSync } = await import("node:fs");
     const platform = process.platform;
     const candidates: Array<{ name: string; path: string }> = [];
@@ -128,10 +129,10 @@ export async function serviceRoutes(app: FastifyInstance, ctx: AppContext) {
     }
 
     const found = candidates.filter(c => existsSync(c.path));
-    return {
+    return sendSuccess(reply, {
       platform,
       detected: found,
       recommended: found.length > 0 ? found[0] : null,
-    };
+    });
   });
 }

@@ -6,6 +6,7 @@
  */
 
 import type { FastifyInstance } from "fastify";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 // 支持的可解析二进制文件类型
 const PARSEABLE_TYPES: Record<string, string> = {
@@ -33,17 +34,14 @@ export async function fileRoutes(app: FastifyInstance) {
     const { filename, data } = request.body ?? {};
 
     if (!filename || !data) {
-      return reply.status(400).send({ error: "filename and data are required" });
+      return Errors.badRequest(reply, "filename and data are required");
     }
 
     const ext = "." + (filename.split(".").pop()?.toLowerCase() ?? "");
     const fileType = PARSEABLE_TYPES[ext];
 
     if (!fileType) {
-      return reply.status(400).send({
-        error: `不支持的文件类型: ${ext}`,
-        supported: Object.keys(PARSEABLE_TYPES),
-      });
+      return Errors.badRequest(reply, `不支持的文件类型: ${ext}`, { supported: Object.keys(PARSEABLE_TYPES) });
     }
 
     // 解码 base64 并检查大小
@@ -51,12 +49,16 @@ export async function fileRoutes(app: FastifyInstance) {
     try {
       buffer = Buffer.from(data, "base64");
     } catch {
-      return reply.status(400).send({ error: "Invalid base64 data" });
+      return Errors.badRequest(reply, "Invalid base64 data");
     }
 
     if (buffer.length > MAX_FILE_SIZE) {
       return reply.status(413).send({
-        error: `文件过大 (${(buffer.length / 1024 / 1024).toFixed(1)}MB)，最大支持 ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+        success: false,
+        error: {
+          code: "FILE_TOO_LARGE",
+          message: `文件过大 (${(buffer.length / 1024 / 1024).toFixed(1)}MB)，最大支持 ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+        },
       });
     }
 
@@ -122,7 +124,7 @@ export async function fileRoutes(app: FastifyInstance) {
           break;
         }
         default:
-          return reply.status(400).send({ error: `Parser not implemented for: ${fileType}` });
+          return Errors.badRequest(reply, `Parser not implemented for: ${fileType}`);
       }
 
       const truncated = text.length > MAX_TEXT_LENGTH;
@@ -132,7 +134,7 @@ export async function fileRoutes(app: FastifyInstance) {
         "File parsed successfully"
       );
 
-      return {
+      return sendSuccess(reply, {
         text: truncated
           ? text.slice(0, MAX_TEXT_LENGTH) + "\n...(内容过长已截断)"
           : text,
@@ -141,20 +143,22 @@ export async function fileRoutes(app: FastifyInstance) {
         truncated,
         originalLength: text.length,
         meta,
-      };
+      });
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       app.log.error({ filename, type: fileType, error: errMsg }, "File parsing failed");
-      return reply.status(500).send({ error: `解析失败: ${errMsg}` });
+      return Errors.internal(reply,
+        process.env.NODE_ENV === "production" ? "文件解析失败" : `解析失败: ${errMsg}`,
+      );
     }
   });
 
   /** GET /api/files/supported — 返回支持的文件类型列表 */
-  app.get("/api/files/supported", async () => {
-    return {
+  app.get("/api/files/supported", async (_request, reply) => {
+    return sendSuccess(reply, {
       types: Object.entries(PARSEABLE_TYPES).map(([ext, type]) => ({ ext, type })),
       maxSizeMB: MAX_FILE_SIZE / 1024 / 1024,
       maxTextLength: MAX_TEXT_LENGTH,
-    };
+    });
   });
 }

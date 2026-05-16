@@ -11,6 +11,7 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { sendSuccess, Errors } from "./response-helper.js";
 import {
   saveMediaBuffer,
   saveMediaFromUrl,
@@ -79,7 +80,7 @@ export async function mediaRoutes(app: FastifyInstance) {
     const filtered = kind
       ? items.filter((item) => item.mimeType.startsWith(`${kind}/`))
       : items;
-    return reply.send({ items: filtered });
+    return sendSuccess(reply, { items: filtered });
   });
 
   /**
@@ -108,7 +109,7 @@ export async function mediaRoutes(app: FastifyInstance) {
       if (url) {
         const saved = await saveMediaFromUrl(url, "inbound");
         const kind = kindFromMime(saved.contentType);
-        return reply.send({
+        return sendSuccess(reply, {
           id: saved.id,
           path: saved.path,
           contentType: saved.contentType,
@@ -120,7 +121,7 @@ export async function mediaRoutes(app: FastifyInstance) {
 
       // 方式 2: Base64 上传
       if (!data) {
-        return reply.status(400).send({ error: "data (base64) 或 url 是必填的" });
+        return Errors.badRequest(reply, "data (base64) 或 url 是必填的");
       }
 
       // 去除可能的 data URI 前缀
@@ -145,7 +146,7 @@ export async function mediaRoutes(app: FastifyInstance) {
       const saved = await saveMediaBuffer(buffer, contentType, "inbound", MEDIA_MAX_BYTES, filename);
       const kind = kindFromMime(contentType);
 
-      return reply.send({
+      return sendSuccess(reply, {
         id: saved.id,
         path: saved.path,
         contentType: saved.contentType,
@@ -158,13 +159,10 @@ export async function mediaRoutes(app: FastifyInstance) {
       const isSecErr = err?.name === "MediaSecurityError";
       if (isSecErr) {
         app.log.warn({ err, code: err?.code }, "Media upload rejected by security check");
-        return reply.status(400).send({
-          error: "媒体上传失败，安全检测未通过",
-          code: err.code,
-        });
+        return Errors.badRequest(reply, "媒体上传失败，安全检测未通过");
       }
       app.log.error({ err }, "Media upload failed");
-      return reply.status(500).send({ error: "媒体上传失败" });
+      return Errors.internal(reply, "媒体上传失败");
     }
   });
 
@@ -179,11 +177,11 @@ export async function mediaRoutes(app: FastifyInstance) {
     const media = await getMediaById(id);
 
     if (!media) {
-      return reply.status(404).send({ error: "媒体文件不存在或已过期" });
+      return Errors.notFound(reply, "媒体文件不存在或已过期");
     }
 
     const kind = kindFromMime(media.contentType);
-    return reply.send({
+    return sendSuccess(reply, {
       id: media.id,
       path: media.path,
       contentType: media.contentType,
@@ -204,20 +202,19 @@ export async function mediaRoutes(app: FastifyInstance) {
     const media = await getMediaById(id);
 
     if (!media) {
-      return reply.status(404).send({ error: "媒体文件不存在或已过期" });
+      return Errors.notFound(reply, "媒体文件不存在或已过期");
     }
 
     try {
       const data = await fs.readFile(media.path);
       const filename = path.basename(media.path);
 
-      return reply
-        .header("Content-Type", media.contentType)
-        .header("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`)
-        .header("Content-Length", data.length)
-        .send(data);
+      reply.header("Content-Type", media.contentType);
+      reply.header("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
+      reply.header("Content-Length", data.length);
+      return sendSuccess(reply, data);
     } catch {
-      return reply.status(404).send({ error: "媒体文件已被清理" });
+      return Errors.notFound(reply, "媒体文件已被清理");
     }
   });
 
@@ -232,14 +229,14 @@ export async function mediaRoutes(app: FastifyInstance) {
     const media = await getMediaById(id);
 
     if (!media) {
-      return reply.status(404).send({ error: "媒体文件不存在" });
+      return Errors.notFound(reply, "媒体文件不存在");
     }
 
     try {
       await fs.unlink(media.path);
-      return reply.send({ deleted: true, id });
+      return sendSuccess(reply, { deleted: true, id });
     } catch {
-      return reply.status(500).send({ error: "删除失败" });
+      return Errors.internal(reply, "删除失败");
     }
   });
 }

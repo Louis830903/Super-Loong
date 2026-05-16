@@ -398,17 +398,44 @@ export class QualityGate {
 
     const missedRequirements: string[] = [];
 
-    for (const req of requirements.slice(0, 10)) {
+    // P1 跨平台兼容：使用 Node.js fs API 替代 Unix grep，支持 Windows/macOS/Linux
+    // 当前为关键词匹配（非 LLM 语义比对），TODO 后续可升级为 LLM 语义对比
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    // 递归收集所有 .ts/.tsx/.js 文件
+    const collectFiles = (dir: string): string[] => {
+      const entries: string[] = [];
       try {
-        // 在项目文件中搜索关键词
-        const result = execSync(
-          `grep -rl "${req.slice(0, 30)}" "${projectDir}" --include="*.ts" --include="*.tsx" --include="*.js" 2>/dev/null || echo ""`,
-          { encoding: "utf-8", timeout: 10_000 },
-        );
-        if (!result.trim()) {
-          missedRequirements.push(req);
+        for (const entry of readdirSync(dir)) {
+          const fullPath = join(dir, entry);
+          try {
+            const st = statSync(fullPath);
+            if (st.isDirectory() && !entry.startsWith(".") && entry !== "node_modules") {
+              entries.push(...collectFiles(fullPath));
+            } else if (st.isFile() && /\.(ts|tsx|js)$/.test(entry)) {
+              entries.push(fullPath);
+            }
+          } catch { /* skip unreadable */ }
         }
-      } catch {
+      } catch { /* skip unreadable dirs */ }
+      return entries;
+    };
+    const codeFiles = collectFiles(projectDir);
+
+    for (const req of requirements.slice(0, 10)) {
+      const keyword = req.slice(0, 30);
+      let found = false;
+      for (const filePath of codeFiles.slice(0, 200)) { // 限制扫描文件数防止性能问题
+        try {
+          const content = readFileSync(filePath, "utf-8");
+          if (content.includes(keyword)) {
+            found = true;
+            break;
+          }
+        } catch { /* skip unreadable */ }
+      }
+      if (!found) {
         missedRequirements.push(req);
       }
     }

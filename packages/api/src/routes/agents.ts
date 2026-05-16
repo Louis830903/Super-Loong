@@ -9,6 +9,7 @@
  */
 
 import type { FastifyInstance } from "fastify";
+import { sendSuccess, Errors } from "./response-helper.js";
 import {
   AgentConfigSchema,
   saveAgentConfig,
@@ -97,7 +98,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
       limit?: string;
       offset?: string;
     };
-  }>("/api/agents", async (request) => {
+  }>("/api/agents", async (request, reply) => {
     let agents = ctx.agentManager.listAgents();
 
     const { type, department, limit, offset } = request.query;
@@ -132,14 +133,14 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
       agents = agents.slice(parsedOffset, parsedOffset + parsedLimit);
     }
 
-    return {
+    return sendSuccess(reply, {
       // SEC-P0-04：列表响应走逐项 sanitize，彻底屏蔽 apiKey 原文。
       // listAgents() 返回 AgentState[]（而非 AgentRuntime[]），所以直接 map 脱敏。
       agents: sanitizeAgentStates(agents),
       total,
       limit: parsedLimit,
       offset: parsedOffset,
-    };
+    });
   });
 
   // Create a new agent
@@ -157,10 +158,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     };
     const parsed = AgentConfigSchema.safeParse(merged);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: "Invalid agent configuration",
-        details: parsed.error.flatten(),
-      });
+      return Errors.badRequest(reply, "Invalid agent configuration");
     }
 
     const agent = ctx.agentManager.createAgent(parsed.data);
@@ -168,17 +166,17 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     saveAgentConfig(agent.id, agent.config as unknown as Record<string, unknown>);
     logConfigChange("config.agent.create", sanitizeForAudit({ agentId: agent.id, config: agent.config as unknown as Record<string, unknown> }), agent.id);
     // SEC-P0-04：响应前脱敏，审计日志仍传原始 config（走 sanitizeForAudit）。
-    return reply.status(201).send({ agent: sanitizeAgentState(agent.state) });
+    return sendSuccess(reply, { agent: sanitizeAgentState(agent.state) });
   });
 
   // Get agent by ID
   app.get<{ Params: { id: string } }>("/api/agents/:id", async (request, reply) => {
     const agent = ctx.agentManager.getAgent(request.params.id);
     if (!agent) {
-      return reply.status(404).send({ error: "Agent not found" });
+      return Errors.notFound(reply, "Agent not found");
     }
     // SEC-P0-04：响应前脱敏。
-    return { agent: sanitizeAgentState(agent.state) };
+    return sendSuccess(reply, { agent: sanitizeAgentState(agent.state) });
   });
 
   // Update agent（P0-1: 内置 Agent 禁止通过 API 直接修改）
@@ -186,7 +184,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     // P0-1: 先检查目标 Agent 是否为内置专家，防止绕过前端直接修改
     const target = ctx.agentManager.getAgent(request.params.id);
     if (!target) {
-      return reply.status(404).send({ error: "Agent not found" });
+      return Errors.notFound(reply, "Agent not found");
     }
     const targetMeta = (target.config as unknown as Record<string, unknown>)?.metadata as Record<string, unknown> | undefined;
     if (targetMeta?.isBuiltin) {
@@ -195,10 +193,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
 
     const parsed = AgentConfigSchema.partial().safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: "Invalid update data",
-        details: parsed.error.flatten(),
-      });
+      return Errors.badRequest(reply, "Invalid update data");
     }
     // 若本次 PUT 涉及 llmProvider，按 providerId 做同样的合并（与 POST 对齐）。
     const patch = { ...parsed.data } as Record<string, unknown>;
@@ -213,13 +208,13 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
       patch,
     );
     if (!agent) {
-      return reply.status(404).send({ error: "Agent not found" });
+      return Errors.notFound(reply, "Agent not found");
     }
     // Persist updated config to SQLite
     saveAgentConfig(agent.id, agent.config as unknown as Record<string, unknown>);
     logConfigChange("config.agent.update", sanitizeForAudit({ agentId: agent.id, updates: patch }), agent.id);
     // SEC-P0-04：响应前脱敏。
-    return { agent: sanitizeAgentState(agent.state) };
+    return sendSuccess(reply, { agent: sanitizeAgentState(agent.state) });
   });
 
   // Delete agent（内置 Agent 禁止删除）
@@ -227,7 +222,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     // v3: 内置专家 Agent 不可删除
     const agent = ctx.agentManager.getAgent(request.params.id);
     if (!agent) {
-      return reply.status(404).send({ error: "Agent not found" });
+      return Errors.notFound(reply, "Agent not found");
     }
     const meta = (agent.config as unknown as Record<string, unknown>)?.metadata as Record<string, unknown> | undefined;
     if (meta?.isBuiltin) {
@@ -236,12 +231,12 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
 
     const deleted = ctx.agentManager.deleteAgent(request.params.id);
     if (!deleted) {
-      return reply.status(404).send({ error: "Agent not found" });
+      return Errors.notFound(reply, "Agent not found");
     }
     // Remove from SQLite
     deleteAgentConfig(request.params.id);
     logConfigChange("config.agent.delete", { agentId: request.params.id });
-    return { success: true };
+    return sendSuccess(reply, { success: true });
   });
 
   // Fork agent — 复制内置 Agent 为用户自定义副本
@@ -249,7 +244,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post<{ Params: { id: string } }>("/api/agents/:id/fork", async (request, reply) => {
     const source = ctx.agentManager.getAgent(request.params.id);
     if (!source) {
-      return reply.status(404).send({ error: "Agent not found" });
+      return Errors.notFound(reply, "Agent not found");
     }
 
     const sourceConfig = source.config as unknown as Record<string, unknown>;
@@ -279,7 +274,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
       forked = ctx.agentManager.createAgent(forkedConfig as unknown as Parameters<typeof ctx.agentManager.createAgent>[0]);
     } catch (err) {
       app.log.error({ sourceId: source.id, err }, "Fork createAgent failed");
-      return reply.status(500).send({ error: "Fork 创建失败" });
+      return Errors.internal(reply, "Fork 创建失败");
     }
 
     try {
@@ -288,12 +283,12 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
       // 持久化失败，回滚内存中的 Agent
       app.log.error({ forkedId: forked.id, err }, "Fork saveAgentConfig failed, rolling back");
       ctx.agentManager.deleteAgent(forked.id);
-      return reply.status(500).send({ error: "Fork 持久化失败，已回滚" });
+      return Errors.internal(reply, "Fork 持久化失败，已回滚");
     }
 
     logConfigChange("config.agent.fork", sanitizeForAudit({ sourceId: source.id, forkedId: forked.id }), forked.id);
     // SEC-P0-04：响应前脱敏。
-    return reply.status(201).send({ agent: sanitizeAgentState(forked.state) });
+    return sendSuccess(reply, { agent: sanitizeAgentState(forked.state) });
   });
 
   // P2-4: 查询某个 Agent 的所有 Fork 副本
@@ -301,7 +296,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     const sourceId = request.params.id;
     const source = ctx.agentManager.getAgent(sourceId);
     if (!source) {
-      return reply.status(404).send({ error: "Agent not found" });
+      return Errors.notFound(reply, "Agent not found");
     }
 
     // 遍历所有 Agent，找到 metadata.forkedFrom === sourceId 的
@@ -310,6 +305,6 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
       return meta?.forkedFrom === sourceId;
     });
 
-    return { forks, count: forks.length };
+    return sendSuccess(reply, { forks, count: forks.length });
   });
 }

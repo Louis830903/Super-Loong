@@ -97,8 +97,8 @@ export class ContextSummarizer {
   private summaryRatio: number;
   private failureCooldownSeconds: number;
 
-  /** 上一次压缩的摘要文本，用于迭代更新（学 Hermes _previous_summary） */
-  private previousSummary: string | null = null;
+  /** 按 sessionId 隔离的摘要文本（学 Hermes _previous_summary），避免跨会话污染 */
+  private previousSummary: Map<string, string> = new Map();
   /** 摘要失败冷却期截止时间戳（ms）。冷却期内不再尝试摘要。 */
   private failureCooldownUntil = 0;
 
@@ -114,9 +114,13 @@ export class ContextSummarizer {
     this.llmProvider = provider;
   }
 
-  /** 重置摘要状态（会话重置时调用） */
-  reset(): void {
-    this.previousSummary = null;
+  /** 重置指定会话的摘要状态 */
+  reset(sessionId?: string): void {
+    if (sessionId) {
+      this.previousSummary.delete(sessionId);
+    } else {
+      this.previousSummary.clear();
+    }
     this.failureCooldownUntil = 0;
   }
 
@@ -207,7 +211,7 @@ export class ContextSummarizer {
    *
    * @returns 带 SUMMARY_PREFIX 的摘要文本，或 null（失败时）
    */
-  async generateSummary(turns: LLMMessage[]): Promise<string | null> {
+  async generateSummary(turns: LLMMessage[], sessionId?: string): Promise<string | null> {
     if (!this.llmProvider) {
       logger.debug("No LLM provider configured for summarization, skipping");
       return null;
@@ -243,15 +247,19 @@ export class ContextSummarizer {
 
     const template = buildSummaryTemplate(summaryBudget);
 
+    // 按 sessionId 获取隔离的 previousSummary
+    const sessId = sessionId ?? "__default__";
+    const prevSummary = this.previousSummary.get(sessId) ?? null;
+
     let prompt: string;
-    if (this.previousSummary) {
+    if (prevSummary) {
       // 迭代更新：保留现有信息，添加新进展（学 Hermes iterative update）
       prompt = `${summarizerPreamble}
 
 你正在更新一个上下文压缩摘要。之前的压缩生成了下方的摘要，此后发生了新的对话轮次，需要被合入。
 
 之前的摘要：
-${this.previousSummary}
+${prevSummary}
 
 需要合入的新轮次：
 ${contentToSummarize}
@@ -285,16 +293,17 @@ ${template}`;
         return null;
       }
 
-      // 存储用于迭代更新
-      this.previousSummary = summary;
+      // 存储用于迭代更新（按 sessionId 隔离）
+      this.previousSummary.set(sessId, summary);
       this.failureCooldownUntil = 0;
 
       logger.info(
         {
+          sessionId: sessId,
           inputTurns: turns.length,
           summaryLength: summary.length,
           budgetTokens: summaryBudget,
-          isIterativeUpdate: !!this.previousSummary,
+          isIterativeUpdate: !!prevSummary,
         },
         "Context summary generated",
       );

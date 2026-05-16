@@ -90,9 +90,25 @@ export class EvolutionBudget {
   // ─── 周期管理 ──────────────────────────────────────────────
 
   /**
+   * 检查是否已有活跃的进化周期在运行。
+   * 用于防止 analyzeFailures 和 triggerReview 并发消耗预算。
+   */
+  isCycleActive(): boolean {
+    return this._cycleStartTime !== null;
+  }
+
+  /**
    * 新周期开始前检查：是否在冷却期 / 是否超过连续周期上限
    */
   canStartCycle(): BudgetCheckResult {
+    // P2-T15: 检查是否已有活跃周期（防止 analyzeFailures 和 triggerReview 并发消耗预算）
+    if (this.isCycleActive()) {
+      return {
+        blocked: true,
+        reason: "已有一个进化周期正在运行，避免重复消耗预算",
+      };
+    }
+
     // 检查冷却期
     if (this._lastCycleEndTime) {
       const cooldownMs = this.config.cooldownMinutes * 60_000;

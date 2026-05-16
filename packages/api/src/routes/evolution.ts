@@ -29,6 +29,7 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 // ─── Zod Schemas ──────────────────────────────────────────────
 
@@ -103,7 +104,7 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post("/api/evolution/interactions", async (req, reply) => {
     const parsed = RecordInteractionSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const body = parsed.data;
 
@@ -119,15 +120,15 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
       failureCategory: body.failureCategory as any,
     });
 
-    return reply.send(result);
+    return sendSuccess(reply, result);
   });
 
   app.get("/api/evolution/interactions", async (_req, reply) => {
-    return reply.send(engine.cases.getAllCases());
+    return sendSuccess(reply, engine.cases.getAllCases());
   });
 
   app.get("/api/evolution/interactions/failures", async (_req, reply) => {
-    return reply.send({
+    return sendSuccess(reply, {
       cases: engine.cases.getFailureCases(),
       byCategory: engine.cases.getFailuresByCategory(),
     });
@@ -137,18 +138,18 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.post("/api/evolution/analyze", async (_req, reply) => {
     const proposals = await engine.analyzeFailures();
-    return reply.send({ proposals, count: proposals.length });
+    return sendSuccess(reply, { proposals, count: proposals.length });
   });
 
   app.post("/api/evolution/review", async (req, reply) => {
     const parsed = ReviewSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const body = parsed.data;
     const agentId = resolveAgentId(body.agentId);
     if (!agentId) {
-      return reply.status(400).send({ error: "没有可用的 Agent，请先创建一个" });
+      return Errors.badRequest(reply, "没有可用的 Agent，请先创建一个");
     }
 
     try {
@@ -157,11 +158,11 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
         reviewSkills: body.reviewSkills,
         conversationContext: body.conversationContext,
       });
-      return reply.send(result);
+      return sendSuccess(reply, result);
     } catch (err: any) {
       // API-P1-03：内部栈仅进日志，对外通用文案
       app.log.error({ route: "/api/evolution/review", err }, "Review 执行失败");
-      return reply.status(500).send({ error: "Review 执行失败" });
+      return Errors.internal(reply, "Review 执行失败");
     }
   });
 
@@ -169,12 +170,12 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post("/api/evolution/flush", async (req, reply) => {
     const parsed = FlushSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const body = parsed.data;
     const agentId = resolveAgentId(body.agentId);
     if (!agentId) {
-      return reply.status(400).send({ error: "没有可用的 Agent，请先创建一个" });
+      return Errors.badRequest(reply, "没有可用的 Agent，请先创建一个");
     }
 
     try {
@@ -182,10 +183,10 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
         conversationMessages: body.messages ?? [],
         currentMemoryState: body.currentMemoryState,
       });
-      return reply.send(result);
+      return sendSuccess(reply, result);
     } catch (err: any) {
       app.log.error({ route: "/api/evolution/flush", err }, "Flush 执行失败");
-      return reply.status(500).send({ error: "Flush 执行失败" });
+      return Errors.internal(reply, "Flush 执行失败");
     }
   });
 
@@ -196,28 +197,28 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
     const proposals = engine.getProposals(
       query.status ? { status: query.status as any } : undefined,
     );
-    return reply.send({ proposals });
+    return sendSuccess(reply, { proposals });
   });
 
   app.post("/api/evolution/proposals/:id/approve", async (req, reply) => {
     const { id } = req.params as { id: string };
     const result = await engine.approveProposal(id);
-    if (!result) return reply.status(404).send({ error: "Proposal not found" });
-    return reply.send(result);
+    if (!result) return Errors.notFound(reply, "Proposal not found");
+    return sendSuccess(reply, result);
   });
 
   app.post("/api/evolution/proposals/:id/reject", async (req, reply) => {
     const { id } = req.params as { id: string };
     const result = engine.rejectProposal(id);
-    if (!result) return reply.status(404).send({ error: "Proposal not found" });
-    return reply.send(result);
+    if (!result) return Errors.notFound(reply, "Proposal not found");
+    return sendSuccess(reply, result);
   });
 
   app.post("/api/evolution/proposals/:id/apply", async (req, reply) => {
     const { id } = req.params as { id: string };
     const result = await engine.applyProposal(id);
-    if (!result) return reply.status(404).send({ error: "Proposal not found or apply failed" });
-    return reply.send(result);
+    if (!result) return Errors.notFound(reply, "Proposal not found or apply failed");
+    return sendSuccess(reply, result);
   });
 
   // 代码提案专用审批端点：人工审核通过后执行沙箱验证 + 源码修改
@@ -226,17 +227,17 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
     try {
       // Step 1: 标记人工审核通过
       const approved = engine.approveCodeProposal(id);
-      if (!approved) return reply.status(404).send({ error: "Proposal not found or not a code proposal" });
+      if (!approved) return Errors.notFound(reply, "Proposal not found or not a code proposal");
 
       // Step 2: 执行沙箱验证 + 自修改引擎写入
       const result = await engine.applyCodeProposal(id);
       if (!result) {
-        return reply.status(400).send({ error: "代码提案应用失败（沙箱验证未通过或写入错误）" });
+        return Errors.badRequest(reply, "代码提案应用失败（沙箱验证未通过或写入错误）");
       }
-      return reply.send(result);
+      return sendSuccess(reply, result);
     } catch (err: any) {
       app.log.error({ route: "/api/evolution/proposals/:id/approve-code", err }, "代码提案应用异常");
-      return reply.status(500).send({ error: "代码提案应用失败" });
+      return Errors.internal(reply, "代码提案应用失败");
     }
   });
 
@@ -245,11 +246,11 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post("/api/evolution/snapshots", async (req, reply) => {
     const body = (req.body ?? {}) as { label?: string };
     const snapshot = engine.takeSnapshot(body.label);
-    return reply.send(snapshot);
+    return sendSuccess(reply, snapshot);
   });
 
   app.get("/api/evolution/snapshots", async (_req, reply) => {
-    return reply.send({
+    return sendSuccess(reply, {
       snapshots: engine.getSnapshots(),
       best: engine.getBestSnapshot(),
     });
@@ -258,33 +259,33 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   app.delete("/api/evolution/snapshots/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const ok = engine.deleteSnapshot(id);
-    if (!ok) return reply.status(404).send({ error: "Snapshot not found" });
-    return reply.send({ success: true });
+    if (!ok) return Errors.notFound(reply, "Snapshot not found");
+    return sendSuccess(reply, { success: true });
   });
 
   // ─── Config & Stats ────────────────────────────────────────
 
   app.get("/api/evolution/stats", async (_req, reply) => {
-    return reply.send(engine.getStats());
+    return sendSuccess(reply, engine.getStats());
   });
 
   app.get("/api/evolution/nudge/config", async (_req, reply) => {
-    return reply.send(engine.nudge.getConfig());
+    return sendSuccess(reply, engine.nudge.getConfig());
   });
 
   app.put("/api/evolution/nudge/config", async (req, reply) => {
     const parsed = NudgeConfigSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     engine.nudge.updateConfig(parsed.data);
-    return reply.send(engine.nudge.getConfig());
+    return sendSuccess(reply, engine.nudge.getConfig());
   });
 
   // ─── 分析器 LLM 配置（Provider+Model 选择，纯 LLM 调用不走 Agent）────
 
   app.get("/api/evolution/analyzer/config", async (_req, reply) => {
-    return reply.send(engine.getAnalyzerLlm());
+    return sendSuccess(reply, engine.getAnalyzerLlm());
   });
 
   app.put("/api/evolution/analyzer/config", async (req, reply) => {
@@ -294,23 +295,23 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
       const { getProviderById } = await import("@super-agent/core");
       const providerDef = getProviderById(body.providerId);
       if (!providerDef) {
-        return reply.status(400).send({ error: `Provider ${body.providerId} 不存在` });
+        return Errors.badRequest(reply, `Provider ${body.providerId} 不存在`);
       }
       // 校验 modelId 是否属于该 provider
       if (body.modelId) {
         const modelExists = providerDef.models?.some((m: { id: string }) => m.id === body.modelId);
         if (!modelExists) {
-          return reply.status(400).send({ error: `Model ${body.modelId} 不属于 Provider ${body.providerId}` });
+          return Errors.badRequest(reply, `Model ${body.modelId} 不属于 Provider ${body.providerId}`);
         }
       }
     }
     engine.setAnalyzerLlm(body.providerId ?? null, body.modelId ?? null);
-    return reply.send(engine.getAnalyzerLlm());
+    return sendSuccess(reply, engine.getAnalyzerLlm());
   });
 
   // ─── 已配置的 Provider 列表（含模型目录，供前端分析器下拉选择）────
 
-  app.get("/api/evolution/analyzer/providers", async () => {
+  app.get("/api/evolution/analyzer/providers", async (_request, reply) => {
     const { getModelCatalog } = await import("@super-agent/core");
     const catalog = getModelCatalog();
     const records = ctx.providerStore.list();
@@ -327,7 +328,7 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
         models: p.models?.map((m: { id: string; name: string }) => ({ id: m.id, name: m.name })) ?? [],
       }));
 
-    return { providers: result };
+    return sendSuccess(reply, { providers: result });
   });
 
   // ─── 原始代码读取（审查 P0-2: 为前端 before/after diff 提供数据）────
@@ -335,14 +336,14 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post("/api/evolution/code/read", async (req, reply) => {
     const body = (req.body ?? {}) as { modulePath?: string; targetName?: string };
     if (!body.modulePath) {
-      return reply.status(400).send({ error: "modulePath 不能为空" });
+      return Errors.badRequest(reply, "modulePath 不能为空");
     }
     try {
       const code = engine.readCodeProposal(body.modulePath, body.targetName);
-      return reply.send({ code });
+      return sendSuccess(reply, { code });
     } catch (err: any) {
       app.log.error({ route: "/api/evolution/code/read", err }, "读取原始代码失败");
-      return reply.status(500).send({ error: "读取原始代码失败" });
+      return Errors.internal(reply, "读取原始代码失败");
     }
   });
 
@@ -357,15 +358,15 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
     }
     const parsed = SearchSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const { query, sessionFilter, roleFilter, limit } = parsed.data;
     try {
       const results = await ctx.sessionSearch.search(query, { sessionFilter, roleFilter: roleFilter as any, limit });
-      return reply.send({ results, count: results.length });
+      return sendSuccess(reply, { results, count: results.length });
     } catch (err: any) {
       app.log.error({ route: "/api/evolution/search", err }, "搜索失败");
-      return reply.status(500).send({ error: "搜索失败" });
+      return Errors.internal(reply, "搜索失败");
     }
   });
 
@@ -376,16 +377,16 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
     }
     const parsed = ExtractSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     try {
       // 从 CaseCollector 获取交互案例作为提取源
       const cases = engine.cases.getAllCases().slice(-(parsed.data.maxCases ?? 100));
       const result = await ctx.knowledgeExtractor.extractFromCases(cases);
-      return reply.send(result);
+      return sendSuccess(reply, result);
     } catch (err: any) {
       app.log.error({ route: "/api/evolution/extract", err }, "知识提取失败");
-      return reply.status(500).send({ error: "知识提取失败" });
+      return Errors.internal(reply, "知识提取失败");
     }
   });
 
@@ -403,10 +404,10 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
         fromDate: query.fromDate ? new Date(query.fromDate) : undefined,
         toDate: query.toDate ? new Date(query.toDate) : undefined,
       });
-      return reply.send(report);
+      return sendSuccess(reply, report);
     } catch (err: any) {
       app.log.error({ route: "/api/evolution/insights", err }, "Insights 生成失败");
-      return reply.status(500).send({ error: "Insights 生成失败" });
+      return Errors.internal(reply, "Insights 生成失败");
     }
   });
 
@@ -417,19 +418,19 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
     }
     const parsed = VerifySchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     try {
       const proposals = engine.getProposals();
       const proposal = proposals.find((p) => p.id === parsed.data.proposalId);
       if (!proposal) {
-        return reply.status(404).send({ error: "Proposal not found" });
+        return Errors.notFound(reply, "Proposal not found");
       }
       const result = await ctx.verificationPipeline.verify(proposal);
-      return reply.send(result);
+      return sendSuccess(reply, result);
     } catch (err: any) {
       app.log.error({ route: "/api/evolution/verify", err }, "验证执行失败");
-      return reply.status(500).send({ error: "验证执行失败" });
+      return Errors.internal(reply, "验证执行失败");
     }
   });
 
@@ -438,7 +439,7 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!ctx.verificationPipeline) {
       return reply.status(501).send({ error: "VerificationPipeline 未初始化" });
     }
-    return reply.send({
+    return sendSuccess(reply, {
       history: ctx.verificationPipeline.getHistory(),
       stats: ctx.verificationPipeline.getStats(),
       rollbacks: ctx.verificationPipeline.getRollbacks(),

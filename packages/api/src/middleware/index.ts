@@ -212,6 +212,6 @@ export async function registerMiddleware(
   await registerTracing(app);
   await registerRequestLogging(app);
   await registerErrorHandler(app);
-  await registerNotFoundHandler(app);
+  // P4-T2 审查修正: registerNotFoundHandler 移除，index.ts 已在生产模式设置 SPA 兜底 + 404
   await registerRateLimit(app, options?.rateLimit);
 }

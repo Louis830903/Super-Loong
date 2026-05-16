@@ -148,8 +148,16 @@ export async function registerWebSocket(app: FastifyInstance, ctx: AppContext): 
         return;
       }
       try {
-        const decoded = (app as unknown as { jwt: { verify: (t: string) => unknown } }).jwt.verify(token);
-        const payload = decoded as { role?: string } | null;
+        // 使用 Fastify 原生 jwt 插件进行类型安全的令牌校验
+        const fastifyApp = app as unknown as { jwt?: { verify: (t: string) => unknown } };
+        if (!fastifyApp.jwt || typeof fastifyApp.jwt.verify !== "function") {
+          app.log.warn("WebSocket rejected: JWT plugin not registered");
+          send(socket, { type: "error", error: "Authentication not available" });
+          socket.close(4001, "Unauthorized");
+          return;
+        }
+        const decoded = fastifyApp.jwt.verify(token);
+        const payload = (decoded && typeof decoded === "object") ? (decoded as { role?: string }) : null;
         if (!payload) {
           send(socket, { type: "error", error: "Unauthorized: invalid token" });
           socket.close(4001, "Unauthorized");
@@ -434,8 +442,11 @@ export async function registerWebSocket(app: FastifyInstance, ctx: AppContext): 
           }
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : String(error);
+          app.log.error({ error: errMsg }, "WS chat stream error");
           if (socket.readyState === 1) {
-            send(socket, { type: "error", requestId, error: errMsg });
+            send(socket, { type: "error", requestId,
+              error: process.env.NODE_ENV === "production" ? "处理请求时发生错误" : errMsg,
+            });
           }
         }
         return;

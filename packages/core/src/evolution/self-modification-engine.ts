@@ -66,6 +66,8 @@ export interface CodeSnapshot {
   timestamp: string;
   /** 关联提案 ID */
   proposalId: string;
+  /** P3-T3: 快照是否损坏（备份文件丢失或无法读取） */
+  broken?: boolean;
 }
 
 /** 模块清单项 */
@@ -206,10 +208,14 @@ export class SelfModificationEngine {
 
     if (snapshotId) {
       snapshot = this.snapshots.get(snapshotId);
+      // P3-T3: 指定快照已损坏则拒绝回滚
+      if (snapshot?.broken) {
+        return { success: false, operation: "modify", error: "Snapshot is broken (backup file missing)" };
+      }
     } else {
-      // 找最近的快照
+      // 找最近的未损坏快照
       const entries = Array.from(this.snapshots.values())
-        .filter((s) => s.modulePath === modulePath && s.targetName === targetName)
+        .filter((s) => s.modulePath === modulePath && s.targetName === targetName && !s.broken)
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       snapshot = entries[0];
     }
@@ -246,6 +252,7 @@ export class SelfModificationEngine {
       modules.push(...result.split("\n").filter(Boolean));
     } catch {
       // git 不可用时跳过
+      logger.debug("git ls-files unavailable, skipping git-based module discovery");
     }
 
     const moduleInfos: ModuleInfo[] = modules.slice(0, 50).map((path) => ({
@@ -324,33 +331,93 @@ export class SelfModificationEngine {
 
   /**
    * 从源码中提取指定函数的完整定义
+   *
+   * P0 安全加固：使用 brace counting 替代正确定位函数结束位置，
+   * 排除字符串/模板字面量/注释中的花括号干扰。
    */
   private extractFunction(content: string, targetName: string): string {
-    // 简化的函数提取（基于正则，非 AST）
-    const patterns = [
+    // 构建函数签名匹配正则（不含函数体）
+    const signaturePatterns = [
       // export function / async function
-      new RegExp(
-        `(?:export\\s+)?(?:async\\s+)?function\\s+${this.escapeRegex(targetName)}\\s*\\([^)]*\\)\\s*(?::\\s*[^{]+)?\\s*\\{[\\s\\S]*?\\n\\}`,
-        "m"
-      ),
+      `(?:export\\s+)?(?:async\\s+)?function\\s+${this.escapeRegex(targetName)}\\s*\\([^)]*\\)\\s*(?::\\s*[^{]+)?\\s*\\{`,
       // class method
-      new RegExp(
-        `(?:async\\s+)?${this.escapeRegex(targetName)}\\s*\\([^)]*\\)\\s*(?::\\s*[^{]+)?\\s*\\{[\\s\\S]*?\\n\\s*\\}`,
-        "m"
-      ),
+      `(?:async\\s+)?${this.escapeRegex(targetName)}\\s*\\([^)]*\\)\\s*(?::\\s*[^{]+)?\\s*\\{`,
       // arrow function const
-      new RegExp(
-        `(?:export\\s+)?const\\s+${this.escapeRegex(targetName)}\\s*[:=]\\s*(?:async\\s+)?\\([^)]*\\)\\s*(?::\\s*[^=]+)?\\s*=>\\s*\\{[\\s\\S]*?\\n\\}`,
-        "m"
-      ),
+      `(?:export\\s+)?const\\s+${this.escapeRegex(targetName)}\\s*[:=]\\s*(?:async\\s+)?\\([^)]*\\)\\s*(?::\\s*[^=]+)?\\s*=>\\s*\\{`,
     ];
 
-    for (const pattern of patterns) {
-      const match = content.match(pattern);
-      if (match) return match[0];
+    for (const sigPattern of signaturePatterns) {
+      const sigRe = new RegExp(sigPattern, "m");
+      const sigMatch = content.match(sigRe);
+      if (!sigMatch || sigMatch.index === undefined) continue;
+
+      // 找到开大括号的位置
+      const openBracePos = sigMatch.index + sigMatch[0].length - 1; // '{' 是匹配串的最后一个字符
+      // 从开大括号后开始 brace counting
+      const extracted = this.extractBracedBlock(content, openBracePos);
+      if (extracted) return sigMatch[0].slice(0, -1) + extracted; // 去掉 sigMatch 末尾的 '{'，拼接完整块
     }
 
     return `// Function '${targetName}' not found in source\n`;
+  }
+
+  /**
+   * 从源码中 brace counting 提取匹配的闭合块。
+   * 跳过字符串、模板字面量、注释中的花括号。
+   */
+  private extractBracedBlock(content: string, openBracePos: number): string | null {
+    let depth = 1;
+    let pos = openBracePos + 1;
+    let inSingleString = false;
+    let inDoubleString = false;
+    let inTemplate = false;
+    let inLineComment = false;
+    let inBlockComment = false;
+
+    while (pos < content.length && depth > 0) {
+      const ch = content[pos];
+      const prev = pos > 0 ? content[pos - 1] : "";
+
+      // 注释状态跟踪
+      if (!inSingleString && !inDoubleString && !inTemplate) {
+        if (!inBlockComment && !inLineComment && ch === "/" && content[pos + 1] === "/") {
+          inLineComment = true; pos += 2; continue;
+        }
+        if (!inLineComment && !inBlockComment && ch === "/" && content[pos + 1] === "*") {
+          inBlockComment = true; pos += 2; continue;
+        }
+        if (inBlockComment && ch === "*" && content[pos + 1] === "/") {
+          inBlockComment = false; pos += 2; continue;
+        }
+        if (inLineComment && ch === "\n") {
+          inLineComment = false;
+        }
+      }
+
+      if (inLineComment || inBlockComment) { pos++; continue; }
+
+      // 字符串状态跟踪
+      if (!inDoubleString && !inTemplate && ch === "'" && prev !== "\\") {
+        inSingleString = !inSingleString;
+      } else if (!inSingleString && !inTemplate && ch === '"' && prev !== "\\") {
+        inDoubleString = !inDoubleString;
+      } else if (!inSingleString && !inDoubleString && ch === "`" && prev !== "\\") {
+        inTemplate = !inTemplate;
+      }
+
+      // 在字符串内，跳过花括号计数
+      if (inSingleString || inDoubleString || inTemplate) { pos++; continue; }
+
+      // 花括号计数
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+
+      pos++;
+    }
+
+    if (depth !== 0) return null; // 未找到匹配的闭合括号
+
+    return content.slice(openBracePos, pos); // 包含闭合的 '}'
   }
 
   /**
@@ -479,10 +546,18 @@ export class SelfModificationEngine {
       backupPath,
       timestamp: new Date().toISOString(),
       proposalId: meta.proposalId,
+      // P3-T3: 备份失败时标记为 broken，回滚时跳过
+      broken: !existsSync(backupPath),
     };
 
+    if (snapshot.broken) {
+      logger.warn({ id, modulePath: meta.modulePath, targetName: meta.targetName },
+        "Snapshot created but backup file missing (marked as broken)");
+    } else {
+      logger.info({ id, modulePath: meta.modulePath, targetName: meta.targetName }, "Snapshot created");
+    }
+
     this.snapshots.set(id, snapshot);
-    logger.info({ id, modulePath: meta.modulePath, targetName: meta.targetName }, "Snapshot created");
     return id;
   }
 

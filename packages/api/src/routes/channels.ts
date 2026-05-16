@@ -14,6 +14,7 @@ import { ChannelConfigSchema, saveChannel, loadChannels, deleteChannel as delete
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AppContext } from "../context.js";
+import { sendSuccess, sendError, Errors } from "./response-helper.js";
 
 // B-18: 从 SQLite 加载已持久化的 channel 配置
 const channels = new Map<string, { id: string; config: Record<string, unknown>; status: string }>();
@@ -38,41 +39,38 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
     return h;
   };
 
-  app.get("/api/channels", async () => {
-    return { channels: Array.from(channels.values()) };
+  app.get("/api/channels", async (_req, reply) => {
+    return sendSuccess(reply, { channels: Array.from(channels.values()) });
   });
 
   app.get<{ Params: { id: string } }>("/api/channels/:id", async (request, reply) => {
     const channel = channels.get(request.params.id);
     if (!channel) {
-      return reply.status(404).send({ error: "Channel not found" });
+      return Errors.notFound(reply, "Channel not found");
     }
-    return { channel };
+    return sendSuccess(reply, { channel });
   });
 
   app.post("/api/channels", async (request, reply) => {
     const parsed = ChannelConfigSchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: "Invalid channel configuration",
-        details: parsed.error.flatten(),
-      });
+      return Errors.badRequest(reply, "Invalid channel configuration", parsed.error.flatten());
     }
     const id = `ch_${randomUUID().slice(0, 8)}`;
     const channel = { id, config: parsed.data, status: "configuring" as const };
     channels.set(id, channel);
     // B-18: 持久化到 SQLite
     try { saveChannel(channel); } catch { /* best-effort */ }
-    return reply.status(201).send({ channel });
+    return sendSuccess(reply, { channel }, 201);
   });
 
   app.delete<{ Params: { id: string } }>("/api/channels/:id", async (request, reply) => {
     if (!channels.delete(request.params.id)) {
-      return reply.status(404).send({ error: "Channel not found" });
+      return Errors.notFound(reply, "Channel not found");
     }
     // B-18: 从 SQLite 也删除
     try { deleteChannelDB(request.params.id); } catch { /* best-effort */ }
-    return { success: true };
+    return sendSuccess(reply, { success: true });
   });
 
   // ===== IM Gateway v2 代理端点（Schema 驱动） =====
@@ -84,12 +82,12 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
         signal: AbortSignal.timeout(timeout),
         headers: gatewayHeaders(),
       });
-      if (!resp.ok) return reply.status(resp.status).send({ error: `Gateway ${resp.status}` });
-      return await resp.json();
+      if (!resp.ok) return sendError(reply, resp.status, "GATEWAY_ERROR", `Gateway ${resp.status}`);
+      return sendSuccess(reply, await resp.json());
     } catch (e: any) {
       // API-P1-03：Gateway 异常仅进日志，响应体不回显内部错误详情
       reply.log.warn({ path, err: e }, "IM Gateway proxyGET failed");
-      return reply.status(502).send({ error: "IM Gateway unavailable" });
+      return Errors.badGateway(reply, "IM Gateway unavailable");
     }
   };
 
@@ -109,17 +107,20 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
       } catch {
         // Gateway 返回了非 JSON（如纯文本 500 "Internal Server Error"）
         const brief = text.length > 200 ? text.slice(0, 200) + "..." : text;
-        return reply.status(resp.ok ? 502 : resp.status).send({
-          error: `Gateway returned non-JSON (${resp.status})`,
-          detail: brief,
-        });
+        return sendError(
+          reply,
+          resp.ok ? 502 : resp.status,
+          "GATEWAY_NON_JSON",
+          `Gateway returned non-JSON (${resp.status})`,
+          brief,
+        );
       }
-      if (!resp.ok) return reply.status(resp.status).send(data);
-      return data;
+      if (!resp.ok) return sendError(reply, resp.status, "GATEWAY_ERROR", `Gateway returned ${resp.status}`, data);
+      return sendSuccess(reply, data);
     } catch (e: any) {
       // API-P1-03：Gateway 异常仅进日志，响应体不回显内部错误详情
       reply.log.warn({ path, err: e }, "IM Gateway proxyPOST failed");
-      return reply.status(502).send({ error: "IM Gateway unavailable" });
+      return Errors.badGateway(reply, "IM Gateway unavailable");
     }
   };
 
@@ -128,12 +129,12 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get("/api/gateway/health", async (_req, reply) => {
     try {
       const resp = await fetch(`${IM_GATEWAY_URL}/health`, { signal: AbortSignal.timeout(5000) });
-      if (!resp.ok) return { status: "offline", error: `Gateway returned ${resp.status}` };
-      return await resp.json();
+      if (!resp.ok) return sendSuccess(reply, { status: "offline", error: `Gateway returned ${resp.status}` });
+      return sendSuccess(reply, await resp.json());
     } catch (e: any) {
       // API-P1-03：连接异常栈仅进日志，响应体给通用离线状态
       app.log.warn({ err: e }, "IM Gateway health check failed");
-      return { status: "offline", error: "Gateway unreachable" };
+      return sendSuccess(reply, { status: "offline", error: "Gateway unreachable" });
     }
   });
 
@@ -200,7 +201,7 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
     // 兼容旧格式：{platform, config} → 新格式：/channels/{id}/connect {credentials}
     const body = request.body as any;
     const channelId = body?.platform;
-    if (!channelId) return reply.status(400).send({ error: "Missing platform" });
+    if (!channelId) return Errors.badRequest(reply, "Missing platform");
     return proxyPOST(`/api/gateway/channels/${channelId}/connect`, {
       credentials: body?.config?.extra || body?.config || {},
     }, reply);
@@ -229,9 +230,8 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
     // 2. 从持久化 Map 获取连接配置（B-18 已实现 SQLite 持久化 + 启动时 loadFromDB）
     const channelConfig = channels.get(platform);
     if (!channelConfig?.config || Object.keys(channelConfig.config).length === 0) {
-      return reply.status(400).send({
-        error: `No saved configuration for platform "${platform}". Cannot restart without config.`,
-      });
+      return Errors.badRequest(reply,
+        `No saved configuration for platform "${platform}". Cannot restart without config.`);
     }
 
     // 3. 使用持久化配置重新连接
@@ -243,24 +243,22 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
         signal: AbortSignal.timeout(10000),
       });
       const connectData: any = await connectRes.json();
-      return reply.send({ status: "restarted", platform, connection: connectData });
+      return sendSuccess(reply, { status: "restarted", platform, connection: connectData });
     } catch (err: any) {
       // API-P1-03：reconnect 异常栈仅进日志，响应体不拼接底层错误信息
       app.log.error({ platform, err }, "Reconnect failed during restart");
-      return reply.status(502).send({
-        error: "Restart failed: disconnect OK but reconnect failed",
-      });
+      return Errors.badGateway(reply, "Restart failed: disconnect OK but reconnect failed");
     }
   });
 
   // Health/system info
 
   // 轻量 ping 端点 — 仅返回 API 存活状态，不调用 Gateway（打破循环依赖）
-  app.get("/api/ping", async () => {
-    return { status: "ok", uptime: process.uptime() };
+  app.get("/api/ping", async (_req, reply) => {
+    return sendSuccess(reply, { status: "ok", uptime: process.uptime() });
   });
 
-  app.get("/api/system/health", async () => {
+  app.get("/api/system/health", async (_req, reply) => {
     let gatewayStatus = "offline";
     let gatewayHealth: Record<string, unknown> = {};
     try {
@@ -279,7 +277,7 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
         reconnect: gwData.reconnect,
       };
     } catch {}
-    return {
+    return sendSuccess(reply, {
       status: "ok",
       agents: ctx.agentManager.count,
       skills: ctx.skillLoader.listSkills().length,
@@ -287,12 +285,12 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
       sessions: ctx.agentManager.listAgents().length,
       gateway: gatewayHealth,
       uptime: process.uptime(),
-    };
+    });
   });
 
-  app.get("/v1/models", async () => {
+  app.get("/v1/models", async (_req, reply) => {
     const agents = ctx.agentManager.listAgents();
-    return {
+    return sendSuccess(reply, {
       object: "list",
       data: agents.map((a) => ({
         id: a.config.name,
@@ -300,7 +298,7 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
         created: Math.floor(a.createdAt.getTime() / 1000),
         owned_by: "super-agent",
       })),
-    };
+    });
   });
 
   // ─── Task 4.1: 路由绑定管理（MessageRouter 渠道 → Agent 映射）─────────
@@ -312,33 +310,33 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   // 列出所有路由绑定
-  app.get("/api/router/bindings", async () => {
-    return { bindings: ctx.router.listBindings() };
+  app.get("/api/router/bindings", async (_req, reply) => {
+    return sendSuccess(reply, { bindings: ctx.router.listBindings() });
   });
 
   // 添加路由绑定
   app.post("/api/router/bindings", async (req, reply) => {
     const parsed = BindingSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     // 验证 Agent 存在
     const agent = ctx.agentManager.getAgent(parsed.data.agentId);
     if (!agent) {
-      return reply.status(404).send({ error: `Agent not found: ${parsed.data.agentId}` });
+      return Errors.notFound(reply, `Agent not found: ${parsed.data.agentId}`);
     }
     ctx.router.addBinding(parsed.data);
-    return reply.status(201).send({ success: true, binding: parsed.data });
+    return sendSuccess(reply, { success: true, binding: parsed.data }, 201);
   });
 
   // 删除路由绑定
   app.delete("/api/router/bindings", async (req, reply) => {
     const body = (req.body ?? {}) as { channelId?: string; agentId?: string };
     if (!body.channelId || !body.agentId) {
-      return reply.status(400).send({ error: "需要提供 channelId 和 agentId" });
+      return Errors.badRequest(reply, "需要提供 channelId 和 agentId");
     }
     ctx.router.removeBinding(body.channelId, body.agentId);
-    return reply.send({ success: true });
+    return sendSuccess(reply, { success: true });
   });
 
   app.log.info("Route binding management endpoints registered (Task 4.1)");

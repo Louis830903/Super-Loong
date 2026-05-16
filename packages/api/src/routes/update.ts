@@ -7,6 +7,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { checkForUpdates, installUpdate, detectRunMode } from "@super-agent/core";
+import { sendSuccess, Errors } from "./response-helper.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,21 +26,15 @@ export function updateRoutes(app: FastifyInstance): void {
     const result = await checkForUpdates(undefined, 5000);
 
     if (!result.success) {
-      return reply.status(400).send({
-        error: "无法检查更新，请稍后重试",
-      });
+      return Errors.badRequest(reply, "无法检查更新，请稍后重试");
     }
 
     if (!result.outdated || !result.latest) {
-      return reply.status(400).send({
-        error: "Already up to date",
-        current: result.current,
-      });
+      return sendSuccess(reply, { message: "Already up to date", current: result.current });
     }
 
     if (!result.downloadUrl) {
-      return reply.status(400).send({
-        error: "Download URL not available",
+      return Errors.badRequest(reply, "Download URL not available", {
         message: "请前往 Release 页面手动下载",
         releaseUrl: result.releaseUrl,
       });
@@ -60,15 +55,11 @@ export function updateRoutes(app: FastifyInstance): void {
 
     if (!installResult.success) {
       app.log.error({ error: installResult.error }, "Update installation failed");
-      return reply.status(500).send({
-        status: "error",
-        error: installResult.error,
-        stage: installResult.stage,
-      });
+      return Errors.internal(reply, installResult.error ?? "Installation failed", { stage: installResult.stage });
     }
 
     // 3. 返回成功，API 随后退出
-    reply.send({
+    sendSuccess(reply, {
       status: "installing",
       version: result.latest,
       message: "Update started, service will restart",

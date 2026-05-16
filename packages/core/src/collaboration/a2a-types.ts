@@ -156,6 +156,13 @@ export interface A2AMessage {
   referenceTaskIds?: string[];
   /** 自定义元数据 */
   metadata?: Record<string, unknown>;
+  // ─── P0 安全加固：消息签名字段（可选，向后兼容） ───
+  /** 签名时间戳（毫秒，Unix epoch） */
+  timestamp?: number;
+  /** 一次性随机数（防重放，UUID v4） */
+  nonce?: string;
+  /** HMAC-SHA256 签名（hex 编码） */
+  signature?: string;
 }
 
 // ─── Artifact ───────────────────────────────────────────────

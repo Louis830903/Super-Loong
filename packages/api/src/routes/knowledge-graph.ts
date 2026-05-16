@@ -15,6 +15,7 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 // ─── Zod Schemas ──────────────────────────────────────────────
 
@@ -59,7 +60,7 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
   app.get("/api/knowledge/stats", async (_req, reply) => {
     const err = guard();
     if (err) return reply.status(err.code).send({ error: err.error });
-    return reply.send({
+    return sendSuccess(reply, {
       tripleCount: kg!.countTriples(),
     });
   });
@@ -73,12 +74,12 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
     const { name } = req.params as { name: string };
     const entityId = kg!.findEntityId(decodeURIComponent(name));
     if (entityId == null) {
-      return reply.status(404).send({ error: `实体 "${name}" 不存在` });
+      return Errors.notFound(reply, `实体 "${name}" 不存在`);
     }
 
     const outgoing = kg!.getOutgoing(entityId);
     const incoming = kg!.getIncoming(entityId);
-    return reply.send({ entityId, name, outgoing, incoming });
+    return sendSuccess(reply, { entityId, name, outgoing, incoming });
   });
 
   // ─── POST /api/knowledge/search ───────────────────────────
@@ -89,11 +90,11 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
 
     const parsed = SubgraphSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const { rootId, maxDepth } = parsed.data;
     const subgraph = kg!.subgraph(rootId, maxDepth ?? 3);
-    return reply.send(subgraph);
+    return sendSuccess(reply, subgraph);
   });
 
   // ─── POST /api/knowledge/path ─────────────────────────────
@@ -104,11 +105,11 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
 
     const parsed = PathSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const { fromId, toId, maxHops } = parsed.data;
     const pathEdges = kg!.findPath(fromId, toId, maxHops ?? 5);
-    return reply.send({ path: pathEdges, hops: pathEdges.length });
+    return sendSuccess(reply, { path: pathEdges, hops: pathEdges.length });
   });
 
   // ─── GET /api/knowledge/export ────────────────────────────
@@ -123,7 +124,7 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
     const format = (query.format ?? "json") as "json" | "mermaid" | "graphml";
 
     if (!["json", "mermaid", "graphml"].includes(format)) {
-      return reply.status(400).send({ error: "format 须为 json、mermaid 或 graphml" });
+      return Errors.badRequest(reply, "format 须为 json、mermaid 或 graphml");
     }
 
     const result = kg!.exportSubgraph(rootId, depth, format);
@@ -132,7 +133,7 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
     if (format === "mermaid" || format === "graphml") {
       return reply.type("text/plain").send(result);
     }
-    return reply.send(JSON.parse(result));
+    return sendSuccess(reply, JSON.parse(result));
   });
 
   // ─── POST /api/knowledge/triples ──────────────────────────
@@ -143,10 +144,10 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
 
     const parsed = AddTripleSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const id = kg!.addTriple(parsed.data);
-    return reply.status(201).send({ id });
+    return sendSuccess(reply, { id }, 201);
   });
 
   // ─── DELETE /api/knowledge/triples ────────────────────────
@@ -157,15 +158,15 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
 
     const parsed = DeleteTripleSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
 
     if (parsed.data.tripleId) {
       const ok = kg!.removeTriple(parsed.data.tripleId);
-      return reply.send({ deleted: ok ? 1 : 0 });
+      return sendSuccess(reply, { deleted: ok ? 1 : 0 });
     } else {
       const count = kg!.removeBySource(parsed.data.source!);
-      return reply.send({ deleted: count });
+      return sendSuccess(reply, { deleted: count });
     }
   });
 

@@ -10,6 +10,7 @@
 
 import pino from "pino";
 import type { SandboxBackend, SandboxResult } from "./sandbox.js";
+import { validateShellArg } from "./shell-arg-security.js";
 
 const logger = pino({ name: "ssh-sandbox" });
 
@@ -43,6 +44,9 @@ export class SSHSandbox implements SandboxBackend {
 
   constructor(config: SSHSandboxConfig, maxConcurrent = 5) {
     this.config = { ...DEFAULT_CONFIG, ...config } as SSHSandboxConfig;
+    // P0-A3: 对 workDir 进行 shell 注入防护校验，防止路径中的特殊字符拼入 shell 命令
+    const workDirErr = validateShellArg(this.config.workDir, "shell_safe", "SSH workDir");
+    if (workDirErr) throw new Error(`SSH sandbox 参数校验失败: ${workDirErr}`);
     this.maxConcurrent = maxConcurrent;
   }
 

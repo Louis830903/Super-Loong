@@ -28,9 +28,9 @@ export {
   isMaskedApiKey,
 } from "./agent/sanitize.js";
 
-// Builtin Expert Agents（211 个内置专家 Agent）
-export { builtinAgentCatalog, DEPT_LABELS, DEPARTMENTS, ensureBuiltinAgents } from "./builtin-agents/index.js";
-export type { BuiltinAgentEntry } from "./builtin-agents/index.js";
+// Builtin Expert Agents（211 个内置专家 Agent，P4-T4 懒加载）
+export { builtinAgentCatalog, builtinAgentCatalogMeta, getBuiltinSystemPrompt, getCachedSystemPrompt, DEPT_LABELS, DEPARTMENTS, ensureBuiltinAgents } from "./builtin-agents/index.js";
+export type { BuiltinAgentEntry, BuiltinAgentMeta } from "./builtin-agents/index.js";
 
 // LLM
 export { LLMProvider } from "./llm/index.js";
@@ -217,6 +217,7 @@ export { InMemoryAgentRegistry, SqliteAgentRegistry } from "./collaboration/agen
 export type { IAgentRegistry, AgentRegistryEntry, DiscoverFilter } from "./collaboration/agent-registry.js";
 export { A2AClient, A2AClientError } from "./collaboration/a2a-client.js";
 export type { A2AAuthConfig } from "./collaboration/a2a-client.js";
+export { signA2AMessage, verifyA2AMessage, messagePayload } from "./collaboration/a2a-signature.js";
 
 // Video Crew Schemas & Prompts (Phase 2)
 export {

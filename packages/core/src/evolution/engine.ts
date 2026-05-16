@@ -19,15 +19,10 @@
 import { v4 as uuid } from "uuid";
 import pino from "pino";
 import { EventEmitter } from "eventemitter3";
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import type { AgentManager } from "../agent/manager.js";
-import type { AgentRuntime } from "../agent/runtime.js";
-import { scanSkill, shouldAllowInstall, type ScanResult } from "../skills/guard.js";
-import { parseSkillFile } from "../skills/parser.js";
 import { getContentText } from "../utils/content-helpers.js";
 import { RiskEngine } from "./risk-engine.js";
-import type { RiskScore, RiskDecision } from "./risk-engine.js";
+import type { RiskDecision } from "./risk-engine.js";
 import { safeJsonParseAny } from "../utils/json-guard.js";
 import { EvolutionBudget } from "./evolution-budget.js";
 import { LLMProvider } from "../llm/provider.js";
@@ -41,16 +36,40 @@ import { RefinementOperator } from "./operators/refinement.js";
 import { SelfModificationEngine } from "./self-modification-engine.js";
 import { SandboxExecutor } from "./sandbox-executor.js";
 import { EvolutionLock } from "./evolution-lock.js";
-import { WorkflowEngine, type WorkflowDefinition } from "./workflow-engine.js";
+import { WorkflowEngine } from "./workflow-engine.js";
 // Phase 6 (Task 6.4): 策略缓存与提示词自适应
-import { ProgressiveAutomation, type AutomationLevel } from "./progressive-automation.js";
+import { ProgressiveAutomation } from "./progressive-automation.js";
 import { SessionContinuityManager } from "./session-continuity.js";
-import type { PendingTask } from "./session-continuity.js";
 // P1-1 瘦身: 策略学习器提取到独立模块
 import { StrategyLearner } from "./strategy-learner.js";
 import type { StrategyCacheEntry, ToolPatternStats, PromptFeedbackEntry } from "./strategy-learner.js";
 // P1-2: 编码委托器
 import { CodingDelegator } from "./coding-delegator.js";
+// P2-T17: prompt 注入扫描（flushBeforeReset 记忆状态安全门控）
+import { scanMemoryContent, sanitizeMemoryContent } from "../prompt/injection-guard.js";
+// P4-T1a: review prompts 提取到独立文件
+import {
+  MEMORY_REVIEW_PROMPT,
+  SKILL_REVIEW_PROMPT,
+  COMBINED_REVIEW_PROMPT,
+  ANALYSIS_PROMPT,
+} from "./review-prompts.js";
+// P4-T1b: 提案验证逻辑提取到独立模块
+import {
+  validateProposal as validateProposalImpl,
+  scoreProposal as scoreProposalImpl,
+} from "./proposal-validator.js";
+// P4-T1c: 提案解析逻辑提取到独立模块
+import {
+  extractFirstJsonObject,
+  parseProposals as parseProposalsImpl,
+} from "./proposal-parser.js";
+// P4-T1d: 提案应用逻辑提取到独立模块
+import {
+  applyProposal as applyProposalImpl,
+  applyCodeProposal as applyCodeProposalImpl,
+  type ApplierContext,
+} from "./proposal-applier.js";
 
 const logger = pino({ name: "evolution" });
 
@@ -117,6 +136,8 @@ export interface SkillProposal {
     newCode: string;
     /** 操作类型 */
     operation: "modify" | "add" | "delete";
+    /** P2-T16: delete 操作的审计快照（被删除函数的原始源码），用于审计和恢复，不覆盖 newCode */
+    auditSnapshot?: string;
   };
   /** Task 3.5: 是否需要人工审核 */
   requiresHumanReview?: boolean;
@@ -384,92 +405,6 @@ export class CaseCollector {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Review Prompts (Hermes-style)
-// ═══════════════════════════════════════════════════════════════
-
-const MEMORY_REVIEW_PROMPT = `Review the conversation above and consider saving to memory if appropriate.
-
-Focus on:
-1. Has the user revealed things about themselves — persona, desires, preferences, or personal details worth remembering?
-2. Has the user expressed expectations about how you should behave, their work style, or ways they want you to operate?
-
-If something stands out, save it using the memory tool. If nothing is worth saving, just say "Nothing to save." and stop.`;
-
-const SKILL_REVIEW_PROMPT = `Review the conversation above and consider creating or updating a skill if appropriate.
-
-Focus on: was a non-trivial approach used that required trial and error, or changing course due to findings along the way, or did the user expect a different method or outcome?
-
-If a relevant skill already exists, suggest how to update it. Otherwise, propose a new skill if the approach is reusable.
-If nothing is worth saving, just say "Nothing to save." and stop.
-
-Respond in JSON format:
-{
-  "action": "create" | "update" | "no_change",
-  "skillName": "<snake_case_name>",
-  "description": "<what the skill does>",
-  "content": "<markdown skill content>",
-  "reasoning": "<why this skill is valuable>",
-  "skillType": "common_mistake" | "task_specific" | "general"
-}`;
-
-const COMBINED_REVIEW_PROMPT = `Review the conversation above and consider two things:
-
-**Memory**: Has the user revealed personal preferences, working style, or expectations about your behavior? If so, save using the memory tool.
-
-**Skills**: Was a non-trivial approach used that required trial and error, or did the user expect a different method? If so, propose a skill.
-
-Only act if there's something genuinely worth saving. If nothing stands out, say "Nothing to save." and stop.`;
-
-// ═══════════════════════════════════════════════════════════════
-// Evolution Analysis Prompts (MemSkill-style)
-// ═══════════════════════════════════════════════════════════════
-
-const ANALYSIS_PROMPT = `You are an expert analyst for an AI Agent system. Analyze the failure cases below to identify why the agent failed and how its skills should evolve.
-
-## Failure Categories
-- **skill_gap**: The agent lacks a skill/technique needed for this task
-- **wrong_tool**: The agent used the wrong tool or approach
-- **bad_response**: The agent's response quality was poor
-- **timeout**: The agent ran out of iterations
-- **other**: Miscellaneous failures
-
-## Failure Cases ({{count}} cases)
-{{cases}}
-
-## Analysis Instructions
-1. Group failures into patterns by root cause
-2. For each pattern, identify if a new skill would help or an existing skill needs improvement
-3. Propose concrete, actionable skill changes
-4. Classify each proposal into one of three skill types:
-   - **common_mistake**: Recurring errors to avoid (highest ROI — prevent repeat failures)
-   - **task_specific**: Skills tied to a specific domain/task
-   - **general**: Broad techniques reusable across domains
-
-Respond in JSON:
-{
-  "patterns": [
-    {
-      "name": "<pattern name>",
-      "cases": [<case IDs>],
-      "rootCause": "<skill_gap|wrong_tool|bad_response|timeout|other>",
-      "explanation": "<why this pattern occurs>",
-      "proposedFix": "<what skill change would help>"
-    }
-  ],
-  "proposals": [
-    {
-      "action": "create" | "update",
-      "skillName": "<name>",
-      "description": "<what the skill does>",
-      "content": "<skill content in markdown>",
-      "reasoning": "<how this addresses the failures>",
-      "skillType": "common_mistake" | "task_specific" | "general"
-    }
-  ],
-  "summary": "<1-2 sentence summary>"
-}`;
-
-// ═══════════════════════════════════════════════════════════════
 // Evolution Engine (Unified)
 // ═══════════════════════════════════════════════════════════════
 
@@ -551,6 +486,28 @@ export class EvolutionEngine extends EventEmitter {
     // P1-2: 编码委托器（供外部调用委托 AI 编程任务）
     this.codingDelegator = new CodingDelegator();
     this.providerStore = providerStore;
+  }
+
+  /**
+   * P4-T1d: 为 proposal-applier 模块提供的上下文适配器
+   */
+  private get _applierContext(): ApplierContext {
+    return {
+      proposals: this.proposals,
+      skillsDir: this.skillsDir,
+      budget: this.budget,
+      evoLock: this.evoLock,
+      sandbox: this.sandbox,
+      selfModification: this.selfModification,
+      validateProposal: (p) => this.validateProposal(p),
+      emit: (event, data) => this.emit(event, data),
+      takeSnapshot: () => this.takeSnapshot(),
+      incrementAppliedCount: () => {
+        this._proposalsAppliedSinceSnapshot++;
+        return this._proposalsAppliedSinceSnapshot;
+      },
+      AUTO_SNAPSHOT_INTERVAL: EvolutionEngine.AUTO_SNAPSHOT_INTERVAL,
+    };
   }
 
   // ─── Interaction Recording ──────────────────────────────────
@@ -916,9 +873,10 @@ export class EvolutionEngine extends EventEmitter {
       // Try to parse skill proposals from response
       if (options.reviewSkills) {
         try {
-          const jsonMatch = response.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const parsed = safeJsonParseAny(jsonMatch[0], "engine-review-skills");
+          // P2-T11: brace counting 替代贪婪正则，精确提取第一个完整 JSON 对象
+          const jsonStr = extractFirstJsonObject(response);
+          if (jsonStr) {
+            const parsed = safeJsonParseAny(jsonStr, "engine-review-skills");
             if (parsed && typeof parsed === "object") {
               const data = parsed as Record<string, unknown>;
               if (data.action && data.action !== "no_change") {
@@ -944,6 +902,7 @@ export class EvolutionEngine extends EventEmitter {
           }
         } catch {
           // Response wasn't JSON, that's ok — might be "Nothing to save."
+          logger.debug("LLM response was not valid JSON during review, treating as non-actionable");
         }
         this.pruneProposals(); // C-4: 淘汰超限提案
       }
@@ -995,6 +954,18 @@ Review the conversation above and:
 
     // 注入当前记忆状态（防覆盖，学 Hermes run.py:780-789）
     if (options.currentMemoryState) {
+      // P2-T17: 对 currentMemoryState 进行 prompt 注入扫描
+      // currentMemoryState 可能来自 LLM 输出，含恶意注入内容
+      const scanResult = scanMemoryContent(options.currentMemoryState);
+      if (!scanResult.safe) {
+        logger.warn({
+          findings: scanResult.findings,
+          threatCount: scanResult.threats.length,
+        }, "Current memory state contains injection threats, sanitizing before flush");
+        // 降级：使用 sanitized version（移除 XML fence-breaking tags）
+        options.currentMemoryState = sanitizeMemoryContent(options.currentMemoryState);
+      }
+
       flushPrompt += `IMPORTANT \u2014 here is the current live state of memory. Do NOT overwrite or remove entries unless the conversation above reveals something that genuinely supersedes them. Only add new information.
 ${options.currentMemoryState}
 
@@ -1079,104 +1050,7 @@ ${options.currentMemoryState}
    * 沙箱验证 + 自修改引擎 + 人工审核闸门链路。
    */
   async applyProposal(proposalId: string): Promise<SkillProposal | null> {
-    const p = this.proposals.get(proposalId);
-    if (!p) return null;
-    if (p.status === "applied") return p; // Already applied
-
-    // 源码级提案委托到 applyCodeProposal（沙箱 + 自修改引擎 + 人工审核）
-    if (p.targetCode) {
-      return this.applyCodeProposal(proposalId);
-    }
-
-    // Spec v3 Task 8: 应用前验证
-    const validation = this.validateProposal(p);
-    p.validationResult = validation;
-    if (!validation.valid) {
-      p.status = "rejected";
-      this.emit("proposal:rejected", { ...p, reason: "validation_failed", errors: validation.errors });
-      logger.warn({ proposalId, errors: validation.errors }, "Proposal rejected by validation");
-      return p;
-    }
-
-    // Spec v3 Task 8: 质量评分门槛检查
-    if (p.qualityScore !== undefined && p.qualityScore < 40) {
-      p.status = "rejected";
-      this.emit("proposal:rejected", { ...p, reason: "low_quality", score: p.qualityScore });
-      logger.warn({ proposalId, score: p.qualityScore }, "Proposal rejected: quality score too low");
-      return p;
-    }
-
-    try {
-      // Task 1.4: 文件修改配额检查
-      const fileCheck = this.budget.recordFileModification();
-      if (fileCheck.blocked) {
-        logger.warn({ proposalId, reason: fileCheck.reason }, "File modification blocked by budget");
-        return null;
-      }
-
-      // Ensure skills directory exists
-      if (!existsSync(this.skillsDir)) {
-        mkdirSync(this.skillsDir, { recursive: true });
-      }
-
-      const safeName = p.skillName.replace(/[^a-zA-Z0-9_-]/g, "_");
-      const filePath = join(this.skillsDir, `${safeName}.md`);
-
-      if (p.action === "patch" && p.patchOperations?.length && existsSync(filePath)) {
-        // Phase B-3: Patch 模式——增量修改（学 Hermes _patch_skill）
-        let content = readFileSync(filePath, "utf-8");
-        for (const op of p.patchOperations) {
-          if (!content.includes(op.oldString)) {
-            logger.warn({ skillName: p.skillName, oldString: op.oldString.slice(0, 50) },
-              "Patch target not found in skill file");
-            continue;
-          }
-          content = content.replace(op.oldString, op.newString);
-        }
-        writeFileSync(filePath, content, "utf-8");
-      } else {
-        // Create / Update 模式：全量写入（现有逻辑）
-        const frontmatterLines = [
-          "---",
-          `name: ${p.skillName}`,
-          `description: ${p.description}`,
-          `version: "1.0.0"`,
-          `generated_by: evolution_engine`,
-          `action: ${p.action}`,
-          `created_at: ${p.createdAt.toISOString()}`,
-          `applied_at: ${new Date().toISOString()}`,
-        ];
-        // Task 1.2: 三层技能库分类标记
-        if (p.skillType) {
-          frontmatterLines.push(`category: ${p.skillType}`);
-        }
-        const fileContent = [
-          ...frontmatterLines,
-          "---",
-          "",
-          p.content,
-          "",
-        ].join("\n");
-        writeFileSync(filePath, fileContent, "utf-8");
-      }
-
-      p.status = "applied";
-      this.emit("proposal:applied", { ...p, filePath });
-      // Phase B-3: 通知缓存清除钩子（供 C-4 使用）
-      this.emit("skill:changed", { skillName: p.skillName, action: p.action });
-      // C-3: 自动快照（每应用 N 个提案后自动创建快照）
-      this._proposalsAppliedSinceSnapshot++;
-      if (this._proposalsAppliedSinceSnapshot >= EvolutionEngine.AUTO_SNAPSHOT_INTERVAL) {
-        this._proposalsAppliedSinceSnapshot = 0;
-        this.takeSnapshot();
-      }
-      logger.info({ proposalId, skillName: p.skillName, action: p.action, filePath }, "Skill proposal applied");
-      return p;
-    } catch (err: any) {
-      logger.error({ proposalId, error: err.message }, "Failed to apply skill proposal");
-      // Don't change status on write failure
-      return null;
-    }
+    return applyProposalImpl(proposalId, this._applierContext);
   }
 
   /** Mark a proposal as applied (alias for applyProposal — actually deploys) */
@@ -1195,86 +1069,7 @@ ${options.currentMemoryState}
    *   verifyCompile（单文件 tsc 编译验证）→ 失败自动 rollback
    */
   async applyCodeProposal(proposalId: string): Promise<SkillProposal | null> {
-    const p = this.proposals.get(proposalId);
-    if (!p?.targetCode) return null;
-    if (p.status === "applied") return p;
-
-    // Task 3.5（审查修正）: 人工审核闸门——所有操作类型（modify/add/delete）必须人工审核
-    // 修正P0：增加 status !== "approved" 判断，区分"尚未审核"与"已审核通过"两种状态，
-    // 避免 approveCodeProposal 设置 requiresHumanReview=false 后再次误触发闸门导致死循环
-    if (!p.requiresHumanReview && p.status !== "approved") {
-      p.requiresHumanReview = true;
-      const opLabel = { modify: "modification", add: "addition", delete: "deletion" }[p.targetCode.operation] ?? "change";
-      p.reviewReason = `Code ${opLabel} proposals require human review before application`;
-
-      // delete 额外审计增强：将被删除函数的源码写入 newCode 字段，保留在审计日志中
-      if (p.targetCode.operation === "delete") {
-        const deletedContent = this.selfModification.readLogic(
-          p.targetCode.modulePath,
-          p.targetCode.targetName,
-        );
-        p.targetCode.newCode = deletedContent; // 覆盖 newCode 为被删除源码，便于恢复
-        logger.info({ proposalId, targetName: p.targetCode.targetName },
-          "Delete proposal: captured original source for audit");
-      }
-
-      this.emit("proposal:needs_review", { proposalId, reason: p.reviewReason });
-      logger.info({ proposalId, operation: p.targetCode.operation },
-        "Code proposal flagged for human review");
-      return p;
-    }
-
-    // Task 3.4: 进化锁保护
-    const result = await this.evoLock.withLock(async () => {
-      // Task 3.2: 沙箱安全扫描（防御第一层：括号匹配、危险模式检测）
-      // 修正P1：delete 操作跳过 scanContent，因为 newCode 已被覆盖为被删除函数的旧源码，
-      // 不应因旧代码含危险模式而拒绝删除提案（删除危险代码恰是进化引擎的目标）
-      if (p.targetCode!.operation !== "delete") {
-        const scanResult = this.sandbox.scanContent(p.targetCode!.newCode);
-        if (!scanResult.passed) {
-          logger.warn({ proposalId, errors: scanResult.errors }, "Sandbox scan failed");
-          p.status = "rejected";
-          return null;
-        }
-      }
-
-      // 执行源码修改（写入 + 自动快照）
-      const changeResult = this.selfModification.adjustLogic({
-        modulePath: p.targetCode!.modulePath,
-        targetName: p.targetCode!.targetName,
-        newCode: p.targetCode!.newCode,
-        operation: p.targetCode!.operation,
-        proposalId: p.id,
-      });
-
-      if (!changeResult.success) {
-        logger.warn({ proposalId, error: changeResult.error }, "Code modification failed");
-        return null;
-      }
-
-      // 审查修正：写入后立即用 tsc 编译验证新代码（修复原 P0 bug——旧代码未经验证）
-      const compileCheck = await this.sandbox.verifyCompile(changeResult.filePath!);
-      if (!compileCheck.passed) {
-        logger.warn({ proposalId, errors: compileCheck.errors },
-          "Code proposal failed compile verification, auto-rolling back");
-        // 自动回滚到快照
-        this.selfModification.rollback(
-          p.targetCode!.modulePath,
-          p.targetCode!.targetName,
-          changeResult.snapshotId,
-        );
-        p.status = "rejected";
-        return null;
-      }
-
-      p.status = "applied";
-      this.emit("proposal:code_applied", { ...p, snapshotId: changeResult.snapshotId });
-      logger.info({ proposalId, operation: p.targetCode!.operation, modulePath: p.targetCode!.modulePath },
-        "Code proposal applied and compile-verified");
-      return p;
-    }, `proposal_${proposalId}`);
-
-    return result;
+    return applyCodeProposalImpl(proposalId, this._applierContext);
   }
 
   /**
@@ -1380,139 +1175,20 @@ ${options.currentMemoryState}
   }
 
   // ─── Proposal Validation (Spec v3 Task 8) ─────────────────
+  // P4-T1b: 核心逻辑已提取到 proposal-validator.ts，类方法保留为薄包装
 
   /**
    * 应用前验证 — 检查提案内容的完整性和安全性
-   * 对标 Hermes 安装策略矩阵 + OpenClaw eligibility 评估
    */
   private validateProposal(proposal: SkillProposal): { valid: boolean; errors: string[]; scanVerdict?: string } {
-    const errors: string[] = [];
-
-    // 1. 完整性检查: name + description 必须存在
-    if (!proposal.skillName || proposal.skillName.trim().length === 0) {
-      errors.push("Missing skill name");
-    }
-    if (!proposal.description || proposal.description.trim().length === 0) {
-      errors.push("Missing skill description");
-    }
-    if (!proposal.content || proposal.content.trim().length === 0) {
-      errors.push("Empty skill content");
-    }
-
-    // 2. 内容安全扫描: 调用 guard.scanSkill 检查威胁模式
-    let scanVerdict: string | undefined;
-    try {
-      // 为了扫描内容，构造临时的 YAML frontmatter + content
-      const tempContent = [
-        "---",
-        `name: ${proposal.skillName}`,
-        `description: ${proposal.description}`,
-        `version: "1.0.0"`,
-        "---",
-        "",
-        proposal.content,
-      ].join("\n");
-
-      // 尝试解析 frontmatter 确保有效
-      const parsed = parseSkillFile(tempContent);
-      if (!parsed.frontmatter.name) {
-        errors.push("Frontmatter parsing failed: no name");
-      }
-
-      // 内容威胁扫描（纯文本模式——不需要实际目录）
-      // 我们对 proposal.content 做快速威胁模式匹配
-      scanVerdict = this.quickContentScan(proposal.content);
-      if (scanVerdict === "dangerous") {
-        errors.push(`Security scan: dangerous content detected`);
-      }
-    } catch (err: any) {
-      // 解析失败不阻止应用，但记录警告
-      logger.debug({ err: err.message }, "Proposal content parse warning");
-    }
-
-    // 3. Task 1.1: 风险评分引擎
-    const fixType = proposal.action === "patch" ? "patch" : "heal";
-    const riskResult = this.riskEngine.score(proposal.skillName, proposal.description, fixType);
-    proposal.riskScore = riskResult.score;
-    proposal.riskDecision = riskResult.decision;
-
-    // escalate 级别自动拒绝
-    if (riskResult.decision === "escalate") {
-      errors.push(`Risk escalated: score=${riskResult.score}, profile=${riskResult.profile}`);
-      proposal.status = "rejected";
-      this.emit("proposal:escalated", { ...proposal, riskResult });
-      logger.warn({ proposalId: proposal.id, riskResult }, "Proposal escalated and auto-rejected");
-    }
-
-    return { valid: errors.length === 0, errors, scanVerdict };
-  }
-
-  /**
-   * 快速内容威胁扫描（纯文本模式，不需要目录）
-   * 检查关键威胁模式: rm -rf、反向 shell、curl|bash 等
-   */
-  private quickContentScan(content: string): string {
-    const criticalPatterns = [
-      /\brm\s+-rf\s+\/|\brm\s+-rf\s+~/i,
-      /\b(nc|ncat|netcat)\b.*-[elp]|\bbash\s+-i\s+>&\s*\/dev\/tcp/i,
-      /curl\s+.*\|\s*(ba)?sh|wget\s+.*\|\s*(ba)?sh/i,
-      /ignore\s+(all\s+)?previous\s+(instructions|prompts|rules)/i,
-      /-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----/i,
-      /\bxmrig\b|\bcpuminer\b|stratum\+tcp:\/\//i,
-    ];
-
-    const highPatterns = [
-      /\bsudo\b\s+(?!-l\b)/,
-      /\.bashrc|\.bash_profile|\.zshrc/i,
-      /\beval\b\s*\(/i,
-      /base64\s+-d\s*\|/i,
-    ];
-
-    for (const line of content.split("\n")) {
-      for (const p of criticalPatterns) {
-        if (p.test(line)) return "dangerous";
-      }
-    }
-
-    for (const line of content.split("\n")) {
-      for (const p of highPatterns) {
-        if (p.test(line)) return "caution";
-      }
-    }
-
-    return "safe";
+    return validateProposalImpl(proposal, this.riskEngine, (event, data) => this.emit(event, data));
   }
 
   /**
    * 计算提案质量评分 (Spec v3 Task 8)
-   * 基于内容完整性、描述质量、安全性等因素
    */
   scoreProposal(proposal: SkillProposal): number {
-    let score = 50; // 基准分
-
-    // +20: 有完整的 name + description
-    if (proposal.skillName && proposal.skillName.length > 2) score += 10;
-    if (proposal.description && proposal.description.length > 10) score += 10;
-
-    // +15: 内容长度合理 (50-5000 字符)
-    const len = proposal.content?.length ?? 0;
-    if (len >= 50 && len <= 5000) score += 15;
-    else if (len > 5000) score += 5; // 太长扣分
-    else score -= 10; // 太短扣分
-
-    // +15: 有推理理由
-    if (proposal.reasoning && proposal.reasoning.length > 20) score += 15;
-
-    // -30: 安全扫描危险
-    const verdict = this.quickContentScan(proposal.content ?? "");
-    if (verdict === "dangerous") score -= 30;
-    else if (verdict === "caution") score -= 10;
-
-    // +10: 基于实际失败案例
-    if (proposal.basedOnCases && proposal.basedOnCases.length > 0) score += 10;
-
-    // 限制在 0-100
-    return Math.max(0, Math.min(100, score));
+    return scoreProposalImpl(proposal);
   }
 
   // ─── Snapshots ─────────────────────────────────────────────
@@ -1541,6 +1217,8 @@ ${options.currentMemoryState}
     }
 
     this.emit("snapshot:created", snapshot);
+    // P4-T1 审查修正: 快照后重置计数器，防止每个后续提案都触发快照
+    this._proposalsAppliedSinceSnapshot = 0;
     return snapshot;
   }
 
@@ -1933,6 +1611,7 @@ Respond in JSON:
       }
     } catch {
       /* 加载失败不影响引擎初始化 */
+      logger.debug("Failed to load analyzer config from persistence, using defaults");
     }
   }
 
@@ -1944,39 +1623,8 @@ Respond in JSON:
     return agents.length > 0 ? agents[0].id : null;
   }
 
+  // P4-T1c: 核心逻辑已提取到 proposal-parser.ts
   private parseProposals(response: string, cases: InteractionCase[]): SkillProposal[] {
-    const proposals: SkillProposal[] = [];
-    try {
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) return proposals;
-
-      const parsed = safeJsonParseAny(jsonMatch[0], "engine-parse-proposals");
-      if (!parsed || typeof parsed !== "object") return proposals;
-      const data = parsed as Record<string, unknown>;
-      const rawProposals = (data.proposals as Array<Record<string, unknown>>) ?? [];
-
-      for (const item of rawProposals) {
-        const raw = item as Record<string, unknown>;
-        if (!raw.action || raw.action === "no_change") continue;
-        proposals.push({
-          id: `prop_${uuid().slice(0, 8)}`,
-          action: raw.action as SkillProposal["action"],
-          skillName: (raw.skillName as string) ?? "unnamed",
-          description: (raw.description as string) ?? "",
-          content: (raw.content as string) ?? "",
-          reasoning: (raw.reasoning as string) ?? "",
-          basedOnCases: cases.slice(0, 5).map((c) => c.id),
-          status: "pending",
-          createdAt: new Date(),
-          // Phase B-3: 解析 patch 操作
-          patchOperations: raw.patchOperations as SkillProposal["patchOperations"],
-          // Task 1.2: 三层技能库类型
-          skillType: raw.skillType as SkillProposal["skillType"],
-        });
-      }
-    } catch {
-      logger.warn("Failed to parse evolution analysis response as JSON");
-    }
-    return proposals;
+    return parseProposalsImpl(response, cases);
   }
 }

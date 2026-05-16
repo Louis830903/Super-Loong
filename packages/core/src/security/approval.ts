@@ -11,6 +11,7 @@
  */
 
 import pino from "pino";
+import { randomUUID } from "node:crypto";
 import type { CommandGuardResult } from "./command-guard.js";
 
 const logger = pino({ name: "approval" });
@@ -124,7 +125,7 @@ export function requestApproval(
   sessionKey: string,
   timeoutMs = 300_000,
 ): Promise<ApprovalResult> {
-  const id = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const id = `approval-${Date.now()}-${randomUUID().slice(0, 8)}`; // P3-T7: 安全随机数替代 Math.random()
 
   return new Promise((resolve) => {
     const entry: ApprovalEntry = {
@@ -157,15 +158,29 @@ export function requestApproval(
 
 /**
  * 解决审批请求（用户通过网关/CLI 批准或拒绝）
+ * 
+ * P3-T4: 新增 resolverSessionKey 参数用于身份验证，
+ * 确保审批人与创建审批请求的用户属于同一会话。
  */
 export function resolveApproval(
   entryId: string,
   approved: boolean,
   scope: ApprovalScope = "once",
   resolvedBy?: string,
+  resolverSessionKey?: string,
 ): boolean {
   const pending = _pendingApprovals.get(entryId);
   if (!pending) return false;
+
+  // P3-T4: 审批人身份验证 — resolver 的 session 必须与审批请求的 session 一致
+  if (resolverSessionKey && resolverSessionKey !== pending.entry.sessionKey) {
+    logger.warn({
+      entryId,
+      expectedSession: pending.entry.sessionKey?.slice(0, 8),
+      actualSession: resolverSessionKey.slice(0, 8),
+    }, "审批人 session 与审批请求 session 不匹配，拒绝操作");
+    return false;
+  }
 
   const { entry, resolve } = pending;
   entry.status = approved ? "approved" : "denied";

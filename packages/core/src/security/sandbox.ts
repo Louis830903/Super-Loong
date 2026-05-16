@@ -24,6 +24,8 @@
 import { v4 as uuid } from "uuid";
 import pino from "pino";
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { EventEmitter } from "eventemitter3";
 
 import { saveSecurityPolicy, loadSecurityPolicies, deleteSecurityPolicy as deleteSecurityPolicyDB, saveCredentialToDB, loadCredentialsFromDB, deleteCredentialFromDB } from "../persistence/sqlite.js";
@@ -198,7 +200,7 @@ export class ProcessSandbox {
     // P1-08: Use vm.runInNewContext to restrict available APIs in sandbox
     // FIX: Use resolve/reject callbacks to correctly propagate async results from VM context
     const workerCode = `
-import { createContext, runInNewContext } from 'node:vm';
+import { createContext, compileFunction } from 'node:vm';
 // Sandbox worker — receives code + args, executes in restricted VM context
 process.on('message', async (msg) => {
   try {
@@ -221,11 +223,15 @@ process.on('message', async (msg) => {
       _reject,
       code: msg.code,
     };
-    runInNewContext(
-      '(async () => { try { const fn = new Function("args", code); const r = await fn(args); _resolve(r); } catch(e) { _reject(e); } })()',
-      sandbox,
-      { timeout: 30000 },
-    );
+    // P1-07: 使用 compileFunction 替代 new Function，限制沙箱上下文
+    try {
+      const ctx = createContext(sandbox);
+      const fn = compileFunction(msg.code, ['args'], { parsingContext: ctx });
+      const r = await fn(msg.args);
+      _resolve(r);
+    } catch(e) {
+      _reject(e);
+    }
     const result = await resultPromise;
     process.send({ success: true, output: String(result ?? ''), data: result });
   } catch (err) {
@@ -665,13 +671,26 @@ export class SecurityManager extends EventEmitter {
   private executionCount: number = 0;
   private deniedCount: number = 0;
   private maxAuditEntries: number;
+  /** P4-T6: 审计日志 JSONL 文件路径（为空则仅内存记录） */
+  private auditFilePath: string | null = null;
 
-  constructor(options?: { masterKey?: string; maxAuditEntries?: number; maxConcurrentSandboxes?: number }) {
+  constructor(options?: { masterKey?: string; maxAuditEntries?: number; maxConcurrentSandboxes?: number; dataDir?: string }) {
     super();
     this.vault = new CredentialVault(options?.masterKey);
     this.tokenProxy = new TokenProxy(this.vault);
     this.sandbox = new ProcessSandbox(options?.maxConcurrentSandboxes ?? 10);
     this.maxAuditEntries = options?.maxAuditEntries ?? 10000;
+
+    // P4-T6: 若指定 dataDir，启用审计日志 JSONL 持久化
+    if (options?.dataDir) {
+      const dir = options.dataDir;
+      if (!existsSync(dir)) {
+        try { mkdirSync(dir, { recursive: true }); } catch { /* 目录创建失败则降级为仅内存 */ }
+      }
+      if (existsSync(dir)) {
+        this.auditFilePath = join(dir, "security-audit.jsonl");
+      }
+    }
 
     // Create default policy
     this.policies.set("default", {
@@ -853,6 +872,15 @@ export class SecurityManager extends EventEmitter {
     // Trim if exceeded max
     if (this.auditLog.length > this.maxAuditEntries) {
       this.auditLog = this.auditLog.slice(-this.maxAuditEntries);
+    }
+
+    // P4-T6: 持久化到 JSONL 文件，确保重启后审计记录不丢失
+    if (this.auditFilePath) {
+      try {
+        appendFileSync(this.auditFilePath, JSON.stringify(entry) + "\n", "utf-8");
+      } catch {
+        // 文件写入失败不阻塞主流程
+      }
     }
 
     this.emit("audit:entry", entry);

@@ -21,6 +21,7 @@
 import type { FastifyInstance } from "fastify";
 import { searchMemoriesFTS } from "@super-agent/core";
 import type { AppContext } from "../context.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
   const { memoryManager } = ctx;
@@ -34,7 +35,7 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
   /** List memories */
   app.get<{
     Querystring: { agentId?: string; userId?: string; type?: string; limit?: string };
-  }>("/api/memory", async (request) => {
+  }>("/api/memory", async (request, reply) => {
     const { agentId, userId, type, limit } = request.query;
     const entries = await memoryManager.list({
       agentId,
@@ -42,10 +43,10 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
       type: type as any,
     });
     const max = parseInt(limit ?? "100", 10);
-    return {
+    return sendSuccess(reply, {
       memories: entries.slice(0, max),
       total: entries.length,
-    };
+    });
   });
 
   /** Create a memory entry */
@@ -54,7 +55,7 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
   }>("/api/memory", async (request, reply) => {
     const { agentId, content, type, userId, metadata } = request.body ?? {};
     if (!agentId || !content) {
-      return reply.status(400).send({ error: "agentId and content are required" });
+      return Errors.badRequest(reply, "agentId and content are required");
     }
     const entry = await memoryManager.add({
       agentId,
@@ -63,7 +64,7 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
       type: (type as any) ?? "archival",
       metadata,
     });
-    return reply.status(201).send(entry);
+    return sendSuccess(reply, entry, 201);
   });
 
   /** Semantic search */
@@ -72,28 +73,28 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
   }>("/api/memory/search", async (request, reply) => {
     const { query, agentId, userId, type, topK } = request.query;
     if (!query) {
-      return reply.status(400).send({ error: "query parameter is required" });
+      return Errors.badRequest(reply, "query parameter is required");
     }
     const results = await memoryManager.search(
       query,
       { agentId, userId, type: type as any },
       parseInt(topK ?? "10", 10),
     );
-    return { results, total: results.length };
+    return sendSuccess(reply, { results, total: results.length });
   });
 
   /** Memory statistics */
   app.get<{
     Querystring: { agentId?: string };
-  }>("/api/memory/stats", async (request) => {
-    return memoryManager.stats(request.query.agentId);
+  }>("/api/memory/stats", async (request, reply) => {
+    return sendSuccess(reply, memoryManager.stats(request.query.agentId));
   });
 
   /** Get a single memory */
   app.get<{ Params: { id: string } }>("/api/memory/:id", async (request, reply) => {
     const entry = await memoryManager.get(request.params.id);
-    if (!entry) return reply.status(404).send({ error: "Memory not found" });
-    return entry;
+    if (!entry) return Errors.notFound(reply, "Memory not found");
+    return sendSuccess(reply, entry);
   });
 
   /** Update a memory */
@@ -102,38 +103,38 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
     Body: { content: string; metadata?: Record<string, unknown> };
   }>("/api/memory/:id", async (request, reply) => {
     const { content, metadata } = request.body ?? {};
-    if (!content) return reply.status(400).send({ error: "content is required" });
+    if (!content) return Errors.badRequest(reply, "content is required");
     try {
       await memoryManager.update(request.params.id, content, metadata);
-      return { status: "updated", id: request.params.id };
+      return sendSuccess(reply, { status: "updated", id: request.params.id });
     } catch (err: any) {
       app.log.warn({ id: request.params.id, err }, "Memory update failed");
-      return reply.status(404).send({ error: "Memory update failed" });
+      return Errors.notFound(reply, "Memory update failed");
     }
   });
 
   /** Delete a memory */
   app.delete<{ Params: { id: string } }>("/api/memory/:id", async (request, reply) => {
     const ok = await memoryManager.delete(request.params.id);
-    if (!ok) return reply.status(404).send({ error: "Memory not found" });
-    return { status: "deleted" };
+    if (!ok) return Errors.notFound(reply, "Memory not found");
+    return sendSuccess(reply, { status: "deleted" });
   });
 
   /** Clear memories with filter */
   app.delete<{
     Querystring: { agentId?: string; userId?: string; type?: string };
-  }>("/api/memory", async (request) => {
+  }>("/api/memory", async (request, reply) => {
     const { agentId, userId, type } = request.query;
     const count = await memoryManager.clear({ agentId, userId, type: type as any });
-    return { status: "cleared", count };
+    return sendSuccess(reply, { status: "cleared", count });
   });
 
   // ─── Core Memory ─────────────────────────────────────────
 
   /** List core blocks for an agent */
-  app.get<{ Params: { agentId: string } }>("/api/memory/core/:agentId", async (request) => {
+  app.get<{ Params: { agentId: string } }>("/api/memory/core/:agentId", async (request, reply) => {
     const blocks = memoryManager.getCoreBlocks(request.params.agentId);
-    return { blocks, agentId: request.params.agentId };
+    return sendSuccess(reply, { blocks, agentId: request.params.agentId });
   });
 
   /** Read a specific core block */
@@ -141,8 +142,8 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
     Params: { agentId: string; label: string };
   }>("/api/memory/core/:agentId/:label", async (request, reply) => {
     const block = memoryManager.getCoreBlock(request.params.agentId, request.params.label);
-    if (!block) return reply.status(404).send({ error: "Core block not found" });
-    return block;
+    if (!block) return Errors.notFound(reply, "Core block not found");
+    return sendSuccess(reply, block);
   });
 
   /** Replace a core block */
@@ -156,10 +157,10 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
         request.params.label,
         request.body?.value ?? "",
       );
-      return block;
+      return sendSuccess(reply, block);
     } catch (err: any) {
       app.log.warn({ agentId: request.params.agentId, label: request.params.label, err }, "Core block update failed");
-      return reply.status(400).send({ error: "Core block update failed" });
+      return Errors.badRequest(reply, "Core block update failed");
     }
   });
 
@@ -174,10 +175,10 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
         request.params.label,
         request.body?.text ?? "",
       );
-      return block;
+      return sendSuccess(reply, block);
     } catch (err: any) {
       app.log.warn({ agentId: request.params.agentId, label: request.params.label, err }, "Core block append failed");
-      return reply.status(400).send({ error: "Core block append failed" });
+      return Errors.badRequest(reply, "Core block append failed");
     }
   });
 
@@ -189,27 +190,27 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
   }>("/api/memory/fts", async (request, reply) => {
     const { q, agentId, type, limit } = request.query;
     if (!q) {
-      return reply.status(400).send({ error: "q parameter is required" });
+      return Errors.badRequest(reply, "q parameter is required");
     }
     const results = searchMemoriesFTS(q, {
       agentId,
       type,
       limit: parseInt(limit ?? "50", 10),
     });
-    return { results, total: results.length };
+    return sendSuccess(reply, { results, total: results.length });
   });
 
   // C-2: 记忆矛盾检测 REST API（学 Hermes retrieval.py:103-175 contradict）
   app.get<{
     Querystring: { agentId?: string; threshold?: string; limit?: string };
-  }>("/api/memory/contradictions", async (request) => {
+  }>("/api/memory/contradictions", async (request, reply) => {
     const { agentId, threshold, limit } = request.query;
     const contradictions = await memoryManager.contradict(
       agentId ? { agentId } : {},
       parseFloat(threshold ?? "0.3"),
       parseInt(limit ?? "10", 10),
     );
-    return { contradictions, count: contradictions.length };
+    return sendSuccess(reply, { contradictions, count: contradictions.length });
   });
 
   app.log.info("Memory routes registered");

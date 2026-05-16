@@ -58,7 +58,7 @@ export function saveCronJob(job: CronJobInput): void {
 
 export function loadCronJobs(): Array<Record<string, unknown>> {
   const db = getDatabase();
-  const results = db.exec("SELECT * FROM cron_jobs");
+  const results = db.exec("SELECT * FROM cron_jobs LIMIT 200"); // P3-T6: 防止无限制全表扫描
   if (!results.length) return [];
   return results[0].values.map((vals: unknown[]) => {
     const row: Record<string, unknown> = {};

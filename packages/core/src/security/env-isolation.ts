@@ -34,7 +34,8 @@ const ENV_WHITELIST = new Set([
   "EDITOR", "VISUAL", "PAGER",
 
   // 开发工具 — 运行时和配置(非密钥)
-  "NODE_ENV", "NODE_PATH", "NODE_OPTIONS", "NODE_EXTRA_CA_CERTS",
+  // P3-T5: 移除 NODE_OPTIONS（可注入 --require 加载恶意模块）
+  "NODE_ENV", "NODE_PATH", "NODE_EXTRA_CA_CERTS",
   "NPM_CONFIG_REGISTRY", "NPM_CONFIG_PREFIX",
   "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "VIRTUAL_ENV",
   "GOPATH", "GOROOT", "GOBIN",
@@ -53,7 +54,8 @@ const ENV_WHITELIST = new Set([
   "OS", "PATHEXT", "SYSTEMDRIVE",
 
   // Docker/容器
-  "DOCKER_HOST", "COMPOSE_FILE",
+  // P3-T5: 移除 DOCKER_HOST（可通过 DOCKER_HOST=tcp://attacker:2375 劫持），仅保留 DOCKER_CONFIG/COMPOSE_FILE
+  "DOCKER_CONFIG", "COMPOSE_FILE",
 
   // 终端
   "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
@@ -77,7 +79,8 @@ const FORCE_WHITELIST = new Set([
   "CARGO_HOME", "RUSTUP_HOME",
   "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
   "http_proxy", "https_proxy", "no_proxy",
-  "DOCKER_HOST", "COMPOSE_FILE",
+  // P3-T5: DOCKER_HOST 从白名单移除（存在劫持风险）
+  "COMPOSE_FILE",
   "DISPLAY", "XAUTHORITY",
 ]);
 

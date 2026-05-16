@@ -74,12 +74,19 @@ export async function apiFetch<T = unknown>(
   }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    const message = err.error || err.detail || res.statusText;
+    const err = await res.json().catch(() => ({}));
+    // P4-T2: 支持新格式 { success: false, error: { code, message } } 和旧格式 { error: "..." }
+    const message = err?.error?.message || err?.error || err?.detail || res.statusText;
     showToast(message, "error");
     throw new Error(message);
   }
-  return res.json();
+  const json = await res.json();
+  // P4-T2: 自动解包标准化响应 { success: true, data: ... }
+  // 如果响应包含 success: true 和 data 字段，自动提取 data；否则返回原始 json（向后兼容）
+  if (json && typeof json === "object" && (json as any).success === true && "data" in json) {
+    return (json as any).data as T;
+  }
+  return json as T;
 }
 
 // ─── API Fetch Raw（非 JSON 场景统一认证层）─────────────────

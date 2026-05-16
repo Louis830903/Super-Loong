@@ -11,6 +11,7 @@
 
 import { spawn } from "node:child_process";
 import pino from "pino";
+import { buildIsolatedEnv } from "./env-isolation.js";
 import type { SandboxBackend, SandboxResult } from "./sandbox.js";
 
 const logger = pino({ name: "docker-sandbox" });
@@ -202,7 +203,7 @@ export class DockerSandbox implements SandboxBackend {
 
       const proc = spawn(cmd, args, {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env },
+        env: buildIsolatedEnv(),
       });
 
       proc.stdout.on("data", (data) => { stdout += data.toString(); });
@@ -216,7 +217,7 @@ export class DockerSandbox implements SandboxBackend {
           if (args[0] === "run" && args.includes("--name")) {
             const nameIdx = args.indexOf("--name") + 1;
             if (nameIdx < args.length) {
-              spawn("docker", ["kill", args[nameIdx]], { stdio: "ignore" });
+              spawn("docker", ["kill", args[nameIdx]], { stdio: "ignore", env: buildIsolatedEnv() });
             }
           }
           resolve({

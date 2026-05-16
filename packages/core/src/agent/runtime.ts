@@ -590,12 +590,13 @@ export class AgentRuntime {
     // T2: 每个 user turn 开始时重置反思深度计数，跨 turn 的单工具连续失败计数不清
     this.reflection.resetTurnCounters(session.id);
 
-    // P0-A11: 快照消息数量，用于错误时回滚
-    const msgCountBeforeChat = session.messages.length;
-
     // P1: 与 chatStream() 对齐 sanitize 策略
     // 防止前一次崩溃留下的孤立 tool_calls 导致 LLM 400 错误
     session.messages = this.sanitizeMessages(session.messages);
+
+    // P0-A11/P2-01 Fix: 快照消息数量移到 sanitize 之后，
+    // 回滚时恢复到 sanitize 后的数量而非 sanitize 前（避免重复清理）
+    const msgCountBeforeChat = session.messages.length;
 
     // Add user message
     session.messages.push({ role: "user", content: userMessage });
@@ -1586,7 +1587,13 @@ export class AgentRuntime {
       }
 
       // Normal execution (no sandbox or sandbox level is "none")
-      const result = await tool.execute(args, context);
+      // P1 安全加固：Promise.race 添加 60s 超时保护，防止工具死循环挂死 Agent
+      const result = await Promise.race([
+        tool.execute(args, context),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Tool "${name}" execution timed out after 60s`)), 60_000)
+        ),
+      ]);
       if (this.securityManager) {
         this.securityManager.recordExecution(name, this.id, "success");
       }
@@ -1745,10 +1752,11 @@ export class AgentRuntime {
 
       if (!reflection) return;
 
-      // 1) 软引导：注入 system 消息，LLM 可选择采纳或忽略
+      // 1) 软引导：用 user 角色注入提示（与 buildInvalidToolCallRejectMessage 模式一致，部分
+      //    LLM provider 不允许非 standards 的 system 角色穿插在对话中间）
       session.messages.push({
-        role: "system",
-        content: `[Reflection] ${reflection.suggestion}`,
+        role: "user",
+        content: `[系统提示] [Reflection] ${reflection.suggestion}`,
       });
 
       // 2) 写入 session.metadata.reflections 供 T2.4 Evolution 联动（metadata.source="reflection" 去重）

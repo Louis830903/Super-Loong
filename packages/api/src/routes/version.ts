@@ -11,6 +11,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { checkForUpdates, type VersionCheckResult } from "@super-agent/core";
+import { sendSuccess } from "./response-helper.js";
 
 /** 缓存 TTL：1 小时 */
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -21,7 +22,7 @@ export function versionRoutes(app: FastifyInstance): void {
   app.get("/api/version", async (_request, reply) => {
     // 缓存命中且未过期 — 直接返回
     if (cachedResult && Date.now() - cachedResult.timestamp < CACHE_TTL_MS) {
-      return reply.send(cachedResult.data);
+      return sendSuccess(reply, cachedResult.data);
     }
 
     const result = await checkForUpdates(undefined, 5000);
@@ -31,6 +32,6 @@ export function versionRoutes(app: FastifyInstance): void {
       cachedResult = { data: result, timestamp: Date.now() };
     }
 
-    return reply.send(result);
+    return sendSuccess(reply, result);
   });
 }

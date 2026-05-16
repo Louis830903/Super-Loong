@@ -55,12 +55,17 @@ class SqlJsCompatDB {
       return [];
     }
     // 参数化查询：用 prepare().all() 代替 exec
+    // 注意：better-sqlite3 Statement 由 GC 管理生命周期，无需显式 finalize
     const stmt = this.real.prepare(sql);
-    const rows = stmt.all(...params) as Record<string, unknown>[];
-    if (rows.length === 0) return [];
-    const columns = Object.keys(rows[0]);
-    const values = rows.map((row) => columns.map((col) => row[col]));
-    return [{ columns, values }];
+    try {
+      const rows = stmt.all(...params) as Record<string, unknown>[];
+      if (rows.length === 0) return [];
+      const columns = Object.keys(rows[0]);
+      const values = rows.map((row) => columns.map((col) => row[col]));
+      return [{ columns, values }];
+    } finally {
+      // better-sqlite3 无 finalize 方法，GC 自动回收
+    }
   }
 
   /** sql.js 兼容 run：接受 params 数组，返回 {changes, lastInsertRowid} */
@@ -254,13 +259,15 @@ export function registerShutdownHandlers(): void {
   if (_signalHandlersRegistered) return;
   _signalHandlersRegistered = true;
 
-  // 退出前 checkpoint WAL + flush JSONL，不调用 process.exit()
+  // 退出前 checkpoint WAL + 关闭数据库 + flush JSONL
   const shutdown = (signal: string) => {
-    logger.info({ signal }, "Received signal, checkpointing WAL");
+    logger.info({ signal }, "Received signal, performing graceful shutdown");
     if (_db) {
       try { _db.pragma("wal_checkpoint(TRUNCATE)"); } catch { /* best-effort */ }
     }
+    try { closeDatabase(); } catch { /* best-effort */ }
     try { getJsonlWriter().flush(); } catch { /* best-effort */ }
+    process.exit(0);
   };
 
   process.on("SIGINT", () => shutdown("SIGINT"));

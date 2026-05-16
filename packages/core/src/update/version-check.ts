@@ -12,8 +12,13 @@
 import pino from "pino";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const logger = pino({ name: "version-check" });
+
+// ESM 模块中 __dirname 不可用，从 import.meta.url 构造
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /** 版本检查结果 */
 export interface VersionCheckResult {

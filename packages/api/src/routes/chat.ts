@@ -39,6 +39,7 @@ import {
 } from "@super-agent/core";
 import type { AppContext } from "../context.js";
 import { SEEN_NO_RESPONSE } from "../shared/dedup.js";
+import { sendSuccess, sendError, Errors } from "./response-helper.js";
 
 // ─── P3-18: 按错误类型返回不同 HTTP 状态码 ──────────────────
 // 从统一 500 升级为按错误类型区分，便于前端展示和日志审计
@@ -115,10 +116,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post("/api/chat", async (request, reply) => {
     const parsed = ChatMessageSchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: "Invalid message",
-        details: parsed.error.flatten(),
-      });
+      return Errors.badRequest(reply, "Invalid message", { details: parsed.error.flatten() });
     }
 
     const { agentId, sessionId, message } = parsed.data;
@@ -134,13 +132,13 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
       if (cached === SEEN_NO_RESPONSE) {
         // 已被 WS 路径处理过 → 短路返回（WS 已流式响应给 Gateway）
         app.log.info({ requestId }, "Dedup hit: already processed via WS");
-        return reply.status(200).send({ message: "Already processed", requestId });
+        return sendSuccess(reply, { message: "Already processed", requestId });
       }
     }
 
     const agent = ctx.agentManager.getAgent(agentId);
     if (!agent) {
-      return reply.status(404).send({ error: "Agent not found" });
+      return Errors.notFound(reply, "Agent not found");
     }
 
     try {
@@ -157,12 +155,15 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
         dedup.record(requestId, response);
       }
 
-      return response;
+      return sendSuccess(reply, response);
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       // P3-18: 按错误类型返回不同 HTTP 状态码，而非统一 500
       const statusCode = categorizeError(error);
-      return reply.status(statusCode).send({ error: errMsg });
+      app.log.error({ error: errMsg, statusCode }, "Chat message error");
+      const code = statusCode === 504 ? "GATEWAY_TIMEOUT" : statusCode === 502 ? "BAD_GATEWAY" : "INTERNAL_ERROR";
+      return sendError(reply, statusCode, code,
+        process.env.NODE_ENV === "production" ? "处理请求时发生错误" : errMsg);
     }
   });
 
@@ -171,10 +172,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post("/api/chat/stream", async (request, reply) => {
     const parsed = ChatMessageSchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: "Invalid message",
-        details: parsed.error.flatten(),
-      });
+      return Errors.badRequest(reply, "Invalid message", { details: parsed.error.flatten() });
     }
 
     const { agentId, message } = parsed.data;
@@ -186,7 +184,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     const images = metadata?.images as Array<{ data: string; mimeType: string }> | undefined;
     const agent = ctx.agentManager.getAgent(agentId);
     if (!agent) {
-      return reply.status(404).send({ error: "Agent not found" });
+      return Errors.notFound(reply, "Agent not found");
     }
 
     // Auto-create a new conversation if no ID provided
@@ -259,8 +257,9 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     } catch (error) {
       if (!ac.signal.aborted) {
         const errMsg = error instanceof Error ? error.message : String(error);
+        app.log.error({ error: errMsg }, "Chat stream error");
         reply.raw.write(
-          `data: ${JSON.stringify({ error: errMsg })}\n\n`
+          `data: ${JSON.stringify({ error: process.env.NODE_ENV === "production" ? "流式处理发生错误" : errMsg })}\n\n`
         );
       }
     }
@@ -275,19 +274,19 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     const stream = body.stream === true;
 
     if (!messages?.length) {
-      return reply.status(400).send({ error: "messages is required" });
+      return Errors.badRequest(reply, "messages is required");
     }
 
     // Use the first available agent or match by model name
     const agents = ctx.agentManager.listAgents();
     const targetAgent = agents.find((a) => a.config.name === model) ?? agents[0];
     if (!targetAgent) {
-      return reply.status(404).send({ error: "No agent available" });
+      return Errors.notFound(reply, "No agent available");
     }
 
     const agent = ctx.agentManager.getAgent(targetAgent.id);
     if (!agent) {
-      return reply.status(404).send({ error: "Agent not found" });
+      return Errors.notFound(reply, "Agent not found");
     }
 
     const lastMessage = messages[messages.length - 1];
@@ -340,7 +339,8 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
       } catch (error) {
         if (!ac.signal.aborted) {
           const errMsg = error instanceof Error ? error.message : String(error);
-          reply.raw.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
+          app.log.error({ error: errMsg }, "OpenAI compat stream error");
+          reply.raw.write(`data: ${JSON.stringify({ error: process.env.NODE_ENV === "production" ? "处理请求时发生错误" : errMsg })}\n\n`);
         }
       }
 
@@ -362,7 +362,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
 
     // Non-streaming
     const result = await agent.chat(lastMessage.content, sessionId);
-    return {
+    return sendSuccess(reply, {
       id: `chatcmpl-${Date.now()}`,
       object: "chat.completion",
       created: Math.floor(Date.now() / 1000),
@@ -379,7 +379,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
         completion_tokens: 0,
         total_tokens: 0,
       },
-    };
+    });
   });
 
   // ─── Conversation Persistence Endpoints ────────────────────
@@ -388,10 +388,10 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get<{ Querystring: { agentId?: string } }>("/api/conversations", async (request, reply) => {
     const { agentId } = request.query;
     if (!agentId) {
-      return reply.status(400).send({ error: "agentId is required" });
+      return Errors.badRequest(reply, "agentId is required");
     }
     const conversations = listConversations(agentId);
-    return { conversations };
+    return sendSuccess(reply, { conversations });
   });
 
   /** Create a new conversation */
@@ -399,11 +399,11 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     const body = request.body as Record<string, unknown>;
     const agentId = body.agentId as string;
     if (!agentId) {
-      return reply.status(400).send({ error: "agentId is required" });
+      return Errors.badRequest(reply, "agentId is required");
     }
     const id = `conv-${randomUUID()}`;
     const conversation = createConversation(id, agentId, (body.title as string) || undefined);
-    return { conversation };
+    return sendSuccess(reply, { conversation });
   });
 
   /** Get messages for a conversation (with pagination) */
@@ -412,12 +412,12 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     async (request, reply) => {
       const conv = getConversation(request.params.id);
       if (!conv) {
-        return reply.status(404).send({ error: "Conversation not found" });
+        return Errors.notFound(reply, "Conversation not found");
       }
       const limit = parseInt(request.query.limit ?? "50", 10);
       const before = request.query.before ? parseInt(request.query.before, 10) : undefined;
       const messages = getConvMessages(request.params.id, { limit, before });
-      return { messages, conversationId: request.params.id, total: conv.messageCount };
+      return sendSuccess(reply, { messages, conversationId: request.params.id, total: conv.messageCount });
     }
   );
 
@@ -425,10 +425,10 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
   app.delete<{ Params: { id: string } }>("/api/conversations/:id", async (request, reply) => {
     const conv = getConversation(request.params.id);
     if (!conv) {
-      return reply.status(404).send({ error: "Conversation not found" });
+      return Errors.notFound(reply, "Conversation not found");
     }
     deleteConversation(request.params.id);
-    return { success: true };
+    return sendSuccess(reply, {});
   });
 
   /** Update conversation (title and/or modelOverride) */
@@ -436,7 +436,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     const body = request.body as Record<string, unknown>;
     const conv = getConversation(request.params.id);
     if (!conv) {
-      return reply.status(404).send({ error: "Conversation not found" });
+      return Errors.notFound(reply, "Conversation not found");
     }
 
     if (typeof body.title === "string" && body.title) {
@@ -450,10 +450,10 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     }
 
     if (!body.title && body.modelOverride === undefined) {
-      return reply.status(400).send({ error: "title or modelOverride is required" });
+      return Errors.badRequest(reply, "title or modelOverride is required");
     }
 
-    return { success: true, conversation: getConversation(request.params.id) };
+    return sendSuccess(reply, { conversation: getConversation(request.params.id) });
   });
 
   /** FTS5 search across conversation messages */
@@ -462,13 +462,13 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
   }>("/api/conversations/search", async (request, reply) => {
     const { q, agentId, limit } = request.query;
     if (!q) {
-      return reply.status(400).send({ error: "q parameter is required" });
+      return Errors.badRequest(reply, "q parameter is required");
     }
     const results = searchConvMessages(q, {
       agentId,
       limit: parseInt(limit ?? "30", 10),
     });
-    return { results, total: results.length };
+    return sendSuccess(reply, { results, total: results.length });
   });
 
   // ─── Legacy Session Endpoints (DEPRECATED — 下一版本移除) ───
@@ -482,13 +482,13 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     app.log.warn("[DEPRECATED] GET /api/sessions → 请迁移到 GET /api/conversations");
     const { agentId } = request.query;
     if (!agentId) {
-      return { sessions: [] };
+      return sendSuccess(reply, { sessions: [] });
     }
     const agent = ctx.agentManager.getAgent(agentId);
     if (!agent) {
-      return { sessions: [] };
+      return sendSuccess(reply, { sessions: [] });
     }
-    return { sessions: agent.listSessions() };
+    return sendSuccess(reply, { sessions: agent.listSessions() });
   });
 
   // Get session details
@@ -500,13 +500,13 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
       app.log.warn(`[DEPRECATED] GET /api/sessions/${request.params.id} → 请迁移到 GET /api/conversations/:id`);
       const agent = ctx.agentManager.getAgent(request.query.agentId);
       if (!agent) {
-        return reply.status(404).send({ error: "Agent not found" });
+        return Errors.notFound(reply, "Agent not found");
       }
       const session = agent.findSession(request.params.id);
       if (!session) {
-        return reply.status(404).send({ error: "Session not found" });
+        return Errors.notFound(reply, "Session not found");
       }
-      return { session };
+      return sendSuccess(reply, { session });
     }
   );
 
@@ -519,13 +519,13 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
       app.log.warn(`[DEPRECATED] DELETE /api/sessions/${request.params.id} → 请迁移到 DELETE /api/conversations/:id`);
       const agent = ctx.agentManager.getAgent(request.query.agentId);
       if (!agent) {
-        return reply.status(404).send({ error: "Agent not found" });
+        return Errors.notFound(reply, "Agent not found");
       }
       const deleted = agent.deleteSession(request.params.id);
       if (!deleted) {
-        return reply.status(404).send({ error: "Session not found" });
+        return Errors.notFound(reply, "Session not found");
       }
-      return { success: true };
+      return sendSuccess(reply, {});
     }
   );
 
@@ -540,12 +540,12 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppContext) {
     app.log.warn("[DEPRECATED] GET /api/sessions/search → 请迁移到 GET /api/conversations/search");
     const { q, agentId, limit } = request.query;
     if (!q) {
-      return reply.status(400).send({ error: "q parameter is required" });
+      return Errors.badRequest(reply, "q parameter is required");
     }
     const results = searchSessionsFTS(q, {
       agentId,
       limit: parseInt(limit ?? "50", 10),
     });
-    return { results, total: results.length };
+    return sendSuccess(reply, { results, total: results.length });
   });
 }

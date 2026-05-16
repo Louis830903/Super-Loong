@@ -13,6 +13,8 @@
  *   - JSONL 双写为 best-effort（catch 后吞异常），不影响 SQLite 主写入成功。
  */
 
+import { logger } from "./logger.js";
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { getJsonlWriter } from "../jsonl-writer.js";
@@ -174,24 +176,36 @@ export function appendConvMessage(
 ): number {
   const db = getDatabase();
   const now = new Date().toISOString();
-  db.run(
-    `INSERT INTO conv_messages (conversationId, role, content, toolCallId, toolCalls, toolName, timestamp, tokenCount)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [conversationId, role, content ?? null, opts?.toolCallId ?? null, opts?.toolCalls ?? null,
-     opts?.toolName ?? null, now, opts?.tokenCount ?? null],
-  );
-  // Update conversation counters
-  const preview = content ? content.slice(0, 80) : null;
-  db.run(
-    `UPDATE conversations SET messageCount = messageCount + 1, updatedAt = ?, lastMessagePreview = ?, lastMessageRole = ? WHERE id = ?`,
-    [now, preview, role, conversationId],
-  );
-  scheduleSave();
-  // Return the inserted row ID
-  const idResult = db.exec("SELECT last_insert_rowid()");
-  const rowId = idResult.length ? (idResult[0].values[0][0] as number) : 0;
 
-  // JSONL dual-write: append message and increment index counter
+  // P0 安全加固：INSERT + UPDATE 用事务包裹，防止两操作分离导致数据不一致
+  let rowId = 0;
+  db.run("BEGIN TRANSACTION");
+  try {
+    db.run(
+      `INSERT INTO conv_messages (conversationId, role, content, toolCallId, toolCalls, toolName, timestamp, tokenCount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [conversationId, role, content ?? null, opts?.toolCallId ?? null, opts?.toolCalls ?? null,
+       opts?.toolName ?? null, now, opts?.tokenCount ?? null],
+    );
+    // Update conversation counters
+    const preview = content ? content.slice(0, 80) : null;
+    db.run(
+      `UPDATE conversations SET messageCount = messageCount + 1, updatedAt = ?, lastMessagePreview = ?, lastMessageRole = ? WHERE id = ?`,
+      [now, preview, role, conversationId],
+    );
+    // Return the inserted row ID (必须在事务内获取)
+    const idResult = db.exec("SELECT last_insert_rowid()");
+    rowId = idResult.length ? (idResult[0].values[0][0] as number) : 0;
+
+    db.run("COMMIT");
+  } catch (err) {
+    db.run("ROLLBACK");
+    throw err;
+  }
+
+  scheduleSave();
+
+  // JSONL dual-write: 在 SQL 事务成功后执行（文件 I/O 不在事务内，失败仅记录告警）
   try {
     getJsonlWriter().append(conversationId, {
       id: rowId, conversationId, role, content: content ?? null,
@@ -199,7 +213,10 @@ export function appendConvMessage(
       toolName: opts?.toolName ?? null, timestamp: now, tokenCount: opts?.tokenCount ?? null,
     });
     getJsonlWriter().incrementMessageCount(conversationId);
-  } catch { /* best-effort */ }
+  } catch (jsonlErr) {
+    logger.warn({ conversationId, rowId, err: (jsonlErr as Error).message },
+      "JSONL 双写失败（SQL 事务已提交），需后续修复");
+  }
 
   return rowId;
 }

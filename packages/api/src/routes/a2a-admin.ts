@@ -10,6 +10,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 export async function a2aAdminRoutes(app: FastifyInstance, ctx: AppContext) {
 
@@ -17,7 +18,7 @@ export async function a2aAdminRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get("/api/a2a/registry", async (req, reply) => {
     if (!ctx.a2aRegistry) {
-      return reply.send({ agents: [], enabled: false });
+      return sendSuccess(reply, { agents: [], enabled: false });
     }
     try {
       const query = req.query as { capability?: string; onlineOnly?: string };
@@ -25,11 +26,11 @@ export async function a2aAdminRoutes(app: FastifyInstance, ctx: AppContext) {
         capability: query.capability,
         onlineOnly: query.onlineOnly === "true",
       });
-      return reply.send({ agents, enabled: true });
+      return sendSuccess(reply, { agents, enabled: true });
     } catch (err: any) {
       // API-P1-03：内部栈仅进日志
       app.log.error({ route: "/api/a2a/registry", err }, "Registry query failed");
-      return reply.status(500).send({ error: "Registry query failed" });
+      return Errors.internal(reply, "Registry query failed");
     }
   });
 
@@ -37,7 +38,7 @@ export async function a2aAdminRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get("/api/a2a/tasks", async (req, reply) => {
     if (!ctx.a2aTaskStore) {
-      return reply.send({ tasks: [], enabled: false });
+      return sendSuccess(reply, { tasks: [], enabled: false });
     }
     const query = req.query as { state?: string; limit?: string; offset?: string };
     const tasks = ctx.a2aTaskStore.listTasks({
@@ -45,7 +46,7 @@ export async function a2aAdminRoutes(app: FastifyInstance, ctx: AppContext) {
       limit: Math.min(parseInt(query.limit ?? "50", 10), 200),
       offset: parseInt(query.offset ?? "0", 10),
     });
-    return reply.send({ tasks, enabled: true });
+    return sendSuccess(reply, { tasks, enabled: true });
   });
 
   // ─── GET /api/a2a/card — 本机 Agent Card ───────────────────
@@ -63,7 +64,7 @@ export async function a2aAdminRoutes(app: FastifyInstance, ctx: AppContext) {
         description: s.description || "",
         tags: s.tags || [],
       }));
-      return reply.send({
+      return sendSuccess(reply, {
         name: agentName,
         description: agentDesc,
         skills,
@@ -75,7 +76,7 @@ export async function a2aAdminRoutes(app: FastifyInstance, ctx: AppContext) {
       });
     } catch (err: any) {
       app.log.error({ route: "/api/a2a/card", err }, "Agent card query failed");
-      return reply.status(500).send({ error: "Agent card query failed" });
+      return Errors.internal(reply, "Agent card query failed");
     }
   });
 

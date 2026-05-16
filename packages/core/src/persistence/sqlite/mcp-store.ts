@@ -41,7 +41,7 @@ export function saveMCPServer(server: Record<string, unknown>): void {
  */
 export function loadMCPServers(): Array<Record<string, unknown>> {
   const db = getDatabase();
-  const results = db.exec("SELECT * FROM mcp_servers");
+  const results = db.exec("SELECT * FROM mcp_servers LIMIT 200"); // P3-T6: 防止无限制全表扫描
   if (!results.length) return [];
   return results[0].values.map((vals: unknown[]) => {
     const row: Record<string, unknown> = {};

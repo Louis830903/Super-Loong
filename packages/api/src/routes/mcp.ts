@@ -13,6 +13,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
+import { sendSuccess, sendError, Errors } from "./response-helper.js";
 
 export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
   if (!ctx.mcpRegistry) {
@@ -38,8 +39,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
   }
 
   /** List all registered MCP servers */
-  app.get("/api/mcp/servers", async () => {
-    return { servers: registry.getServerStatus() };
+  app.get("/api/mcp/servers", async (_req, reply) => {
+    return sendSuccess(reply, { servers: registry.getServerStatus() });
   });
 
   /** Register a new MCP server */
@@ -55,20 +56,19 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
   }>("/api/mcp/servers", async (request, reply) => {
     const { name, transport, command, args, url, env } = request.body ?? {};
     if (!name || !transport) {
-      return reply.status(400).send({ error: "name and transport are required" });
+      return Errors.badRequest(reply, "name and transport are required");
     }
     if (transport === "stdio" && !command) {
-      return reply.status(400).send({ error: "command is required for stdio transport" });
+      return Errors.badRequest(reply, "command is required for stdio transport");
     }
     // P0-A2: 命令白名单校验，阻止注册任意可执行文件
     if (transport === "stdio" && command && !isSafeCommand(command)) {
-      return reply.status(400).send({
-        error: `Command '${command}' is not in the allowed list. ` +
-          `Allowed: ${[...MCP_COMMAND_WHITELIST].join(", ")}`,
-      });
+      return Errors.badRequest(reply,
+        `Command '${command}' is not in the allowed list. ` +
+          `Allowed: ${[...MCP_COMMAND_WHITELIST].join(", ")}`);
     }
     if ((transport === "sse" || transport === "streamable-http") && !url) {
-      return reply.status(400).send({ error: "url is required for sse/http transport" });
+      return Errors.badRequest(reply, "url is required for sse/http transport");
     }
 
     try {
@@ -87,11 +87,11 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
         ctx.agentManager.registerGlobalTool(tool);
       }
 
-      return reply.status(201).send({ id, name, status: "registered" });
+      return sendSuccess(reply, { id, name, status: "registered" }, 201);
     } catch (err: any) {
       // API-P1-03：内部栈仅进日志
       app.log.error({ route: "/api/mcp/servers", err }, "MCP server registration failed");
-      return reply.status(500).send({ error: "MCP server registration failed" });
+      return Errors.internal(reply, "MCP server registration failed");
     }
   });
 
@@ -105,12 +105,12 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
         ctx.agentManager.registerGlobalTool(tool);
       }
       const server = registry.getServer(request.params.id);
-      return { status: "connected", tools: server?.tools?.length ?? 0 };
+      return sendSuccess(reply, { status: "connected", tools: server?.tools?.length ?? 0 });
     } catch (err: any) {
       // 返回 200 + error 字段（服务器仍然已注册，只是连接失败）
       const server = registry.getServer(request.params.id);
       app.log.error({ err, serverId: request.params.id }, "MCP 连接测试失败");
-      return { status: server?.status ?? "error", error: "MCP 服务器连接失败，请检查配置" };
+      return sendSuccess(reply, { status: server?.status ?? "error", error: "MCP 服务器连接失败，请检查配置" });
     }
   });
 
@@ -122,16 +122,16 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
       for (const toolName of removedToolNames) {
         ctx.agentManager.unregisterGlobalTool(toolName);
       }
-      return { status: "removed", removedTools: removedToolNames.length };
+      return sendSuccess(reply, { status: "removed", removedTools: removedToolNames.length });
     } catch (err: any) {
       app.log.error({ route: "DELETE /api/mcp/servers/:id", id: request.params.id, err }, "MCP server removal failed");
-      return reply.status(404).send({ error: "MCP server not found" });
+      return Errors.notFound(reply, "MCP server not found");
     }
   });
 
   /** List all tools from all MCP servers */
-  app.get("/api/mcp/tools", async () => {
-    return { tools: registry.getAllMCPTools() };
+  app.get("/api/mcp/tools", async (_req, reply) => {
+    return sendSuccess(reply, { tools: registry.getAllMCPTools() });
   });
 
   /** Call an MCP tool directly */
@@ -140,14 +140,14 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
   }>("/api/mcp/tools/call", async (request, reply) => {
     const { serverId, toolName, args } = request.body ?? {};
     if (!serverId || !toolName) {
-      return reply.status(400).send({ error: "serverId and toolName are required" });
+      return Errors.badRequest(reply, "serverId and toolName are required");
     }
     try {
       const result = await registry.callTool(serverId, toolName, args ?? {});
-      return { result };
+      return sendSuccess(reply, { result });
     } catch (err: any) {
       app.log.error({ route: "/api/mcp/tools/call", serverId, toolName, err }, "MCP tool call failed");
-      return reply.status(500).send({ error: "MCP tool call failed" });
+      return Errors.internal(reply, "MCP tool call failed");
     }
   });
 
@@ -159,16 +159,16 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
   }>("/api/mcp/marketplace/search", async (request, reply) => {
     const query = request.query.q;
     if (!query) {
-      return reply.status(400).send({ error: "query parameter 'q' is required" });
+      return Errors.badRequest(reply, "query parameter 'q' is required");
     }
     const limit = Math.min(parseInt(request.query.limit ?? "20", 10) || 20, 50);
 
     try {
       const results = await ctx.mcpMarketplace.search(query, limit);
-      return { servers: results, count: results.length };
+      return sendSuccess(reply, { servers: results, count: results.length });
     } catch (err: any) {
       app.log.error({ route: "/api/mcp/marketplace/search", query, err }, "MCP marketplace search failed");
-      return reply.status(500).send({ error: "MCP marketplace search failed" });
+      return Errors.internal(reply, "MCP marketplace search failed");
     }
   });
 
@@ -202,17 +202,13 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
   }>("/api/mcp/marketplace/install", async (request, reply) => {
     const { entry, env } = request.body ?? {};
     if (!entry?.packages?.length) {
-      return reply
-        .status(400)
-        .send({ error: "entry with packages is required" });
+      return Errors.badRequest(reply, "entry with packages is required");
     }
 
     try {
       const config = ctx.mcpMarketplace.buildInstallConfig(entry as any);
       if (!config) {
-        return reply
-          .status(400)
-          .send({ error: "No installable package found (need npm or docker package)" });
+        return Errors.badRequest(reply, "No installable package found (need npm or docker package)");
       }
 
       // Merge user-provided environment variables
@@ -225,10 +221,8 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
         (s) => s.config.name === config.name
       );
       if (existing) {
-        return reply.status(409).send({
-          error: `服务器 "${config.name}" 已存在 (ID: ${existing.id})，请先删除后重试`,
-          existingId: existing.id,
-        });
+        return Errors.conflict(reply,
+          `服务器 "${config.name}" 已存在 (ID: ${existing.id})，请先删除后重试`);
       }
 
       const id = registry.registerServer({
@@ -257,7 +251,7 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
         );
       }
 
-      return reply.status(201).send({
+      return sendSuccess(reply, {
         id,
         name: config.name,
         transport: config.transport,
@@ -265,10 +259,10 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
         args: config.args,
         status: connectError ? "registered" : "connected",
         connectError,
-      });
+      }, 201);
     } catch (err: any) {
       app.log.error({ route: "/api/mcp/marketplace/install", err }, "MCP marketplace install failed");
-      return reply.status(500).send({ error: "MCP marketplace install failed" });
+      return Errors.internal(reply, "MCP marketplace install failed");
     }
   });
 
@@ -333,10 +327,10 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
     try {
       const server = await getMCPServer();
       await server.start();
-      return reply.send({ status: "running", info: server.getInfo() });
+      return sendSuccess(reply, { status: "running", info: server.getInfo() });
     } catch (err: any) {
       app.log.error({ route: "/api/mcp/server/start", err }, "MCP Server start failed");
-      return reply.status(500).send({ error: "MCP Server start failed" });
+      return Errors.internal(reply, "MCP Server start failed");
     }
   });
 
@@ -346,19 +340,19 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
       if (_mcpServer) {
         await _mcpServer.stop();
       }
-      return reply.send({ status: "stopped" });
+      return sendSuccess(reply, { status: "stopped" });
     } catch (err: any) {
       app.log.error({ route: "/api/mcp/server/stop", err }, "MCP Server stop failed");
-      return reply.status(500).send({ error: "MCP Server stop failed" });
+      return Errors.internal(reply, "MCP Server stop failed");
     }
   });
 
   // GET /api/mcp/server/status — 查询 Server 状态
   app.get("/api/mcp/server/status", async (_request, reply) => {
     if (!_mcpServer) {
-      return reply.send({ state: "stopped", info: null });
+      return sendSuccess(reply, { state: "stopped", info: null });
     }
-    return reply.send({
+    return sendSuccess(reply, {
       state: _mcpServer.getState(),
       info: _mcpServer.getInfo(),
       events: _mcpServer.getEventBridge().getStats(),
@@ -369,10 +363,10 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get("/api/mcp/server/tools", async (_request, reply) => {
     try {
       const server = await getMCPServer();
-      return reply.send({ tools: server.getToolDefinitions() });
+      return sendSuccess(reply, { tools: server.getToolDefinitions() });
     } catch (err: any) {
       app.log.error({ route: "/api/mcp/server/tools", err }, "MCP Server list tools failed");
-      return reply.status(500).send({ error: "MCP Server list tools failed" });
+      return Errors.internal(reply, "MCP Server list tools failed");
     }
   });
 
@@ -385,10 +379,10 @@ export async function mcpRoutes(app: FastifyInstance, ctx: AppContext) {
     try {
       const server = await getMCPServer();
       const result = await server.handleToolCall(toolName, args ?? {});
-      return reply.send(result);
+      return sendSuccess(reply, result);
     } catch (err: any) {
       app.log.error({ route: request.url, toolName, err }, "MCP Server tool call failed");
-      return reply.status(500).send({ error: "MCP Server tool call failed" });
+      return Errors.internal(reply, "MCP Server tool call failed");
     }
   });
 

@@ -12,6 +12,7 @@
 
 import { spawn, ChildProcess } from "node:child_process";
 import pino from "pino";
+import { buildIsolatedEnv } from "../security/env-isolation.js";
 import { v4 as uuid } from "uuid";
 import type { ToolDefinition, ToolResult } from "../types/index.js";
 import { z } from "zod";
@@ -334,7 +335,7 @@ export class MCPClient {
       throw new Error("stdio transport requires 'command'");
     }
 
-    const env = { ...process.env, ...this.config.env };
+    const env = { ...buildIsolatedEnv(), ...this.config.env };
     // Windows 上 npx/node/python 等是 .cmd 脚本，需要 shell 才能 spawn
     const isWin = process.platform === "win32";
     const command = isWin ? this.config.command : this.config.command;

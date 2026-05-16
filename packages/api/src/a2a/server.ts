@@ -16,6 +16,7 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
+import pino from "pino";
 import {
   type A2AAgentCard,
   type JsonRpcRequest,
@@ -31,7 +32,13 @@ import {
   TaskNotFoundError,
   runInContext,
   createRootContext,
+  verifyA2AMessage,
+  type A2AMessage,
 } from "@super-agent/core";
+
+// ─── 日志 ───────────────────────────────────────────────────
+
+const logger = pino({ name: "A2AServer" });
 
 // ─── Token 安全比较（P1-1 修复） ────────────────────────────────
 
@@ -266,6 +273,17 @@ async function dispatchRpc(
       if (!validateSendMessageParams(params)) {
         return reply.send(rpcErr(rpc.id, A2A_ERROR_CODES.INVALID_REQUEST,
           "Invalid SendMessageRequest: missing or malformed message/parts/role"));
+      }
+      // P0 安全加固：HMAC-SHA256 签名校验（防篡改，向后兼容旧客户端）
+      if (process.env.A2A_TOKEN) {
+        const msg = (params as SendMessageRequest).message as A2AMessage & { timestamp?: number; nonce?: string; signature?: string };
+        const verifyResult = verifyA2AMessage(msg, process.env.A2A_TOKEN);
+        if (!verifyResult.valid) {
+          return reply.send(rpcErr(rpc.id, A2A_ERROR_CODES.UNAUTHORIZED, `消息签名校验失败: ${verifyResult.reason}`));
+        }
+        if (verifyResult.degraded) {
+          logger.warn({ messageId: msg.messageId }, "A2A 消息未携带签名（旧客户端），降级为无签名模式");
+        }
       }
       // protocolVersion 协商
       const pv = (params as unknown as SendMessageRequest).protocolVersion;

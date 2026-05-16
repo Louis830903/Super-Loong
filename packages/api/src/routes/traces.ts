@@ -22,6 +22,7 @@ import {
 } from "@super-agent/core";
 import type { Span } from "@super-agent/core";
 import { requirePermission } from "../auth/index.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 export async function registerTracesRoutes(app: FastifyInstance): Promise<void> {
 
@@ -35,7 +36,7 @@ export async function registerTracesRoutes(app: FastifyInstance): Promise<void> 
   }, async (request, reply) => {
     const body = request.body as { enabled?: boolean } | undefined;
     if (body?.enabled === undefined || typeof body.enabled !== "boolean") {
-      return reply.status(400).send({ error: "body.enabled is required (boolean)" });
+      return Errors.badRequest(reply, "body.enabled is required (boolean)");
     }
 
     setTracingEnabled(body.enabled);
@@ -46,7 +47,7 @@ export async function registerTracesRoutes(app: FastifyInstance): Promise<void> 
     }
 
     app.log.info(`Tracing toggled: ${body.enabled ? "ON" : "OFF"}`);
-    return reply.send({
+    return sendSuccess(reply, {
       enabled: body.enabled,
       message: body.enabled ? "追踪已开启，新请求将被自动追踪" : "追踪已关闭",
     });
@@ -60,12 +61,12 @@ export async function registerTracesRoutes(app: FastifyInstance): Promise<void> 
     Querystring: { limit?: string; offset?: string };
   }>("/api/traces", async (request, reply) => {
     if (!isTracingEnabled()) {
-      return reply.send({ enabled: false, traces: [], pagination: { limit: 50, offset: 0, count: 0 } });
+      return sendSuccess(reply, { enabled: false, traces: [], pagination: { limit: 50, offset: 0, count: 0 } });
     }
     const limit = Math.min(parseInt(request.query.limit || "50", 10), 200);
     const offset = parseInt(request.query.offset || "0", 10);
     const traces = getRecentTraces(limit, offset);
-    return reply.send({ enabled: true, traces, pagination: { limit, offset, count: traces.length } });
+    return sendSuccess(reply, { enabled: true, traces, pagination: { limit, offset, count: traces.length } });
   });
 
   /**
@@ -131,20 +132,20 @@ export async function registerTracesRoutes(app: FastifyInstance): Promise<void> 
     Params: { traceId: string };
   }>("/api/traces/:traceId", async (request, reply) => {
     if (!isTracingEnabled()) {
-      return reply.send({ enabled: false, spans: [], message: "Tracing is disabled." });
+      return sendSuccess(reply, { enabled: false, spans: [], message: "Tracing is disabled." });
     }
     const { traceId } = request.params;
     const spans = getTraceSpans(traceId);
 
     if (spans.length === 0) {
-      return reply.status(404).send({ error: "Trace not found", traceId });
+      return Errors.notFound(reply, "Trace not found");
     }
 
     // 构建 Span 树结构
     const tree = buildSpanTree(spans);
     const rootSpan = spans[0];
 
-    return reply.send({
+    return sendSuccess(reply, {
       traceId,
       startTime: rootSpan?.startTime,
       endTime: spans[spans.length - 1]?.endTime,

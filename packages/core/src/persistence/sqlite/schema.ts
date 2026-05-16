@@ -106,18 +106,8 @@ export function createInitialSchema(db: SqlJsDatabase): void {
 
     db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agentId)`);
 
-    db.run(`
-      CREATE TABLE IF NOT EXISTS credentials (
-        name TEXT PRIMARY KEY,
-        encryptedValue TEXT NOT NULL,
-        iv TEXT NOT NULL,
-        allowedAgents TEXT DEFAULT '[]',
-        allowedTools TEXT DEFAULT '[]',
-        createdAt TEXT NOT NULL,
-        lastAccessedAt TEXT,
-        accessCount INTEGER DEFAULT 0
-      )
-    `);
+    // P0 修复：旧 camelCase credentials 定义已删除，统一使用下方的 snake_case 版本
+    // 历史 DB 通过 Migration 18 自动重命名列
 
     db.run(`
       CREATE TABLE IF NOT EXISTS security_policies (
@@ -234,6 +224,8 @@ export function createInitialSchema(db: SqlJsDatabase): void {
     `);
 
     db.run(`CREATE INDEX IF NOT EXISTS idx_cron_history_job ON cron_history(jobId)`);
+    // P3-T8: 补充 startedAt 索引（按时间范围查询 cron 历史记录）
+    db.run(`CREATE INDEX IF NOT EXISTS idx_cron_history_started ON cron_history(startedAt)`);
 
     // ─── Installed Skills Table ────────────────────────────────
     db.run(`

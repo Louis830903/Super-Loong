@@ -35,7 +35,7 @@ export function loadChannels(): Array<{
   status: string;
 }> {
   const db = getDatabase();
-  const results = db.exec("SELECT * FROM channels");
+  const results = db.exec("SELECT * FROM channels LIMIT 200"); // P3-T6: 防止无限制全表扫描
   if (!results.length) return [];
   return results[0].values.map((vals: unknown[]) => {
     const row: Record<string, unknown> = {};

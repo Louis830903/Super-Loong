@@ -217,11 +217,59 @@ export class MCPServer {
   /**
    * 处理 MCP 工具调用请求。
    */
+  /**
+   * 校验 MCP 工具调用参数：必填字段存在性、字符串长度上限、基础类型。
+   * 返回 null 表示通过，否则返回错误消息。 
+   */
+  private validateToolArgs(toolName: string, args: Record<string, unknown>): string | null {
+    const toolDef = this.getToolDefinitions().find((t: { name: string }) => t.name === toolName);
+    if (!toolDef) return null; // 未知工具由 handleToolCall 统一处理
+
+    const schema = toolDef.inputSchema;
+    const required = (schema.required as string[]) ?? [];
+    const properties = (schema.properties as Record<string, { type?: string }>) ?? {};
+
+    // 1. 必填字段存在性检查
+    for (const field of required) {
+      if (args[field] === undefined || args[field] === null) {
+        return `缺少必填参数: ${field}`;
+      }
+    }
+
+    // 2. 字符串长度上限 + 基础类型校验
+    for (const [key, prop] of Object.entries(properties)) {
+      const val = args[key];
+      if (val === undefined || val === null) continue;
+
+      // 类型校验
+      if (prop.type === "string" && typeof val !== "string") {
+        return `参数 ${key} 期望类型 string，实际类型 ${typeof val}`;
+      }
+      if (prop.type === "number" && typeof val !== "number") {
+        return `参数 ${key} 期望类型 number，实际类型 ${typeof val}`;
+      }
+
+      // 字符串长度上限
+      if (prop.type === "string" && typeof val === "string" && val.length > 10000) {
+        return `参数 ${key} 超过长度上限 10000 字符`;
+      }
+    }
+
+    return null; // 校验通过
+  }
+
   async handleToolCall(
     toolName: string,
     args: Record<string, unknown>,
   ): Promise<{ content: Array<{ type: string; text: string }> }> {
     try {
+      // P0 安全加固：工具调用参数校验
+      const validationError = this.validateToolArgs(toolName, args);
+      if (validationError) {
+        logger.warn({ toolName, error: validationError }, "MCP 参数校验失败");
+        return this.textResult(`参数错误：${validationError}`);
+      }
+
       switch (toolName) {
         case "conversations_list": {
           const convos = await this.handlers.listConversations();

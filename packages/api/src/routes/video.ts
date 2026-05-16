@@ -39,6 +39,7 @@ import {
 import type { VideoJobRow, ShortVideoCrewParams, AgentProviderOverride } from "@super-agent/core";
 import { enqueueVideoJob } from "../services/video-forge-supervisor.js";
 import { emitEvent } from "../ws/index.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 // ─── Zod 入参校验 ────────────────────────────────────────
 
@@ -89,9 +90,7 @@ export async function videoRoutes(app: FastifyInstance, ctx: AppContext): Promis
   app.post("/api/video/jobs", async (req, reply) => {
     const parsed = CreateVideoJobSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: parsed.error.issues.map((i) => i.message).join("; "),
-      });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const body = parsed.data;
 
@@ -111,14 +110,12 @@ export async function videoRoutes(app: FastifyInstance, ctx: AppContext): Promis
         const allTemplates = getProviderTemplates();
         const tpl = allTemplates.find((t) => t.id === body.agent_provider_template_id);
         if (!tpl) {
-          return reply.status(400).send({
-            error: `模板 ${body.agent_provider_template_id} 不存在`,
-          });
+          return Errors.badRequest(reply, `模板 ${body.agent_provider_template_id} 不存在`);
         }
         try {
           resolvedProviders = JSON.parse(tpl.providers_json);
         } catch {
-          return reply.status(500).send({ error: "模板配置解析失败" });
+          return Errors.internal(reply, "模板配置解析失败");
         }
       }
     }
@@ -341,13 +338,11 @@ export async function videoRoutes(app: FastifyInstance, ctx: AppContext): Promis
   app.get("/api/video/jobs", async (req, reply) => {
     const parsed = ListVideoJobsSchema.safeParse(req.query);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: parsed.error.issues.map((i) => i.message).join("; "),
-      });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const { status, limit, offset } = parsed.data;
     const jobs = listVideoJobs({ status, limit, offset });
-    return reply.send({
+    return sendSuccess(reply, {
       jobs,
       count: jobs.length,
       limit,
@@ -360,13 +355,13 @@ export async function videoRoutes(app: FastifyInstance, ctx: AppContext): Promis
   // ──────────────────────────────────────────────────────────
   app.get<{ Params: { id: string } }>("/api/video/jobs/:id", async (req, reply) => {
     const { id } = req.params;
-    if (!id) return reply.status(400).send({ error: "id is required" });
+    if (!id) return Errors.badRequest(reply, "id is required");
 
     const job = getVideoJob(id);
     if (!job) {
-      return reply.status(404).send({ error: "视频任务不存在" });
+      return Errors.notFound(reply, "视频任务不存在");
     }
-    return reply.send(job);
+    return sendSuccess(reply, job);
   });
 
   // ──────────────────────────────────────────────────────────
@@ -374,11 +369,11 @@ export async function videoRoutes(app: FastifyInstance, ctx: AppContext): Promis
   // ──────────────────────────────────────────────────────────
   app.delete<{ Params: { id: string } }>("/api/video/jobs/:id", async (req, reply) => {
     const { id } = req.params;
-    if (!id) return reply.status(400).send({ error: "id is required" });
+    if (!id) return Errors.badRequest(reply, "id is required");
 
     const job = getVideoJob(id);
     if (!job) {
-      return reply.status(404).send({ error: "视频任务不存在" });
+      return Errors.notFound(reply, "视频任务不存在");
     }
 
     // 只有 pending/queued/running 状态可以取消
@@ -402,7 +397,7 @@ export async function videoRoutes(app: FastifyInstance, ctx: AppContext): Promis
         status: "cancelled",
       });
 
-      return reply.send({ success: true, id, status: "cancelled" });
+      return sendSuccess(reply, { success: true, id, status: "cancelled" });
     }
 
     // 已完成/已失败/已取消的任务——标记为 deleted（软删除）
@@ -410,7 +405,7 @@ export async function videoRoutes(app: FastifyInstance, ctx: AppContext): Promis
       status: "deleted",
       updated_at: Date.now(),
     });
-    return reply.send({ success: true, id, status: "deleted" });
+    return sendSuccess(reply, { success: true, id, status: "deleted" });
   });
 
   app.log.info("Video routes registered (POST/GET/DELETE /api/video/jobs)");

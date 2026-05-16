@@ -9,6 +9,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ConfigStore } from "@super-agent/core";
 import type { AppContext } from "../context.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 // ─── 多 Provider 自动降级链类型 ─────────────────────────────
 type SttProvider = "stt-custom" | "aliyun-nls" | "llm-whisper" | "groq";
@@ -293,7 +294,7 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
         // Base64 encoded audio
         audioBuffer = Buffer.from(body.audio, "base64");
       } else {
-        return reply.status(400).send({ error: "Audio data required (raw body or base64 'audio' field)" });
+        return Errors.badRequest(reply, "Audio data required (raw body or base64 'audio' field)");
       }
 
       const language = (typeof body === "object" && body.language) || "zh";
@@ -326,18 +327,14 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
       // 阿里云 NLS 不会产生 Whisper 特有幻觉，但过滤无害；Groq/llm-whisper 是 Whisper 模型，需要过滤
       if (isWhisperHallucination(result.text, rmsPeak)) {
         app.log.info({ original: result.text, rmsPeak }, "Whisper hallucination filtered — silent recording");
-        return { text: "", filtered: true };
+        return sendSuccess(reply, { text: "", filtered: true });
       }
 
-      return result;
+      return sendSuccess(reply, result);
     } catch (err: any) {
       app.log.error({ err }, "Voice transcription failed");
       // API-P1-03：内部栈仅进日志
-      return reply.status(500).send({
-        error: "Voice transcription failed",
-        detail: err.message || "所有语音识别服务均不可用",
-        hint: "请检查 STT_API_URL、ALIBABA_CLOUD_*、GROQ_API_KEY 等环境变量配置。",
-      });
+      return Errors.internal(reply, "Voice transcription failed");
     }
   });
 
@@ -349,8 +346,8 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
   }
 
   // ===== STT Providers 列表（始终注册，前端据此决定语音按钮状态）=====
-  app.get("/api/voice/providers", async () => {
-    return { providers };
+  app.get("/api/voice/providers", async (_request, reply) => {
+    return sendSuccess(reply, { providers });
   });
 
   // ===== Text-to-Speech（仅阿里云 NLS，需 voiceProvider）=====
@@ -368,7 +365,7 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
   }>("/api/voice/synthesize", async (request, reply) => {
     const { text, voice: voiceName, speed, volume, format } = request.body ?? {};
     if (!text) {
-      return reply.status(400).send({ error: "text is required" });
+      return Errors.badRequest(reply, "text is required");
     }
 
     try {
@@ -382,11 +379,11 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
       const contentType = format === "wav" ? "audio/wav" : "audio/mpeg";
       reply.header("Content-Type", contentType);
       reply.header("Content-Length", audioBuffer.length);
-      return reply.send(audioBuffer);
+      return sendSuccess(reply, audioBuffer);
     } catch (err: any) {
       app.log.error({ err }, "Voice synthesis failed");
       // API-P1-03：内部栈仅进日志
-      return reply.status(500).send({ error: "Voice synthesis failed" });
+      return Errors.internal(reply, "Voice synthesis failed");
     }
   });
 

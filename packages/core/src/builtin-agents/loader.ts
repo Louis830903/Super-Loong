@@ -9,7 +9,7 @@
  */
 
 import pino from "pino";
-import { builtinAgentCatalog } from "./catalog.js";
+import { builtinAgentCatalogMeta, getBuiltinSystemPrompt } from "./catalog.js";
 import type { AgentManager } from "../agent/manager.js";
 import {
   saveAgentConfig,
@@ -29,7 +29,7 @@ const PROGRESS_INTERVAL = 50;
  * P0-2 迁移辅助：从新格式 ID (builtin_dept-slug) 提取旧格式 ID (builtin_slug)
  * 用于检测是否存在旧 ID 的 Agent 需要迁移
  */
-function legacyIdFromEntry(tpl: (typeof builtinAgentCatalog)[number]): string {
+function legacyIdFromEntry(tpl: (typeof builtinAgentCatalogMeta)[number]): string {
   return `builtin_${tpl.metadata.slug}`;
 }
 
@@ -47,16 +47,16 @@ function legacyIdFromEntry(tpl: (typeof builtinAgentCatalog)[number]): string {
  * @param defaultLlmConfig - 系统当前活跃 Provider 配置
  * @returns 创建、更新和跳过的数量统计
  */
-export function ensureBuiltinAgents(
+export async function ensureBuiltinAgents(
   agentManager: AgentManager,
   defaultLlmConfig: Record<string, unknown>,
-): { created: number; updated: number; skipped: number } {
+): Promise<{ created: number; updated: number; skipped: number }> {
   let created = 0;
   let updated = 0;
   let skipped = 0;
   let migrated = 0;
   let failed = 0;
-  const total = builtinAgentCatalog.length;
+  const total = builtinAgentCatalogMeta.length;
 
   // 🔧 事务批处理：211 次 SQLite 写入合并为 1 个事务
   // better-sqlite3 同步 WAL 模式下，逐条 INSERT 都会触发 fsync，
@@ -73,7 +73,7 @@ export function ensureBuiltinAgents(
   }
 
   for (let i = 0; i < total; i++) {
-    const tpl = builtinAgentCatalog[i];
+    const tpl = builtinAgentCatalogMeta[i];
 
     // 🔧 每 PROGRESS_INTERVAL 个 Agent 输出进度日志
     if (i > 0 && i % PROGRESS_INTERVAL === 0) {
@@ -113,8 +113,10 @@ export function ensureBuiltinAgents(
         }
 
         // 版本变更：更新 systemPrompt/description/metadata，保留用户配置的 llmProvider
+        // P4-T4: 按需加载 systemPrompt
+        const sysPrompt = await getBuiltinSystemPrompt(tpl.id);
         agentManager.updateAgent(tpl.id, {
-          systemPrompt: tpl.systemPrompt,
+          systemPrompt: sysPrompt ?? "",
           description: tpl.description,
           metadata: { ...tpl.metadata },
         } as Record<string, unknown>);
@@ -132,11 +134,13 @@ export function ensureBuiltinAgents(
       }
 
       // P0-3: 安全构造 Partial<AgentConfig>，不使用 as unknown as
+      // P4-T4: 按需加载 systemPrompt
+      const sysPrompt = await getBuiltinSystemPrompt(tpl.id);
       const config: Partial<AgentConfig> & { name: string } = {
         id: tpl.id,
         name: tpl.name,
         description: tpl.description,
-        systemPrompt: tpl.systemPrompt,
+        systemPrompt: sysPrompt ?? "",
         tools: [...tpl.tools],
         skills: [...tpl.skills],
         channels: [...tpl.channels],

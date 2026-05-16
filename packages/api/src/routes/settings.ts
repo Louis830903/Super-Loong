@@ -14,6 +14,7 @@ import type { AppContext } from "../context.js";
 import { requirePermission } from "../auth/index.js";
 import { getConfigStore, invalidateToolCache, getAllBuiltinTools, builtinTools, injectSysopsSecurityRules } from "@super-agent/core";
 import { previewMigration, executeMigration } from "../services/openclaw-migration.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 /** 支持的 Feature Flag 列表及其描述 */
 const FLAG_DEFS = [
@@ -68,7 +69,7 @@ export async function settingsRoutes(app: FastifyInstance, _ctx: AppContext) {
       parent: "parent" in def ? def.parent : undefined,
       enabled: process.env[def.key] === "true",
     }));
-    return reply.send({ flags });
+    return sendSuccess(reply, { flags });
   });
 
   // ─── PUT /api/settings/flags ─────────────────────────────
@@ -81,7 +82,7 @@ export async function settingsRoutes(app: FastifyInstance, _ctx: AppContext) {
     const body = req.body as { flags?: Record<string, boolean> } | undefined;
 
     if (!body?.flags || typeof body.flags !== "object") {
-      return reply.status(400).send({ error: "body.flags is required (Record<string, boolean>)" });
+      return Errors.badRequest(reply, "body.flags is required (Record<string, boolean>)");
     }
 
     const validKeys = new Set<string>(FLAG_DEFS.map((d) => d.key));
@@ -144,7 +145,7 @@ export async function settingsRoutes(app: FastifyInstance, _ctx: AppContext) {
     }));
 
     app.log.info({ updated }, "Feature flags updated (persisted to ConfigStore)");
-    return reply.send({ flags, updated });
+    return sendSuccess(reply, { flags, updated });
   });
 
   // ─── GET /api/migration/preview ──────────────────────────
@@ -153,7 +154,7 @@ export async function settingsRoutes(app: FastifyInstance, _ctx: AppContext) {
     preHandler: requirePermission("*"),
   }, async (_req, reply) => {
     const report = await previewMigration();
-    return reply.send(report);
+    return sendSuccess(reply, report);
   });
 
   // ─── POST /api/migration/execute ──────────────────────────
@@ -170,7 +171,7 @@ export async function settingsRoutes(app: FastifyInstance, _ctx: AppContext) {
       app.log.info("Skills reloaded after OpenClaw migration");
     }
 
-    return reply.send(report);
+    return sendSuccess(reply, report);
   });
 
   app.log.info("Settings routes registered");

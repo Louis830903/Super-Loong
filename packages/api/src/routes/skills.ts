@@ -13,6 +13,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 /** Flatten a Skill object for the frontend (frontmatter → top-level fields). */
 function serializeSkill(s: any) {
@@ -30,16 +31,16 @@ function serializeSkill(s: any) {
 }
 
 export async function skillRoutes(app: FastifyInstance, ctx: AppContext) {
-  app.get("/api/skills", async () => {
-    return { skills: ctx.skillLoader.listSkills().map(serializeSkill) };
+  app.get("/api/skills", async (_req, reply) => {
+    return sendSuccess(reply, { skills: ctx.skillLoader.listSkills().map(serializeSkill) });
   });
 
   app.get<{ Params: { id: string } }>("/api/skills/:id", async (request, reply) => {
     const skill = ctx.skillLoader.getSkill(request.params.id);
     if (!skill) {
-      return reply.status(404).send({ error: "Skill not found" });
+      return Errors.notFound(reply, "Skill not found");
     }
-    return { skill: serializeSkill(skill) };
+    return sendSuccess(reply, { skill: serializeSkill(skill) });
   });
 
   // Update skill (enable/disable)
@@ -47,14 +48,14 @@ export async function skillRoutes(app: FastifyInstance, ctx: AppContext) {
     const body = request.body as { enabled?: boolean };
     const skill = ctx.skillLoader.updateSkill(request.params.id, body);
     if (!skill) {
-      return reply.status(404).send({ error: "Skill not found" });
+      return Errors.notFound(reply, "Skill not found");
     }
-    return { skill };
+    return sendSuccess(reply, { skill });
   });
 
-  app.post("/api/skills/reload", async () => {
+  app.post("/api/skills/reload", async (_req, reply) => {
     const skills = ctx.skillLoader.loadAll();
-    return { reloaded: skills.length };
+    return sendSuccess(reply, { reloaded: skills.length });
   });
 
   // ─── Marketplace ────────────────────────────────────────
@@ -67,9 +68,9 @@ export async function skillRoutes(app: FastifyInstance, ctx: AppContext) {
       Querystring: { q: string; source?: string };
     }>("/api/skills/marketplace/search", async (request, reply) => {
       const { q, source } = request.query;
-      if (!q) return reply.status(400).send({ error: "q parameter is required" });
+      if (!q) return Errors.badRequest(reply, "q parameter is required");
       const results = await marketplace.search(q, { source });
-      return { results, total: results.length };
+      return sendSuccess(reply, { results, total: results.length });
     });
 
     /** Install a skill from marketplace */
@@ -77,19 +78,19 @@ export async function skillRoutes(app: FastifyInstance, ctx: AppContext) {
       Body: { sourceUrl: string; sourceName?: string };
     }>("/api/skills/marketplace/install", async (request, reply) => {
       const { sourceUrl, sourceName } = request.body ?? {};
-      if (!sourceUrl) return reply.status(400).send({ error: "sourceUrl is required" });
+      if (!sourceUrl) return Errors.badRequest(reply, "sourceUrl is required");
       const result = await marketplace.install(sourceUrl, sourceName);
       if (!result.success) {
-        return reply.status(500).send({ error: result.error });
+        return Errors.internal(reply, result.error);
       }
       // Reload skills to pick up the new file
       ctx.skillLoader.loadAll();
-      return reply.status(201).send(result);
+      return sendSuccess(reply, result, 201);
     });
 
     /** List installed skills */
-    app.get("/api/skills/installed", async () => {
-      return { skills: marketplace.listInstalled() };
+    app.get("/api/skills/installed", async (_req, reply) => {
+      return sendSuccess(reply, { skills: marketplace.listInstalled() });
     });
 
     /** Uninstall a skill */
@@ -97,16 +98,16 @@ export async function skillRoutes(app: FastifyInstance, ctx: AppContext) {
       try {
         await marketplace.uninstall(request.params.id);
         ctx.skillLoader.loadAll();
-        return { status: "uninstalled" };
+        return sendSuccess(reply, { status: "uninstalled" });
       } catch (err: any) {
         app.log.error({ id: request.params.id, err }, "Skill uninstall failed");
-        return reply.status(500).send({ error: "Skill uninstall failed" });
+        return Errors.internal(reply, "Skill uninstall failed");
       }
     });
 
     /** Get marketplace sources */
-    app.get("/api/skills/marketplace/sources", async () => {
-      return { sources: marketplace.getSources() };
+    app.get("/api/skills/marketplace/sources", async (_req, reply) => {
+      return sendSuccess(reply, { sources: marketplace.getSources() });
     });
   }
 }

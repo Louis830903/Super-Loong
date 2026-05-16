@@ -143,7 +143,8 @@ export class ProviderStore {
         const existing = this.get(provider.id);
         if (!existing?.apiKey) {
           this.upsert(provider.id, { apiKey: envKey });
-          logger.info({ provider: provider.id }, `Seeded API key from env: ${provider.envKey}`);
+          // 日志仅记录 envKey 名称，不记录 apiKey 明文值
+          logger.info({ provider: provider.id }, `Seeded API key from env variable`);
         }
       }
     }
@@ -160,6 +161,7 @@ export class ProviderStore {
             baseUrl: Env.LLM_BASE_URL !== matchedProvider.baseUrl ? Env.LLM_BASE_URL : undefined,
             selectedModel: existing?.selectedModel || Env.LLM_MODEL,
           });
+          // 日志不记录 apiKey 等敏感字段的明文值
           logger.info({ provider: matchedProvider.id }, "Seeded legacy LLM_* env vars");
         }
       } else {
@@ -210,7 +212,12 @@ export class ProviderStore {
     };
   }
 
-  /** Insert or update a provider configuration. */
+  /** 
+   * Insert or update a provider configuration.
+   * 
+   * P2-T18 安全提醒：此方法不记录任何日志，调用方也不得将返回的 ProviderRecord
+   * （含 apiKey 明文）传递给 logger。syncFromEnv() 中已确保日志仅记录 provider.id。
+   */
   upsert(id: string, data: { apiKey?: string; baseUrl?: string; isEnabled?: boolean; selectedModel?: string }): ProviderRecord {
     const db = getDatabase();
     const now = new Date().toISOString();

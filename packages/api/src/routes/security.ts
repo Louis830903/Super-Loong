@@ -31,6 +31,7 @@ import type { AppContext } from "../context.js";
 import { queryConfigAuditLog, listPendingApprovals, resolveApproval } from "@super-agent/core";
 import type { ApprovalScope } from "@super-agent/core";
 import { requirePermission } from "../auth/index.js";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   const security = ctx.securityManager;
@@ -38,14 +39,14 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   // ─── Policies ──────────────────────────────────────────────
 
   app.get("/api/security/policies", async (_req, reply) => {
-    return reply.send(security.listPolicies());
+    return sendSuccess(reply, security.listPolicies());
   });
 
   app.get("/api/security/policies/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const policy = security.getPolicy(id);
-    if (!policy) return reply.status(404).send({ error: "Policy not found" });
-    return reply.send(policy);
+    if (!policy) return Errors.notFound(reply, "Policy not found");
+    return sendSuccess(reply, policy);
   });
 
   app.put("/api/security/policies/:id", async (req, reply) => {
@@ -67,7 +68,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     };
 
     if (!body?.name) {
-      return reply.status(400).send({ error: "name is required" });
+      return Errors.badRequest(reply, "name is required");
     }
 
     security.setPolicy({
@@ -82,16 +83,16 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       auditEnabled: body.auditEnabled ?? true,
     });
 
-    return reply.send(security.getPolicy(id));
+    return sendSuccess(reply, security.getPolicy(id));
   });
 
   app.delete("/api/security/policies/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (id === "default") {
-      return reply.status(400).send({ error: "Cannot delete default policy" });
+      return Errors.badRequest(reply, "Cannot delete default policy");
     }
     const result = security.deletePolicy(id);
-    return reply.send({ deleted: result });
+    return sendSuccess(reply, { deleted: result });
   });
 
   // ─── Permissions ───────────────────────────────────────────
@@ -104,11 +105,11 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     };
 
     if (!body?.toolName || !body?.agentId) {
-      return reply.status(400).send({ error: "toolName and agentId are required" });
+      return Errors.badRequest(reply, "toolName and agentId are required");
     }
 
     const result = security.checkPermission(body.toolName, body.agentId, body.policyId);
-    return reply.send(result);
+    return sendSuccess(reply, result);
   });
 
   // ─── Credentials ───────────────────────────────────────────
@@ -116,7 +117,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get("/api/security/credentials", {
     preHandler: requirePermission("*"),
   }, async (_req, reply) => {
-    return reply.send({ credentials: security.listCredentials() });
+    return sendSuccess(reply, { credentials: security.listCredentials() });
   });
 
   app.post("/api/security/credentials", {
@@ -131,7 +132,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     };
 
     if (!body?.name || !body?.value) {
-      return reply.status(400).send({ error: "name and value are required" });
+      return Errors.badRequest(reply, "name and value are required");
     }
 
     const entry = security.storeCredential(body.name, body.value, {
@@ -140,7 +141,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       allowedTools: body.allowedTools,
     });
 
-    return reply.send(entry);
+    return sendSuccess(reply, entry);
   });
 
   app.delete("/api/security/credentials/:name", {
@@ -148,7 +149,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   }, async (req, reply) => {
     const { name } = req.params as { name: string };
     const result = security.deleteCredential(name);
-    return reply.send({ deleted: result });
+    return sendSuccess(reply, { deleted: result });
   });
 
   // ─── Audit ─────────────────────────────────────────────────
@@ -169,7 +170,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
         agentId: query.agentId,
         limit: query.limit ? parseInt(query.limit, 10) : 100,
       });
-      return reply.send({ entries });
+      return sendSuccess(reply, { entries });
     }
 
     const entries = security.getAuditLog({
@@ -178,13 +179,13 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
       agentId: query.agentId,
     });
 
-    return reply.send({ entries });
+    return sendSuccess(reply, { entries });
   });
 
   // ─── Stats ─────────────────────────────────────────────────
 
   app.get("/api/security/stats", async (_req, reply) => {
-    return reply.send(security.getStats());
+    return sendSuccess(reply, security.getStats());
   });
 
   // ─── Approvals ─────────────────────────────────────────────
@@ -192,7 +193,7 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
   // 待审批列表: 前端轮询或 WebSocket 推送
   app.get("/api/security/approvals/pending", async (_req, reply) => {
     const pending = listPendingApprovals();
-    return reply.send({ approvals: pending });
+    return sendSuccess(reply, { approvals: pending });
   });
 
   // 审批处理: 批准或拒绝（需要权限 — 防止未认证用户自行批准危险操作）
@@ -206,14 +207,14 @@ export async function securityRoutes(app: FastifyInstance, ctx: AppContext) {
     } | undefined;
 
     if (!body || typeof body.approved !== "boolean") {
-      return reply.status(400).send({ error: "approved (boolean) is required" });
+      return Errors.badRequest(reply, "approved (boolean) is required");
     }
 
     const ok = resolveApproval(id, body.approved, body.scope ?? "once");
     if (!ok) {
-      return reply.status(404).send({ error: "Approval not found or already resolved" });
+      return Errors.notFound(reply, "Approval not found or already resolved");
     }
-    return reply.send({ resolved: true, id, approved: body.approved, scope: body.scope ?? "once" });
+    return sendSuccess(reply, { resolved: true, id, approved: body.approved, scope: body.scope ?? "once" });
   });
 
   app.log.info("Security routes registered");

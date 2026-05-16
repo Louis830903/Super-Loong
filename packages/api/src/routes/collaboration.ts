@@ -27,6 +27,7 @@ import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../context.js";
 import type { CrewResult, GroupChatResult, Attachment } from "@super-agent/core";
 import { getCollabOutputsRoot, getWorkspacePath, checkPythonDocLibs } from "@super-agent/core";
+import { sendSuccess, Errors } from "./response-helper.js";
 
 // ─── 字符数限制常量（前后端共用同一套数值） ──────────────────────
 const LIMITS = {
@@ -126,7 +127,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
   app.post("/api/collab/crew", async (req, reply) => {
     const parsed = RunCrewSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const body = parsed.data;
 
@@ -144,7 +145,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
       maxDynamicAgents: body.maxDynamicAgents,
     });
 
-    return reply.send(result);
+    return sendSuccess(reply, result);
   });
 
   /** Get crew execution history */
@@ -152,7 +153,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     // G-1: 使用 Discriminated Union type 字段替代鸭子类型判断
     const history = ctx.collaborationOrchestrator.getHistory()
       .filter((r) => r.type === "crew");
-    return reply.send(history);
+    return sendSuccess(reply, history);
   });
 
   // ─── GroupChat: Conversation Negotiation ───────────────────
@@ -161,7 +162,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
   app.post("/api/collab/groupchat", async (req, reply) => {
     const parsed = RunGroupChatSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map((i) => i.message).join("; "));
     }
     const body = parsed.data;
 
@@ -184,7 +185,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
       body.initialMessage,
     );
 
-    return reply.send(result);
+    return sendSuccess(reply, result);
   });
 
   /** Get group chat history */
@@ -192,7 +193,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     // G-1: 使用 Discriminated Union type 字段替代鸭子类型判断
     const history = ctx.collaborationOrchestrator.getHistory()
       .filter((r) => r.type === "groupchat");
-    return reply.send(history);
+    return sendSuccess(reply, history);
   });
 
   // ─── General ───────────────────────────────────────────────
@@ -200,21 +201,21 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
   /** E-3: 获取运行中的任务列表 */
   app.get("/api/collab/running", async (_req, reply) => {
     const tasks = ctx.collaborationOrchestrator.getRunningTasks();
-    return reply.send(tasks);
+    return sendSuccess(reply, tasks);
   });
 
   /** E-3: 取消运行中的任务 */
   app.post<{ Params: { taskId: string } }>("/api/collab/cancel/:taskId", async (req, reply) => {
     const { taskId } = req.params;
     if (!taskId || typeof taskId !== "string") {
-      return reply.status(400).send({ error: "taskId is required" });
+      return Errors.badRequest(reply, "taskId is required");
     }
 
     const success = ctx.collaborationOrchestrator.abort(taskId);
     if (success) {
-      return reply.send({ success: true, taskId });
+      return sendSuccess(reply, { success: true, taskId });
     } else {
-      return reply.status(404).send({ error: "Not found or already completed" });
+      return Errors.notFound(reply, "Not found or already completed");
     }
   });
 
@@ -233,7 +234,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
   app.get("/api/collab/events", async (_req, reply) => {
     // P2: 连接数限制
     if (sseConnections.size >= MAX_SSE_CONNECTIONS) {
-      return reply.status(503).send({ error: "Too many SSE connections" });
+      return Errors.serviceUnavailable(reply, "Too many SSE connections");
     }
 
     // 设置 SSE 响应头
@@ -289,12 +290,12 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     const validType = type === "crew" || type === "groupchat" ? type : undefined;
 
     const { results, total } = ctx.collaborationOrchestrator.getHistoryPaginated(page, pageSize, validType);
-    return reply.send({ results, total, page, pageSize });
+    return sendSuccess(reply, { results, total, page, pageSize });
   });
 
   /** Collaboration stats */
   app.get("/api/collab/stats", async (_req, reply) => {
-    return reply.send(ctx.collaborationOrchestrator.getStats());
+    return sendSuccess(reply, ctx.collaborationOrchestrator.getStats());
   });
 
   // ─── 附件下载端点 ─────────────────────────────────────────────
@@ -333,7 +334,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
   app.get("/api/collab/attachment", async (req, reply) => {
     const filePath = (req.query as Record<string, string>).path;
     if (!filePath) {
-      return reply.status(400).send({ error: "path query parameter is required" });
+      return Errors.badRequest(reply, "path query parameter is required");
     }
 
     const resolved = path.resolve(filePath);
@@ -342,7 +343,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     const isAllowed = ALLOWED_ROOTS.some(root => resolved.startsWith(root + path.sep) || resolved === root);
     if (!isAllowed) {
       app.log.warn({ filePath, resolved }, "Collab attachment: path outside allowed roots");
-      return reply.status(403).send({ error: "Path not within allowed directories" });
+      return Errors.forbidden(reply, "Path not within allowed directories");
     }
 
     // S-1 修复：symlink 逃逸检查 — 解析符号链接后再次验证
@@ -350,24 +351,31 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     try {
       realPath = await fs.promises.realpath(resolved);
     } catch {
-      return reply.status(404).send({ error: "File not found or not readable" });
+      return Errors.notFound(reply, "File not found or not readable");
     }
     const isRealAllowed = ALLOWED_ROOTS.some(root => realPath.startsWith(root + path.sep) || realPath === root);
     if (!isRealAllowed) {
       app.log.warn({ filePath, resolved, realPath }, "Collab attachment: symlink escape detected");
-      return reply.status(403).send({ error: "Symlink target not within allowed directories" });
+      return Errors.forbidden(reply, "Symlink target not within allowed directories");
     }
 
     // M-3 修复：文件大小限制
     const stat = await fs.promises.stat(realPath);
     if (!stat.isFile()) {
-      return reply.status(400).send({ error: "Path is not a file" });
+      return Errors.badRequest(reply, "Path is not a file");
     }
     if (stat.size > MAX_DOWNLOAD_SIZE) {
       return reply.status(413).send({ error: `File too large (${stat.size} bytes, max ${MAX_DOWNLOAD_SIZE})` });
     }
 
+    // P1 安全加固：敏感文件名黑名单，禁止下载 .env / .db / .sqlite 等配置文件
+    const SENSITIVE_FILENAME_PATTERNS = [/^\.env$/, /\.db$/i, /\.sqlite$/i, /\.sqlite3$/i,
+      /^credentials\./i, /\.pem$/i, /^id_rsa/i, /^id_ed25519/i];
     const filename = path.basename(realPath);
+    if (SENSITIVE_FILENAME_PATTERNS.some(p => p.test(filename))) {
+      app.log.warn({ filename, realPath }, "Collab attachment: blocked sensitive file");
+      return Errors.forbidden(reply, "Access to sensitive files is forbidden");
+    }
     const ext = path.extname(realPath).toLowerCase();
     const mime = MIME_MAP[ext] ?? "application/octet-stream";
 
@@ -389,14 +397,14 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
   app.post("/api/collab/deliver", async (req, reply) => {
     const parsed = DeliverSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues.map(i => i.message).join("; ") });
+      return Errors.badRequest(reply, parsed.error.issues.map(i => i.message).join("; "));
     }
     const { resultId, channelId, chatId, threadId, includeAttachments } = parsed.data;
 
     // 1. 从内存历史中查找协作结果
     const result = ctx.collaborationOrchestrator.getResultById(resultId);
     if (!result) {
-      return reply.status(404).send({ error: "Collaboration result not found" });
+      return Errors.notFound(reply, "Collaboration result not found");
     }
 
     // 2. 构造投递内容（A-1 修复：使用 Discriminated Union type narrowing 替代 as any）
@@ -431,20 +439,19 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "Unknown error");
         app.log.warn({ status: resp.status, body: errBody }, "IM gateway deliver failed");
-        return reply.status(502).send({
-          error: "IM gateway delivery failed",
-          detail: errBody,
-        });
+        const respPayload: Record<string, unknown> = { error: "IM gateway delivery failed" };
+        if (process.env.NODE_ENV !== "production") {
+          respPayload.detail = errBody;
+        }
+        return reply.status(502).send(respPayload);
       }
 
       const deliverResult = await resp.json() as Record<string, unknown>;
-      return reply.send({ success: true, ...deliverResult });
+      return sendSuccess(reply, { success: true, ...deliverResult });
     } catch (err: any) {
       // API-P1-03：IM 网关异常栈仅进日志，响应体移除 detail，避免暴露内部信息
       app.log.warn({ err }, "IM gateway unreachable");
-      return reply.status(503).send({
-        error: "IM gateway unreachable",
-      });
+      return Errors.serviceUnavailable(reply, "IM gateway unreachable");
     }
   });
 
@@ -466,7 +473,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
    */
   app.get<{ Params: { id: string } }>("/api/collab/download/:id", async (req, reply) => {
     const { id } = req.params;
-    if (!id) return reply.status(400).send({ error: "id is required" });
+    if (!id) return Errors.badRequest(reply, "id is required");
 
     // 1. 获取协作结果
     const result = ctx.collaborationOrchestrator.getResultById(id);
@@ -479,7 +486,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     }
 
     if (!workspaceDir) {
-      return reply.status(404).send({ error: "未找到工作空间目录" });
+      return Errors.notFound(reply, "未找到工作空间目录");
     }
 
     // 3. 白名单二次校验：工作空间必须在 collab-outputs/ 下
@@ -487,17 +494,17 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     const resolvedWs = path.resolve(workspaceDir);
     if (!resolvedWs.startsWith(collabRoot + path.sep) && resolvedWs !== collabRoot) {
       app.log.warn({ workspaceDir, collabRoot }, "ZIP download: path outside collab-outputs");
-      return reply.status(403).send({ error: "Path not within allowed directories" });
+      return Errors.forbidden(reply, "Path not within allowed directories");
     }
 
     // 4. 目录存在性检查
     try {
       const stat = await fs.promises.stat(resolvedWs);
       if (!stat.isDirectory()) {
-        return reply.status(404).send({ error: "工作空间路径不是目录" });
+        return Errors.notFound(reply, "工作空间路径不是目录");
       }
     } catch {
-      return reply.status(404).send({ error: "工作空间目录不存在" });
+      return Errors.notFound(reply, "工作空间目录不存在");
     }
 
     // 5. Symlink 检查
@@ -505,11 +512,11 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     try {
       realWsPath = await fs.promises.realpath(resolvedWs);
     } catch {
-      return reply.status(404).send({ error: "工作空间路径不可读" });
+      return Errors.notFound(reply, "工作空间路径不可读");
     }
     if (!realWsPath.startsWith(collabRoot + path.sep) && realWsPath !== collabRoot) {
       app.log.warn({ resolvedWs, realWsPath }, "ZIP download: symlink escape detected");
-      return reply.status(403).send({ error: "Symlink target not within allowed directories" });
+      return Errors.forbidden(reply, "Symlink target not within allowed directories");
     }
 
     // 6. 使用 jszip 递归打包
@@ -584,7 +591,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
    */
   app.get("/api/collab/env-check", async (_req, reply) => {
     const result = await checkPythonDocLibs();
-    return reply.send(result);
+    return sendSuccess(reply, result);
   });
 
   // P2-4: 日志移到所有端点注册完成之后
