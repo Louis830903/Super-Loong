@@ -23,7 +23,7 @@
   <img src="https://img.shields.io/badge/Fastify-5-000000?style=flat-square&logo=fastify&logoColor=white" alt="Fastify" />
   <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind" />
-  <img src="https://img.shields.io/badge/SQLite-WASM-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
+  <img src="https://img.shields.io/badge/SQLite-native%20(better--sqlite3)-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
   <img src="https://img.shields.io/badge/Docker-Sandbox-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
 </p>
 
@@ -791,17 +791,15 @@ super-agent/                        # 📦 Monorepo 根
 
 ## 📝 已知限制
 
-### FTS5 全文搜索
+### 多模态能力
 
-当前版本使用 **sql.js** (WASM) 作为 SQLite 引擎，该构建**不包含 FTS5 全文搜索模块**。知识库搜索在以下场景有差异：
+当前版本以文本交互为主，**图像/音频/视频多模态输入**正在 v0.5 中打通。目前视觉模型可通过 `screen_capture` 截屏 OCR 间接参与推理。
 
-| 场景 | 当前行为 | FTS5 可用时 |
-|------|---------|------------|
-| 文本搜索 | `LIKE '%kw%'` 通配符匹配 | `MATCH` 全文索引，BM25 打分 |
-| 中文分词 | CJK 2-gram 近似切分 | unicode61 tokenizer 原生支持 |
-| 搜索精度 | 可接受（小数据集） | 更高（倒排索引） |
+### SSE 流稳定性
 
-**生产环境建议**：使用原生 SQLite 或 better-sqlite3 替代 sql.js，以获得 FTS5 全文搜索能力。
+SSE 流式响应在极端场景（网络抖动、大上下文）下偶有断流，**v0.5 正在优化**重连与错误恢复机制。
+
+> 💡 FTS5 全文搜索已在 v0.2 通过 better-sqlite3 原生支持，BM25 打分 + unicode61 分词开箱即用。
 
 ---
 
