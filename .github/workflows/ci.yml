@@ -1,0 +1,83 @@
+name: CI — 全量测试
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-core:
+    name: Core 单元测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:core
+
+  test-api:
+    name: API 集成测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:api
+
+  test-web:
+    name: Web 组件测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:web
+
+  all-tests-pass:
+    name: ✅ 全量通过
+    needs: [test-core, test-api, test-web]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查结果
+        run: |
+          if [ "${{ needs.test-core.result }}" != "success" ]; then
+            echo "❌ Core 单元测试失败"
+            exit 1
+          fi
+          if [ "${{ needs.test-api.result }}" != "success" ]; then
+            echo "❌ API 集成测试失败"
+            exit 1
+          fi
+          if [ "${{ needs.test-web.result }}" != "success" ]; then
+            echo "❌ Web 组件测试失败"
+            exit 1
+          fi
+          echo "✅ 全部测试通过"

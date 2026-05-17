@@ -286,6 +286,7 @@ export default function AgentsPage() {
             return (
               <div
                 key={agent.id}
+                data-testid={`agent-card-${agent.id}`}
                 className="group relative rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 transition-colors hover:border-zinc-700"
               >
                 {/* 内置标记 */}

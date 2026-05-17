@@ -48,6 +48,10 @@ export async function fileRoutes(app: FastifyInstance) {
     let buffer: Buffer;
     try {
       buffer = Buffer.from(data, "base64");
+      // Node.js Buffer.from('base64') 不抛异常，需真校验
+      if (buffer.toString("base64") !== data.replace(/\s/g, "")) {
+        return Errors.badRequest(reply, "Invalid base64 data");
+      }
     } catch {
       return Errors.badRequest(reply, "Invalid base64 data");
     }

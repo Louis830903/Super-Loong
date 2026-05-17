@@ -38,6 +38,7 @@ export function ToastContainer() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
+          data-testid={toast.type === "error" ? "error-toast" : `toast-${toast.type}`}
           className={`flex items-start gap-3 rounded-xl border px-4 py-3 shadow-lg backdrop-blur-sm animate-in slide-in-from-right-5 fade-in duration-200 ${
             toast.type === "error"
               ? "border-red-800/50 bg-red-950/90 text-red-200"

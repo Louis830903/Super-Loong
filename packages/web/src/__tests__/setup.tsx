@@ -23,3 +23,22 @@ vi.mock("next/font/google", () => ({
 vi.mock("next/script", () => ({
   default: ({ children }: { children?: React.ReactNode }) => children ?? null,
 }));
+
+// Mock next/navigation — 提供 usePathname / useRouter
+vi.mock("next/navigation", () => ({
+  usePathname: vi.fn(() => "/dashboard"),
+  useRouter: vi.fn(() => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    prefetch: vi.fn(),
+  })),
+  useSearchParams: vi.fn(() => new URLSearchParams()),
+}));
+
+// Mock next/link — 渲染为普通 <a> 标签
+vi.mock("next/link", () => ({
+  default: ({ children, href, ...props }: any) => {
+    // eslint-disable-next-line jsx-a11y/anchor-is-valid
+    return <a href={href} {...props}>{children}</a>;
+  },
+}));

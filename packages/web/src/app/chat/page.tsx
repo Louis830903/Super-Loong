@@ -1419,7 +1419,7 @@ export default function ChatPage() {
           {messages.map((msg, i) => (
             <div key={i} className={cn("flex gap-3", msg.role === "user" ? "justify-end" : "")}>
               {msg.role === "assistant" && (
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600/20">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600/20" data-testid="assistant-message">
                   <Bot className="h-4 w-4 text-blue-400" />
                 </div>
               )}
@@ -1467,7 +1467,7 @@ export default function ChatPage() {
             </div>
           ))}
           {loading && messages[messages.length - 1]?.role === "assistant" && messages[messages.length - 1]?.content === "" && !messages[messages.length - 1]?.toolCalls?.length && (
-            <div className="flex gap-3">
+            <div className="flex gap-3" data-testid="loading-spinner">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600/20">
                 <Loader2 className="h-4 w-4 text-blue-400 animate-spin" />
               </div>
@@ -1541,6 +1541,7 @@ export default function ChatPage() {
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 placeholder={isRecording ? (voiceStatus || "录音中...") : "输入消息... (Shift+Enter 换行)"}
+                data-testid="chat-input"
                 disabled={!selectedAgent}
                 rows={1}
                 className={cn(
@@ -1555,6 +1556,7 @@ export default function ChatPage() {
                 disabled={!input.trim() && attachments.length === 0}
                 className="absolute bottom-2.5 right-2.5 rounded-lg bg-blue-600 p-1.5 text-white transition-colors hover:bg-blue-700 disabled:opacity-30 disabled:hover:bg-blue-600"
                 title={loading ? "加入排队队列" : "发送消息"}
+                data-testid="send-button"
               >
                 {loading && messageQueue.length > 0 ? (
                   <span className="relative">

@@ -118,12 +118,12 @@ describe("POST /api/kb/documents", () => {
       });
       expect(res.statusCode).toBe(201);
       const body = res.json();
-      expect(body.document).toBeDefined();
-      expect(body.document.filename).toBe("notes.md");
-      expect(body.document.status).toBe("indexed");
-      expect(body.duplicated).toBe(false);
-      expect(body.skipped).toBe(false);
-      expect(body.chunkCount).toBeGreaterThan(0);
+      expect(body.data.document).toBeDefined();
+      expect(body.data.document.filename).toBe("notes.md");
+      expect(body.data.document.status).toBe("indexed");
+      expect(body.data.duplicated).toBe(false);
+      expect(body.data.skipped).toBe(false);
+      expect(body.data.chunkCount).toBeGreaterThan(0);
     } finally {
       await app.close();
     }
@@ -178,7 +178,7 @@ describe("POST /api/kb/documents", () => {
       });
       expect(res1.statusCode).toBe(201);
       const body1 = res1.json();
-      expect(body1.duplicated).toBe(false);
+      expect(body1.data.duplicated).toBe(false);
 
       const res2 = await app.inject({
         method: "POST",
@@ -187,9 +187,9 @@ describe("POST /api/kb/documents", () => {
       });
       expect(res2.statusCode).toBe(201);
       const body2 = res2.json();
-      expect(body2.duplicated).toBe(true);
-      expect(body2.skipped).toBe(true);
-      expect(body2.document.id).toBe(body1.document.id);
+      expect(body2.data.duplicated).toBe(true);
+      expect(body2.data.skipped).toBe(true);
+      expect(body2.data.document.id).toBe(body1.data.document.id);
     } finally {
       await app.close();
     }
@@ -221,10 +221,10 @@ describe("GET /api/kb/documents", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.total).toBe(3);
-      expect(body.documents).toHaveLength(2);
-      expect(body.limit).toBe(2);
-      expect(body.offset).toBe(0);
+      expect(body.data.total).toBe(3);
+      expect(body.data.documents).toHaveLength(2);
+      expect(body.data.limit).toBe(2);
+      expect(body.data.offset).toBe(0);
     } finally {
       await app.close();
     }
@@ -239,8 +239,8 @@ describe("GET /api/kb/documents", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.total).toBe(0);
-      expect(body.documents).toEqual([]);
+      expect(body.data.total).toBe(0);
+      expect(body.data.documents).toEqual([]);
     } finally {
       await app.close();
     }
@@ -277,8 +277,8 @@ describe("GET /api/kb/documents", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.total).toBe(1);
-      expect(body.documents[0].filename).toBe("global.md");
+      expect(body.data.total).toBe(1);
+      expect(body.data.documents[0].filename).toBe("global.md");
     } finally {
       await app.close();
     }
@@ -300,7 +300,7 @@ describe("GET / DELETE /api/kb/documents/:id", () => {
           userId: "u-det",
         },
       });
-      const id = up.json().document.id;
+      const id = up.json().data.document.id;
 
       const res = await app.inject({
         method: "GET",
@@ -308,8 +308,8 @@ describe("GET / DELETE /api/kb/documents/:id", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.document.id).toBe(id);
-      expect(body.chunkCount).toBeGreaterThan(0);
+      expect(body.data.document.id).toBe(id);
+      expect(body.data.chunkCount).toBeGreaterThan(0);
     } finally {
       await app.close();
     }
@@ -340,14 +340,14 @@ describe("GET / DELETE /api/kb/documents/:id", () => {
           userId: "u-del",
         },
       });
-      const id = up.json().document.id;
+      const id = up.json().data.document.id;
 
       const res1 = await app.inject({
         method: "DELETE",
         url: `/api/kb/documents/${id}`,
       });
       expect(res1.statusCode).toBe(200);
-      expect(res1.json()).toEqual({ deleted: true });
+      expect(res1.json()).toEqual({ success: true, data: { deleted: true } });
 
       const res2 = await app.inject({
         method: "DELETE",
@@ -390,11 +390,11 @@ describe("POST /api/kb/search", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(Array.isArray(body.hits)).toBe(true);
-      expect(body.count).toBe(body.hits.length);
-      expect(body.hits.length).toBeGreaterThan(0);
-      expect(body.hits[0].chunk).toBeDefined();
-      expect(body.hits[0].document).toBeDefined();
+      expect(Array.isArray(body.data.hits)).toBe(true);
+      expect(body.data.count).toBe(body.data.hits.length);
+      expect(body.data.hits.length).toBeGreaterThan(0);
+      expect(body.data.hits[0].chunk).toBeDefined();
+      expect(body.data.hits[0].document).toBeDefined();
     } finally {
       await app.close();
     }
@@ -434,11 +434,11 @@ describe("GET /api/kb/stats", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.documentCount).toBe(0);
-      expect(body.indexedCount).toBe(0);
-      expect(body.failedCount).toBe(0);
-      expect(body.totalBytes).toBe(0);
-      expect(body.totalChunks).toBe(0);
+      expect(body.data.documentCount).toBe(0);
+      expect(body.data.indexedCount).toBe(0);
+      expect(body.data.failedCount).toBe(0);
+      expect(body.data.totalBytes).toBe(0);
+      expect(body.data.totalChunks).toBe(0);
     } finally {
       await app.close();
     }
@@ -474,13 +474,13 @@ describe("GET /api/kb/stats", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.documentCount).toBe(2);
-      expect(body.indexedCount).toBe(2);
-      expect(body.failedCount).toBe(0);
-      expect(body.totalBytes).toBe(
+      expect(body.data.documentCount).toBe(2);
+      expect(body.data.indexedCount).toBe(2);
+      expect(body.data.failedCount).toBe(0);
+      expect(body.data.totalBytes).toBe(
         Buffer.byteLength(content1) + Buffer.byteLength(content2),
       );
-      expect(body.totalChunks).toBeGreaterThan(0);
+      expect(body.data.totalChunks).toBeGreaterThan(0);
     } finally {
       await app.close();
     }

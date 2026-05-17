@@ -38,6 +38,12 @@
     "status:prod": "pm2 status",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
+    "test:core": "pnpm --filter @super-agent/core test",
+    "test:api": "pnpm --filter @super-agent/api test",
+    "test:web": "pnpm --filter @super-agent/web test",
+    "test:e2e": "pnpm --filter @super-agent/e2e test",
+    "test:all": "pnpm test:core && pnpm test:api && pnpm test:web",
+    "test:ci": "pnpm test:core && pnpm test:api && pnpm test:web",
     "clean": "pnpm -r clean"
   },
   "engines": {

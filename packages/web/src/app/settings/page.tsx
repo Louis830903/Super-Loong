@@ -497,6 +497,7 @@ export default function SettingsPage() {
                       <select
                         value={currentModel || ""}
                         onChange={(e) => setSelectedModels((m) => ({ ...m, [provider.id]: e.target.value }))}
+                        data-testid="provider-select"
                         className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-white focus:border-blue-500 focus:outline-none"
                       >
                         <option value="">-- 请选择 --</option>
@@ -583,6 +584,7 @@ export default function SettingsPage() {
                     <button
                       onClick={() => handleSave(provider.id)}
                       disabled={saving[provider.id]}
+                      data-testid="save-settings"
                       className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                     >
                       {saving[provider.id] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}

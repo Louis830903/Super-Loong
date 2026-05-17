@@ -18,6 +18,11 @@ const CACHE_TTL_MS = 60 * 60 * 1000;
 
 let cachedResult: { data: VersionCheckResult; timestamp: number } | null = null;
 
+/** 测试用：清除 TTL 缓存 */
+export function clearVersionCache(): void {
+  cachedResult = null;
+}
+
 export function versionRoutes(app: FastifyInstance): void {
   app.get("/api/version", async (_request, reply) => {
     // 缓存命中且未过期 — 直接返回

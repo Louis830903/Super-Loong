@@ -136,7 +136,7 @@ export function VersionFooter({ variant = "footer" }: { variant?: "footer" | "ba
             )}
           </a>
         ) : (
-          <p className="text-xs text-zinc-500 truncate">
+          <p className="text-xs text-zinc-500 truncate" data-testid="version-display">
             Super Loong v{displayInfo?.current ?? info?.current ?? "0.1.0"}
           </p>
         )}

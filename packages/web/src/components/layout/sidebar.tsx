@@ -27,22 +27,22 @@ import { useState } from "react";
 import { VersionFooter } from "./version-footer";
 
 const navigation = [
-  { name: "仪表盘", href: "/dashboard", icon: LayoutDashboard },
-  { name: "Agent 管理", href: "/agents", icon: Bot },
-  { name: "对话", href: "/chat", icon: MessageSquare },
-  { name: "通道管理", href: "/channels", icon: Radio },
-  { name: "技能市场", href: "/skills", icon: Puzzle },
-  { name: "记忆管理", href: "/memory", icon: Brain },
-  { name: "知识库", href: "/knowledge", icon: BookMarked },
-  { name: "MCP 工具", href: "/mcp", icon: Plug },
-  { name: "定时任务", href: "/cron", icon: Clock },
-  { name: "多 Agent 协作", href: "/collaboration", icon: Users },
-  { name: "进化引擎", href: "/evolution", icon: Sparkles },
-  { name: "A2A 协议", href: "/a2a", icon: Globe },
-  { name: "媒体管理", href: "/media", icon: Image },
-  { name: "视频工作室", href: "/video-studio", icon: Video },
-  { name: "安全管理", href: "/security", icon: Shield },
-  { name: "系统设置", href: "/settings", icon: Settings },
+  { name: "仪表盘", href: "/dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
+  { name: "Agent 管理", href: "/agents", icon: Bot, testid: "nav-agents" },
+  { name: "对话", href: "/chat", icon: MessageSquare, testid: "nav-chat" },
+  { name: "通道管理", href: "/channels", icon: Radio, testid: "nav-channels" },
+  { name: "技能市场", href: "/skills", icon: Puzzle, testid: "nav-skills" },
+  { name: "记忆管理", href: "/memory", icon: Brain, testid: "nav-memory" },
+  { name: "知识库", href: "/knowledge", icon: BookMarked, testid: "nav-knowledge" },
+  { name: "MCP 工具", href: "/mcp", icon: Plug, testid: "nav-mcp" },
+  { name: "定时任务", href: "/cron", icon: Clock, testid: "nav-cron" },
+  { name: "多 Agent 协作", href: "/collaboration", icon: Users, testid: "nav-collaboration" },
+  { name: "进化引擎", href: "/evolution", icon: Sparkles, testid: "nav-evolution" },
+  { name: "A2A 协议", href: "/a2a", icon: Globe, testid: "nav-a2a" },
+  { name: "媒体管理", href: "/media", icon: Image, testid: "nav-media" },
+  { name: "视频工作室", href: "/video-studio", icon: Video, testid: "nav-video-studio" },
+  { name: "安全管理", href: "/security", icon: Shield, testid: "nav-security" },
+  { name: "系统设置", href: "/settings", icon: Settings, testid: "nav-settings" },
 ];
 
 export default function Sidebar() {
@@ -91,6 +91,7 @@ export default function Sidebar() {
                 key={item.name}
                 href={item.href}
                 onClick={() => setOpen(false)}
+                data-testid={item.testid}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                   active
