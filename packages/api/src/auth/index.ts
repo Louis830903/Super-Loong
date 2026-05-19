@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import pino from "pino";
 import type { AppContext } from "../context.js";
 import { safeEqualSecret } from "./secret-equal.js";
+import { sendError } from "../routes/response-helper.js";
 
 const logger = pino({ name: "auth" });
 
@@ -141,8 +142,25 @@ function getApiKeyStore(): ApiKeyStore {
 
 export async function registerAuth(app: FastifyInstance): Promise<void> {
   const enabled = process.env.AUTH_ENABLED === "true";
+
+  // v3 Task 12：生产环境必须开启鉴权，避免匿名访问漏洞
+  // @why 原设计 AUTH_ENABLED 默认 false 是为了开发便捷，但生产环境下
+  //       忘设会导致所有 API 裸奔（原 plan 所谓"ALLOW_ANON_API"问题的实际表现）。
+  //       这里在 production 模式下 fail-fast，迫使运维显式设置。
+  if (!enabled && process.env.NODE_ENV === "production") {
+    throw new Error(
+      "[SECURITY] AUTH_ENABLED 必须在生产环境设为 true。\n" +
+      "  设置 AUTH_ENABLED=true 并配置 JWT_SECRET / API_KEY 后重启。\n" +
+      "  生成 JWT_SECRET: node -e \"console.log(require('crypto').randomBytes(64).toString('hex'))\""
+    );
+  }
+
   if (!enabled) {
-    app.log.info("Auth disabled (set AUTH_ENABLED=true to enable)");
+    // v3 Task 12：非生产也应明示提醒，运维能在日志里 grep 到匿名状态
+    app.log.warn(
+      "[AUTH] 鉴权已禁用（AUTH_ENABLED 非 true）——所有 API 以匿名身份访问。\n" +
+      "  生产环境必须 AUTH_ENABLED=true；开发可保持默认。"
+    );
     return;
   }
 
@@ -219,7 +237,7 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
     if (apiKey) {
       const record = getApiKeyStore().validate(apiKey);
       if (!record) {
-        return reply.status(401).send({ error: "Invalid API key" });
+        return sendError(reply, 401, "INVALID_API_KEY", "API Key 无效或已禁用");
       }
       (request as any).authUser = {
         id: `apikey:${record.name}`,
@@ -237,11 +255,11 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
         (request as any).authUser = decoded;
         return;
       } catch {
-        return reply.status(401).send({ error: "Invalid or expired token" });
+        return sendError(reply, 401, "INVALID_TOKEN", "Token 无效或已过期");
       }
     }
 
-    return reply.status(401).send({ error: "Authentication required (API Key or Bearer token)" });
+    return sendError(reply, 401, "UNAUTHORIZED", "请提供 API Key 或 Bearer Token 进行身份认证");
   });
 
   app.log.info("Auth enabled: JWT + API Key");
@@ -255,13 +273,10 @@ export function requirePermission(permission: string) {
 
     const user = (request as any).authUser as AuthUser | null;
     if (!user) {
-      return reply.status(401).send({ error: "Not authenticated" });
+      return sendError(reply, 401, "UNAUTHORIZED", "未登录");
     }
     if (!hasPermission(user.role, permission)) {
-      return reply.status(403).send({
-        error: "Forbidden",
-        message: `Role '${user.role}' lacks permission '${permission}'`,
-      });
+      return sendError(reply, 403, "FORBIDDEN", `角色 '${user.role}' 无权限执行 '${permission}'`);
     }
   };
 }
@@ -283,11 +298,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     if (!adminUser || !adminPass) {
       logger.warn("ADMIN_USERNAME/ADMIN_PASSWORD not set, password login disabled");
-      return reply.status(503).send({ error: "Password login not configured. Set ADMIN_USERNAME and ADMIN_PASSWORD environment variables." });
+      return sendError(
+        reply, 503, "SERVICE_UNAVAILABLE",
+        "密码登录未配置，请设置 ADMIN_USERNAME 和 ADMIN_PASSWORD 环境变量",
+      );
     }
 
     if (username !== adminUser || !safeEqualSecret(password, adminPass)) {
-      return reply.status(401).send({ error: "Invalid credentials" });
+      return sendError(reply, 401, "UNAUTHORIZED", "用户名或密码错误");
     }
 
     const token = app.jwt.sign({
@@ -310,7 +328,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       });
       return { token, expiresIn: process.env.JWT_EXPIRES_IN ?? "24h" };
     } catch {
-      return reply.status(401).send({ error: "Invalid token" });
+      return sendError(reply, 401, "INVALID_TOKEN", "Token 无效，请重新登录");
     }
   });
 

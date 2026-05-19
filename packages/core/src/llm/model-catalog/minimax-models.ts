@@ -1,0 +1,81 @@
+// ─── MiniMax 模型列表 ──────────────────────────────────────────
+
+import type { ModelDef } from "../model-catalog.js";
+
+export const minimaxModels: ModelDef[] = [
+  // ── 旗舰系列 ────────────────────────────────────
+  {
+    id: "MiniMax-M2.7",
+    name: "MiniMax M2.7 (旗舰)",
+    contextWindow: 204800,
+    maxOutputTokens: 16384,
+    supportsFunctions: true,
+    supportsVision: false,
+    supportsReasoning: true,
+    supportsStreaming: true,
+    tags: ["flagship"],
+    pricing: { input: 2.1, output: 8.4, unit: "CNY/1M_tokens" },
+  },
+  {
+    id: "MiniMax-M2.7-highspeed",
+    name: "MiniMax M2.7 极速",
+    contextWindow: 204800,
+    maxOutputTokens: 16384,
+    supportsFunctions: true,
+    supportsVision: false,
+    supportsReasoning: false,
+    supportsStreaming: true,
+    tags: ["fast"],
+    pricing: { input: 4.2, output: 16.8, unit: "CNY/1M_tokens" },
+  },
+  // ── M2.5 编码系列 ────────────────────────────────
+  {
+    id: "MiniMax-M2.5",
+    name: "MiniMax M2.5 (编码增强)",
+    contextWindow: 204800,
+    maxOutputTokens: 16384,
+    supportsFunctions: true,
+    supportsVision: false,
+    supportsReasoning: true,
+    supportsStreaming: true,
+    tags: ["coding"],
+    pricing: { input: 1.05, output: 4.2, unit: "CNY/1M_tokens" },
+  },
+  {
+    id: "MiniMax-M2.5-highspeed",
+    name: "MiniMax M2.5 极速",
+    contextWindow: 204800,
+    maxOutputTokens: 16384,
+    supportsFunctions: true,
+    supportsVision: false,
+    supportsReasoning: false,
+    supportsStreaming: true,
+    tags: ["fast"],
+    pricing: { input: 2.1, output: 8.4, unit: "CNY/1M_tokens" },
+  },
+  // ── M2.1 / M2 通用系列 ───────────────────────────
+  {
+    id: "MiniMax-M2.1",
+    name: "MiniMax M2.1",
+    contextWindow: 204800,
+    maxOutputTokens: 16384,
+    supportsFunctions: true,
+    supportsVision: false,
+    supportsReasoning: false,
+    supportsStreaming: true,
+    tags: ["coding", "multilingual"],
+    pricing: { input: 2.1, output: 8.4, unit: "CNY/1M_tokens" },
+  },
+  {
+    id: "MiniMax-M2",
+    name: "MiniMax M2 (Agent 优化)",
+    contextWindow: 204800,
+    maxOutputTokens: 16384,
+    supportsFunctions: true,
+    supportsVision: false,
+    supportsReasoning: false,
+    supportsStreaming: true,
+    tags: ["agent"],
+    pricing: { input: 2.1, output: 8.4, unit: "CNY/1M_tokens" },
+  },
+];

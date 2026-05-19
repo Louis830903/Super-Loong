@@ -28,6 +28,8 @@ import type { AppContext } from "../context.js";
 import type { CrewResult, GroupChatResult, Attachment } from "@super-agent/core";
 import { getCollabOutputsRoot, getWorkspacePath, checkPythonDocLibs } from "@super-agent/core";
 import { sendSuccess, Errors } from "./response-helper.js";
+// v3 Task 4：向 IM 网关 /internal/deliver 调用也必须带 HMAC 签名
+import { signedGatewayHeaders } from "../middleware/internal-auth.js";
 
 // ─── 字符数限制常量（前后端共用同一套数值） ──────────────────────
 const LIMITS = {
@@ -365,7 +367,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
       return Errors.badRequest(reply, "Path is not a file");
     }
     if (stat.size > MAX_DOWNLOAD_SIZE) {
-      return reply.status(413).send({ error: `File too large (${stat.size} bytes, max ${MAX_DOWNLOAD_SIZE})` });
+      return Errors.payloadTooLarge(reply, `文件过大 (${stat.size} bytes, 上限 ${MAX_DOWNLOAD_SIZE})`);
     }
 
     // P1 安全加固：敏感文件名黑名单，禁止下载 .env / .db / .sqlite 等配置文件
@@ -420,30 +422,30 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     // 3. 通过 HTTP 调用 IM 网关的内部投递端点（松耦合，网关不可用只返回错误）
     const gatewayUrl = process.env.IM_GATEWAY_URL ?? "http://localhost:8765";
     try {
-      const resp = await fetch(`${gatewayUrl}/internal/deliver`, {
+      // v3 Task 4：为 /internal/deliver 生成 HMAC 签名头（flag off 时退化为旧 x-api-key）
+      // @why 该端点在网关侧不在豁免清单，未签名将被 401 拒绝
+      const deliverPath = "/internal/deliver";
+      const deliverBody = JSON.stringify({
+        channel_id: channelId,
+        chat_id: chatId,
+        thread_id: threadId ?? "",
+        text: deliverText,
+        attachments: allAttachments.map((att: Attachment) => ({
+          path: att.path ?? "",
+          filename: att.filename ?? "",
+          mime_type: att.mimeType ?? "",
+        })),
+      });
+      const resp = await fetch(`${gatewayUrl}${deliverPath}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          channel_id: channelId,
-          chat_id: chatId,
-          thread_id: threadId ?? "",
-          text: deliverText,
-          attachments: allAttachments.map((att: Attachment) => ({
-            path: att.path ?? "",
-            filename: att.filename ?? "",
-            mime_type: att.mimeType ?? "",
-          })),
-        }),
+        headers: signedGatewayHeaders("POST", deliverPath, deliverBody),
+        body: deliverBody,
       });
 
       if (!resp.ok) {
         const errBody = await resp.text().catch(() => "Unknown error");
         app.log.warn({ status: resp.status, body: errBody }, "IM gateway deliver failed");
-        const respPayload: Record<string, unknown> = { error: "IM gateway delivery failed" };
-        if (process.env.NODE_ENV !== "production") {
-          respPayload.detail = errBody;
-        }
-        return reply.status(502).send(respPayload);
+        return Errors.badGateway(reply, "IM 网关投递失败", process.env.NODE_ENV !== "production" ? errBody : undefined);
       }
 
       const deliverResult = await resp.json() as Record<string, unknown>;
@@ -570,7 +572,7 @@ export async function collaborationRoutes(app: FastifyInstance, ctx: AppContext)
     } catch (err: any) {
       // API-P1-03：ZIP 打包失败（大小超限或 IO 异常）仅日志，响应体给通用业务提示
       app.log.warn({ err, workspaceDir: realWsPath }, "ZIP packaging failed");
-      return reply.status(413).send({ error: "ZIP 打包失败或超出大小限制" });
+      return Errors.payloadTooLarge(reply, "ZIP 打包失败或超出大小限制");
     }
 
     // 7. 生成 ZIP 流并流式返回（P2-2：避免全量加载到内存导致 OOM）

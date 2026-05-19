@@ -10,6 +10,8 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import { randomUUID } from "node:crypto";
+import { sendError } from "../routes/response-helper.js";
+import { HTTP_STATUS_TO_CODE } from "@super-agent/web-types";
 
 // ─── Request ID ──────────────────────────────────────────────
 
@@ -91,12 +93,18 @@ export async function registerRateLimit(
     reply.header("X-RateLimit-Reset", Math.ceil((entry.lastRefill + cfg.windowMs) / 1000));
 
     if (entry.tokens <= 0) {
-      reply.header("Retry-After", Math.ceil(cfg.windowMs / 1000));
-      return reply.status(429).send({
-        error: "Too Many Requests",
-        message: `Rate limit exceeded. Try again in ${Math.ceil(cfg.windowMs / 1000)}s`,
-        retryAfter: Math.ceil(cfg.windowMs / 1000),
-      });
+      const retryAfter = Math.ceil(cfg.windowMs / 1000);
+      reply.header("Retry-After", retryAfter);
+      // v3 Task 3：统一走 sendError 返回标准壳
+      // @why 以前返回裸 {error,message,retryAfter}，与 response-helper 在同一个 API 里不一致
+      return sendError(
+        reply,
+        429,
+        "RATE_LIMITED",
+        `Rate limit exceeded. Try again in ${retryAfter}s`,
+        { retryAfter },
+        true, // exposeToClient：限流提示需要明文返回
+      );
     }
 
     entry.tokens--;
@@ -136,34 +144,29 @@ export async function registerErrorHandler(app: FastifyInstance): Promise<void> 
 
     // Zod validation errors → 400
     if (error instanceof ZodError) {
-      return reply.status(400).send({
-        error: "Validation Error",
-        message: "Request body validation failed",
-        details: error.errors.map((e) => ({
-          path: e.path.join("."),
-          message: e.message,
-        })),
-        requestId,
-      });
+      // v3 Task 3：走 sendError 统一壳；details 生产环境被 response-helper 自动脱敏
+      return sendError(
+        reply,
+        400,
+        "VALIDATION_ERROR",
+        "Request body validation failed",
+        error.errors.map((e) => ({ path: e.path.join("."), message: e.message })),
+        true, // 验证错误友好提示需要明文返回
+      );
     }
 
     // Fastify validation errors → 400
     if ((error as any).validation) {
-      return reply.status(400).send({
-        error: "Validation Error",
-        message: error.message,
-        requestId,
-      });
+      return sendError(reply, 400, "VALIDATION_ERROR", error.message, undefined, true);
     }
 
-    // Known status code errors
+    // Known status code errors → 用 HTTP_STATUS_TO_CODE 反查映射
+    // @why v3 Task 11：错误码字面量集中字典化，禁止由 error.name 拼装动态
+    //       字符串作为 code，会绕过编译期校验导致前端字典 miss。
     const statusCode = (error as any).statusCode;
     if (statusCode && statusCode < 500) {
-      return reply.status(statusCode).send({
-        error: error.name || "Error",
-        message: error.message,
-        requestId,
-      });
+      const code = HTTP_STATUS_TO_CODE[statusCode] ?? "BAD_REQUEST";
+      return sendError(reply, statusCode, code, error.message, undefined, true);
     }
 
     // Unexpected errors → 500
@@ -174,13 +177,8 @@ export async function registerErrorHandler(app: FastifyInstance): Promise<void> 
       requestId,
     }, "Unhandled error");
 
-    return reply.status(500).send({
-      error: "Internal Server Error",
-      message: process.env.NODE_ENV === "production"
-        ? "An unexpected error occurred"
-        : error.message,
-      requestId,
-    });
+    // v3 Task 3：sendError 内部会在生产脱敏 500 原始消息
+    return sendError(reply, 500, "INTERNAL_ERROR", error.message);
   });
 }
 
@@ -188,11 +186,15 @@ export async function registerErrorHandler(app: FastifyInstance): Promise<void> 
 
 export async function registerNotFoundHandler(app: FastifyInstance): Promise<void> {
   app.setNotFoundHandler(async (request: FastifyRequest, reply: FastifyReply) => {
-    return reply.status(404).send({
-      error: "Not Found",
-      message: `Route ${request.method} ${request.url} not found`,
-      requestId: (request as any).requestId,
-    });
+    // v3 Task 3：走 sendError 统一壳
+    return sendError(
+      reply,
+      404,
+      "NOT_FOUND",
+      `Route ${request.method} ${request.url} not found`,
+      undefined,
+      true,
+    );
   });
 }
 

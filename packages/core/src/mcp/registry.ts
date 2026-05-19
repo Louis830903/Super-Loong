@@ -181,7 +181,11 @@ export class MCPRegistry {
     }
     this.configs.delete(id);
     this.connectedAt.delete(id);
-    try { deleteMCPServerDB(id); } catch {}
+    // [v3 Task 5] DB 删除失败不阻塞内存反注册：内存已清理，影响仅限重启后该 server 复活
+    // @why MCP server 卸载链路必须保证内存一致，DB 状态可在下次启动用 unregister 修复
+    try { deleteMCPServerDB(id); } catch (err: unknown) {
+      logger.debug({ id, err: err instanceof Error ? err.message : String(err) }, "deleteMCPServerDB failed (non-fatal)");
+    }
     logger.info({ id, removedTools: removedToolNames.length }, "MCP server unregistered");
     return removedToolNames;
   }

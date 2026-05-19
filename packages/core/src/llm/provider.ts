@@ -8,6 +8,7 @@ import OpenAI from "openai";
 import pino from "pino";
 import type { LLMMessage, LLMProviderConfig, LLMResponse, LLMToolCall } from "../types/index.js";
 import { partitionToolCallsByJsonValidity } from "./tool-call-validator.js";
+import { llmCache } from "./cache.js";
 
 const logger = pino({ name: "llm-provider" });
 
@@ -132,6 +133,24 @@ export class LLMProvider {
   }
 
   private async _complete(params: LLMCompletionParams): Promise<LLMResponse> {
+    // ── v3 Task 10 LLM 语义缓存层 ──
+    const temperature = this.config.temperature ?? 0;
+    const cacheKey = llmCache.isCacheable(params, temperature)
+      ? llmCache.makeCacheKey(params, this.config.model)
+      : undefined;
+
+    // 缓存读取：命中则直接返回
+    if (cacheKey) {
+      const cached = llmCache.get(cacheKey);
+      if (cached) {
+        logger.debug(
+          { model: this.config.model, cacheKey: cacheKey.slice(0, 16) },
+          "LLM cache hit",
+        );
+        return cached;
+      }
+    }
+
     const needsReasoningField = this.usesReasoningContentField();
 
     // Hard AbortController timeout — ensures we NEVER hang beyond 120s
@@ -243,7 +262,7 @@ export class LLMProvider {
       })
     );
 
-    return {
+    const llmResponse: LLMResponse = {
       content: choice?.message?.content ?? null,
       toolCalls,
       reasoningContent,
@@ -256,6 +275,13 @@ export class LLMProvider {
         : undefined,
       finishReason: this.mapFinishReason(choice?.finish_reason),
     };
+
+    // 缓存写入（异步 fire-and-forget，不阻塞返回）
+    if (cacheKey) {
+      llmCache.set(cacheKey, params, this.config.model, llmResponse);
+    }
+
+    return llmResponse;
     } finally {
       clearTimeout(timer);
     }

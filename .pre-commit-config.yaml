@@ -1,0 +1,46 @@
+# v3 Task 0a: pre-commit 纵深防御 —— 敏感信息泄露阻断
+#
+# 使用方法：
+#   1. pip install pre-commit detect-secrets
+#   2. pre-commit install          # 安装 git hook
+#   3. detect-secrets scan > .secrets.baseline   # 生成基线（存量豁免）
+#   4. detect-secrets audit .secrets.baseline    # 审计基线中的告警
+#
+# CI 建议：
+#   - Linux CI 额外安装 git-secrets（brew install git-secrets）扫描 AWS 密钥
+#   - 本配置中的 aws-key-check 脚本在 Win/Linux/macOS 均可运行
+#
+# @issue V3-001
+
+repos:
+  # ── 通用密钥扫描（detect-secrets，本地 pip 安装）──
+  - repo: local
+    hooks:
+      - id: detect-secrets
+        name: detect-secrets 密钥扫描
+        entry: detect-secrets-hook
+        language: system
+        args: ["--baseline", ".secrets.baseline"]
+        files: \.(ts|tsx|js|jsx|json|yml|yaml|py|env|cfg|toml|sh|ps1)$
+        exclude: >
+          (?x)^(
+            .*pnpm-lock\.yaml|
+            .*\.test\.ts|
+            .*\.spec\.ts|
+            .*\.snap|
+            \.secrets\.baseline
+          )$
+
+  # ── AWS/API 密钥模式补充扫描（弥补 Windows 无 git-secrets）──
+  - repo: local
+    hooks:
+      - id: secret-pattern-check
+        name: 密钥模式正则检查
+        entry: powershell -NoProfile -File scripts/check-secrets.ps1
+        language: system
+        files: \.(ts|tsx|js|jsx|json|yml|yaml|py|env|cfg|toml|sh|ps1)$
+        exclude: >
+          (?x)^(
+            .*pnpm-lock\.yaml|
+            \.secrets\.baseline
+          )$

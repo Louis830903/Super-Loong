@@ -9,7 +9,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ConfigStore } from "@super-agent/core";
 import type { AppContext } from "../context.js";
-import { sendSuccess, Errors } from "./response-helper.js";
+import { sendSuccess, sendError, Errors } from "./response-helper.js";
 
 // ─── 多 Provider 自动降级链类型 ─────────────────────────────
 type SttProvider = "stt-custom" | "aliyun-nls" | "llm-whisper" | "groq";
@@ -303,14 +303,12 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
       const rmsPeak: number | undefined = (typeof body === "object" && typeof body.rmsPeak === "number")
         ? body.rmsPeak : undefined;
 
-      // 无可用 provider → 503
+      // 无可用 provider → 503（v3 Task 11：走统一 sendError 壳）
       if (providers.length === 0) {
-        return reply.status(503).send({
-          error: "语音识别未配置",
-          detail: "请前往设置页面配置语音识别服务。",
+        return sendError(reply, 503, "SERVICE_UNAVAILABLE", "语音识别未配置", {
           hint: "零配置方案：使用 OpenAI API Key 即可直接用语音输入。免费方案：去 groq.com 获取免费 API Key 并设置 GROQ_API_KEY 环境变量。",
           providers: [],
-        });
+        }, true);
       }
 
       // 多 Provider 自动降级尝试
@@ -333,8 +331,8 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
       return sendSuccess(reply, result);
     } catch (err: any) {
       app.log.error({ err }, "Voice transcription failed");
-      // API-P1-03：内部栈仅进日志
-      return Errors.internal(reply, "Voice transcription failed");
+      // v3 Task 11：区分 STT 不可用与内部错误，前端可按 STT_UNAVAILABLE 做友好提示
+      return sendError(reply, 503, "STT_UNAVAILABLE", "语音转写失败", undefined, true);
     }
   });
 

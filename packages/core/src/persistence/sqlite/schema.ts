@@ -205,10 +205,22 @@ export function createInitialSchema(db: SqlJsDatabase): void {
     `);
 
     // [v3 Task 3-8a] 新增调度类型字段（ALTER TABLE ADD COLUMN 仅对已有表有效）
-    try { db.run(`ALTER TABLE cron_jobs ADD COLUMN scheduleType TEXT DEFAULT 'cron'`); } catch {}
-    try { db.run(`ALTER TABLE cron_jobs ADD COLUMN runAt TEXT`); } catch {}
-    try { db.run(`ALTER TABLE cron_jobs ADD COLUMN intervalMs INTEGER`); } catch {}
-    try { db.run(`ALTER TABLE cron_jobs ADD COLUMN timeoutSeconds INTEGER`); } catch {}
+    // @why 列已存在时 SQLite 会抛 "duplicate column name"，这是幂等迁移的预期行为；
+    //       仅在 debug 级别记录，避免日志噪声但保留可观察性。
+    const tryAlter = (sql: string, col: string) => {
+      try { db.run(sql); }
+      catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // duplicate column 是预期：列已存在；其他错误才需关注
+        if (!/duplicate column/i.test(msg)) {
+          logger.debug({ col, err: msg }, "ALTER TABLE cron_jobs ADD COLUMN failed (non-fatal)");
+        }
+      }
+    };
+    tryAlter(`ALTER TABLE cron_jobs ADD COLUMN scheduleType TEXT DEFAULT 'cron'`, "scheduleType");
+    tryAlter(`ALTER TABLE cron_jobs ADD COLUMN runAt TEXT`, "runAt");
+    tryAlter(`ALTER TABLE cron_jobs ADD COLUMN intervalMs INTEGER`, "intervalMs");
+    tryAlter(`ALTER TABLE cron_jobs ADD COLUMN timeoutSeconds INTEGER`, "timeoutSeconds");
 
     db.run(`
       CREATE TABLE IF NOT EXISTS cron_history (

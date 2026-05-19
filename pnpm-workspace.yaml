@@ -1,6 +1,7 @@
 packages:
   - "packages/*"
   - "services/*"
+  - "video-intro"
 allowBuilds:
   better-sqlite3: true
   esbuild: false

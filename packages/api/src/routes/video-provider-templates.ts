@@ -156,9 +156,7 @@ export async function videoProviderTemplateRoutes(app: FastifyInstance): Promise
     // 禁止直接通过 PUT 修改系统预设（即便能命中 id，updateProviderTemplate
     // 的 WHERE is_preset = 0 也会拦截，但在这里提前返回更清晰）
     if (PROVIDER_PRESETS.some((p) => p.id === id)) {
-      return reply.status(403).send({
-        error: "System preset cannot be modified. Clone it as a user template first.",
-      });
+      return Errors.forbidden(reply, "系统预设模板不可直接修改，请先克隆为用户模板");
     }
 
     const parsed = UpdateTemplateSchema.safeParse(request.body);

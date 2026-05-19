@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { apiFetch, showToast } from "@/lib/utils";
+import type { SchemaOf } from "@super-agent/web-types";
 import {
   Radio, Plus, Trash2, CheckCircle, XCircle, Wifi, WifiOff,
   Loader2, RefreshCw, Activity, Clock, AlertTriangle,
@@ -10,55 +11,19 @@ import {
 
 // ─── 类型定义（对齐 v2 Schema 驱动 API）─────────────────
 
-interface FieldSchema {
-  key: string;
-  label: string;
-  type: "string" | "secret" | "number" | "boolean" | "select" | "url";
-  required: boolean;
-  default: unknown;
-  placeholder: string;
-  help_text: string;
-  options: { value: string; label: string }[];
-  group: string;
-  order: number;
-}
+// ─── 类型定义（从 zod schema 自动生成，跳过手写）──────────────────
+// @why v3 Task 6 B-3' 试点：以 packages/api/src/schemas/gateway.ts 里的
+//        zod schema 为唯一数据源，通过 gen:types 错闸门保证同步。
+//        后端响应体一变动 → ts 类型自动变动 → 这里编译即报错。
 
-interface ChannelSchema {
-  channel_id: string;
-  channel_label: string;
-  docs_url: string;
-  setup_guide: string;
-  fields: FieldSchema[];
-}
+type FieldSchema = SchemaOf<"GatewayChannelField">;
+type ChannelSchema = SchemaOf<"GatewayChannelSchema">;
+type ChannelStatus = SchemaOf<"GatewayChannelStatus">;
+type HealthEntry = SchemaOf<"GatewayHealthEntry">;
+type GatewayHealth = SchemaOf<"GatewayHealth">;
 
-interface ChannelStatus {
-  id: string;
-  label: string;
-  connected: boolean;
-  last_error: string | null;
-  has_qr_login: boolean;
-  has_doctor: boolean;
-  has_setup: boolean;
-  capabilities: { media: boolean; threads: boolean; block_streaming: boolean };
-}
-
-interface HealthEntry {
-  status: string;
-  severity: number;
-  needs_restart: boolean;
-  cooldown_remaining: number;
-}
-
-interface GatewayHealth {
-  status: string;
-  version: string;
-  api_connection: string;
-  channels: Record<string, { connected: boolean; last_error: string | null }>;
-  channel_count: number;
-  active_sessions: number;
-  health: Record<string, HealthEntry>;
-  reconnect: Record<string, unknown>;
-}
+// HealthEntry 不被本文件直接使用，仅作为类型导出（供后续改造复用）
+export type { HealthEntry };
 
 // ─── 样式映射 ────────────────────────────────────────
 
@@ -153,11 +118,17 @@ export default function ChannelsPage() {
     try {
       const s = await apiFetch<ChannelSchema[]>("/api/gateway/channels/schemas");
       setSchemas(Array.isArray(s) ? s : []);
-    } catch {}
+    } catch (err) {
+      // [v3 Task 5] 网关未就绪时 schemas 请求会失败，不阻塞主页面渲染
+      console.debug("[channels] load schemas failed (gateway offline?)", err);
+    }
     try {
       const data = await apiFetch<{ channels: ChannelStatus[] }>("/api/gateway/channels/list");
       setChannelList(data?.channels || []);
-    } catch {}
+    } catch (err) {
+      // [v3 Task 5] 同上，网关未连时 channels list 请求失败可接受
+      console.debug("[channels] load channel list failed (gateway offline?)", err);
+    }
     setLoading(false);
   }, []);
 

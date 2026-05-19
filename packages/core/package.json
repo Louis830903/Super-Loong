@@ -16,7 +16,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsup src/index.ts --format esm --dts --external ssh2 --external cpu-features --external better-sqlite3",
     "test": "vitest run",
-    "clean": "rimraf dist"
+    "clean": "rimraf dist",
+    "sunset:check": "tsx src/config/sunset-check.ts"
   },
   "dependencies": {
     "@super-agent/research": "workspace:*",

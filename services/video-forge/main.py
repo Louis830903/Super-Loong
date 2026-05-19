@@ -15,7 +15,7 @@ import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from loguru import logger
 
 
@@ -99,6 +99,36 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# ── v3 Task 11：统一错误码异常处理器 ──────────────────────
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent.parent))
+from error_codes import error_response
+
+_HTTP_STATUS_TO_CODE: dict[int, str] = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    413: "PAYLOAD_TOO_LARGE",
+    422: "UNPROCESSABLE_ENTITY",
+    429: "RATE_LIMITED",
+    500: "INTERNAL_ERROR",
+    501: "NOT_IMPLEMENTED",
+    502: "BAD_GATEWAY",
+    503: "SERVICE_UNAVAILABLE",
+    504: "GATEWAY_TIMEOUT",
+}
+
+@app.exception_handler(HTTPException)
+async def _http_exc_handler(request: Request, exc: HTTPException):
+    code = _HTTP_STATUS_TO_CODE.get(exc.status_code, "INTERNAL_ERROR")
+    return error_response(exc.status_code, code, str(exc.detail))
+
+@app.exception_handler(Exception)
+async def _global_exc_handler(request: Request, exc: Exception):
+    logger.error(f"全局异常: {request.url.path} -> {type(exc).__name__}: {exc}")
+    return error_response(500, "INTERNAL_ERROR", f"{type(exc).__name__}: {exc}")
 
 # 挂载路由
 app.include_router(health_router)

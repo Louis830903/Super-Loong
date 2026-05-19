@@ -170,7 +170,10 @@ export default function AgentsPage() {
       setEditAgent(null);
       setForm({ name: "", description: "", model: "", provider: providers[0]?.id || "", systemPrompt: "You are a helpful assistant." });
       fetchAgents();
-    } catch {}
+    } catch (err) {
+      // [v3 Task 5] 表单提交失败不中断 UI。@why API 已返回错误响应壳，这里仅处理网络层异常
+      console.debug("[agents] handleCreate failed", err);
+    }
   };
 
   const handleDelete = async (id: string) => {

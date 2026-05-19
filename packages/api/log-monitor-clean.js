@@ -237,7 +237,7 @@ document.querySelectorAll('.filter-btn').forEach(btn=>{
 searchEl.addEventListener('input',refilter);
 document.getElementById('clear-btn').addEventListener('click',()=>{logsEl.innerHTML='';lineCount=0;statsEl.textContent='0 lines'});
 const evtSource=new EventSource('/events');
-evtSource.onmessage=(e)=>{try{addLogLine(JSON.parse(e.data))}catch{}};
+evtSource.onmessage=(e)=>{try{addLogLine(JSON.parse(e.data))}catch(err){console.debug('[log-monitor] parse error',err)}};
 evtSource.onerror=()=>{document.querySelector('.pulse').style.background='#da3633';document.querySelector('#status-bar span').innerHTML='<span class="pulse" style="background:#da3633"></span>Disconnected - retrying...'};
 </script>
 </body>

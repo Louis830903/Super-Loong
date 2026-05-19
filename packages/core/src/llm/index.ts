@@ -4,3 +4,5 @@ export { getModelCatalog, getProviderById, getModelById } from "./model-catalog.
 export type { ModelDef, ProviderDef } from "./model-catalog.js";
 export { ProviderStore } from "./provider-store.js";
 export type { ProviderRecord } from "./provider-store.js";
+export { llmCache, LLMCache } from "./cache.js";
+export type { LLMCacheEntry } from "./cache.js";

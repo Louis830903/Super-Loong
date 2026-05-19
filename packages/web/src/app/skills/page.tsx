@@ -112,7 +112,10 @@ export default function SkillsPage() {
         }),
       });
       fetchSkills();
-    } catch {}
+    } catch (err) {
+      // [v3 Task 5] 安装 skill 失败不中断 UI，installing 状态仍会被外层 finally 重置
+      console.debug("[skills] install failed", err);
+    }
     setInstalling(null);
   };
 

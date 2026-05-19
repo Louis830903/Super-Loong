@@ -27,6 +27,28 @@ from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 import traceback as _tb
 
+# ── v3 Task 11：统一错误码（与 TS web-types /** 对齐）──────────
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from error_codes import error_response
+
+# HTTP status → 错误码快速映射
+_HTTP_STATUS_TO_CODE: dict[int, str] = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    409: "CONFLICT",
+    413: "PAYLOAD_TOO_LARGE",
+    422: "UNPROCESSABLE_ENTITY",
+    429: "RATE_LIMITED",
+    500: "INTERNAL_ERROR",
+    501: "NOT_IMPLEMENTED",
+    502: "BAD_GATEWAY",
+    503: "SERVICE_UNAVAILABLE",
+    504: "GATEWAY_TIMEOUT",
+}
+
 # ── 基建模块：配置 + 日志 + 状态 ────────────────────
 from config_manager import load_config, validate_config, GatewayConfig
 from structured_logger import setup_logging, create_logger, new_trace_id
@@ -574,21 +596,27 @@ async def api_key_middleware(request: Request, call_next):
     if IM_GATEWAY_API_KEY:
         key = request.headers.get("x-api-key", "")
         if not hmac.compare_digest(key, IM_GATEWAY_API_KEY):
-            return JSONResponse(status_code=401, content={"error": "Invalid or missing API key"})
+            return error_response(401, "UNAUTHORIZED", "Invalid or missing API key")
     try:
         return await call_next(request)
     except Exception as exc:
         logger.error(f"请求处理异常: {request.url.path} -> {type(exc).__name__}: {exc}")
         logger.error(_tb.format_exc())
-        return JSONResponse(status_code=500, content={"error": f"{type(exc).__name__}: {exc}"})
+        return error_response(500, "INTERNAL_ERROR", f"{type(exc).__name__}: {exc}")
 
 
 # 全局异常兜底：捕获所有未处理的异常
+@app.exception_handler(HTTPException)
+async def _http_exc_handler(request: Request, exc: HTTPException):
+    """v3 Task 11：HTTPException 也走统一 error_response 壳，按状态码映射"""
+    code = _HTTP_STATUS_TO_CODE.get(exc.status_code, "INTERNAL_ERROR")
+    return error_response(exc.status_code, code, str(exc.detail))
+
 @app.exception_handler(Exception)
 async def _global_exc_handler(request: Request, exc: Exception):
     logger.error(f"全局异常: {request.url.path} -> {type(exc).__name__}: {exc}")
     logger.error(_tb.format_exc())
-    return JSONResponse(status_code=500, content={"error": f"{type(exc).__name__}: {exc}"})
+    return error_response(500, "INTERNAL_ERROR", f"{type(exc).__name__}: {exc}")
 
 
 # ======== API 模型 ========

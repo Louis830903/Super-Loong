@@ -93,7 +93,10 @@ export default function MemoryPage() {
         );
         setMemories((data.results ?? []).map((r) => ({ ...r.entry, _score: r.score })));
       }
-    } catch {}
+    } catch (err) {
+      // [v3 Task 5] 记忆检索失败不中断 UI，保持上次结果
+      console.debug("[memory] search failed", err);
+    }
     setLoading(false);
   };
 

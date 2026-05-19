@@ -35,7 +35,7 @@ const themeScript = `
         }
       }
     }
-  } catch(e) {}
+  } catch(e) { /* @why 初始主题 IIFE：localStorage / matchMedia 在某些隐私模式下会报错，吞错以保证页面必须可渲染 */ }
 })();
 `;
 

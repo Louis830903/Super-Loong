@@ -1,4 +1,4 @@
-# ====== 依赖与构建 ======
+# ====== 依赖与构�?======
 node_modules/
 dist/
 .next/
@@ -6,9 +6,29 @@ coverage/
 .turbo/
 *.tsbuildinfo
 
+# ====== v3 Task 6 OpenAPI codegen 中间产物 ======
+# zod schema 生成的 openapi.json 是构建中间件，每次 gen:openapi 都会重生成，不入库；
+# 但 packages/web-types/src/generated.ts 必须入库（gen:types:check 漂移闸门基线）
+packages/api/openapi/openapi.json
+
 # ====== 环境配置（含密钥）======
+# v3 Task 0a 纵深防御：所有 .env.* 默认忽略，仅放行 .env.example 模板
 .env
 .env.local
+.env.production
+.env.staging
+.env.*.local
+!.env.example
+
+# ====== 凭据保险柜（v3 Task 0a 新增）======
+# 主密钥/单文件保险柜数据，绝不入库；example 模板放行
+vault/
+!vault/vault.example.json
+*.vault.json
+*.master.key
+*.pem
+*.p12
+*.pfx
 
 # ====== 数据库文件 ======
 *.db

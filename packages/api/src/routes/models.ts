@@ -242,10 +242,7 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
       } catch (err) {
         // API-P1-03：详细错误仅进日志，对外统一 502 不回显内部栈
         app.log.error({ providerId: id, modelId, err }, "Provider connectivity test failed");
-        return reply.status(502).send({
-          success: false,
-          error: "Connection failed",
-        });
+        return Errors.badGateway(reply, "模型连接测试失败", { providerId: id, modelId });
       }
     }
   );

@@ -169,7 +169,10 @@ function connectSSE() {
       if (entry.isSpan && entry.parsed?.extra) {
         addTraceSpan(entry.parsed.extra);
       }
-    } catch {}
+    } catch (err) {
+      // [v3 Task 5] SSE 消息解析失败不中断连接；debug 日志保留可观察
+      console.debug('[monitor] SSE parse error', err);
+    }
   };
   evtSource.onerror = () => {
     connDot.className = 'dot disconnected';
@@ -186,7 +189,10 @@ function connectTraceSse() {
     try {
       const span = JSON.parse(e.data);
       if (span.type === 'span') addTraceSpan(span);
-    } catch {}
+    } catch (err) {
+      // [v3 Task 5] trace SSE 解析失败同上
+      console.debug('[monitor] trace SSE parse error', err);
+    }
   };
 }
 connectTraceSse();

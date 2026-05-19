@@ -44,7 +44,16 @@
     "test:e2e": "pnpm --filter @super-agent/e2e test",
     "test:all": "pnpm test:core && pnpm test:api && pnpm test:web",
     "test:ci": "pnpm test:core && pnpm test:api && pnpm test:web",
-    "clean": "pnpm -r clean"
+    "clean": "pnpm -r clean",
+    "check:sensitive": "node scripts/check-sensitive-files.mjs",
+    "check:sensitive:ci": "node scripts/check-sensitive-files.mjs --ci",
+    "check:empty-catch": "node scripts/check-empty-catch.mjs",
+    "check:empty-catch:staged": "node scripts/check-empty-catch.mjs --staged",
+    "check:why": "node scripts/check-why-comments.mjs",
+    "check:why:staged": "node scripts/check-why-comments.mjs --staged",
+    "gen:openapi": "pnpm --filter @super-agent/api gen:openapi",
+    "gen:types": "pnpm --filter @super-agent/api gen:types",
+    "gen:types:check": "pnpm --filter @super-agent/api gen:types:check"
   },
   "engines": {
     "node": ">=20.0.0",
@@ -52,6 +61,13 @@
   },
   "dependencies": {
     "skillhub": "^0.2.11"
+  },
+  "pnpm": {
+    "overrides": {
+      "@types/react": "18.3.0",
+      "@types/react-dom": "18.3.0",
+      "zod@^3.0.0": "3.25.76"
+    }
   },
   "devDependencies": {
     "tsx": "^4.21.0"

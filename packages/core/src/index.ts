@@ -15,6 +15,8 @@ export * from "./types/index.js";
 
 // Config (path resolution)
 export { resolveHome, resetResolvedHome, paths, ensureDirectories } from "./config/index.js";
+// v3 Task 3：暴露 FeatureFlags 给 api / web，所有 v3 闸门统一从这里读
+export { FeatureFlags } from "./config/feature-flags.js";
 
 // Agent
 export { AgentRuntime, AgentManager } from "./agent/index.js";

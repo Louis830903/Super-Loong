@@ -85,7 +85,10 @@ export default function CronPage() {
     try {
       await apiFetch(`/api/cron/jobs/${id}/run`, { method: "POST" });
       fetchJobs();
-    } catch {}
+    } catch (err) {
+      // [v3 Task 5] 手动触发 cron 失败不需中断 UI；API 错误会以响应壳返回
+      console.debug("[cron] handleRunNow failed", err);
+    }
     setRunning(null);
   };
 

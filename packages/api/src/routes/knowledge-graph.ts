@@ -50,16 +50,17 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
   const kg = ctx.knowledgeGraph;
 
   // 所有端点的前置守护：KnowledgeGraph 未初始化时返回 501
-  const guard = () => {
-    if (!kg) return { error: "KnowledgeGraph 未初始化", code: 501 as const };
+  // v3 Task 11：改为统一 Errors.serviceUninitialized，走 sendError 标准壳
+  const guard = (reply: Parameters<typeof Errors.serviceUninitialized>[0]) => {
+    if (!kg) return Errors.serviceUninitialized(reply, "KnowledgeGraph 未初始化");
     return null;
   };
 
   // ─── GET /api/knowledge/stats ─────────────────────────────
 
   app.get("/api/knowledge/stats", async (_req, reply) => {
-    const err = guard();
-    if (err) return reply.status(err.code).send({ error: err.error });
+    const err = guard(reply);
+    if (err) return err;
     return sendSuccess(reply, {
       tripleCount: kg!.countTriples(),
     });
@@ -68,8 +69,8 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
   // ─── GET /api/knowledge/entities/:name ────────────────────
 
   app.get("/api/knowledge/entities/:name", async (req, reply) => {
-    const err = guard();
-    if (err) return reply.status(err.code).send({ error: err.error });
+    const err = guard(reply);
+    if (err) return err;
 
     const { name } = req.params as { name: string };
     const entityId = kg!.findEntityId(decodeURIComponent(name));
@@ -85,8 +86,8 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
   // ─── POST /api/knowledge/search ───────────────────────────
 
   app.post("/api/knowledge/search", async (req, reply) => {
-    const err = guard();
-    if (err) return reply.status(err.code).send({ error: err.error });
+    const err = guard(reply);
+    if (err) return err;
 
     const parsed = SubgraphSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -100,8 +101,8 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
   // ─── POST /api/knowledge/path ─────────────────────────────
 
   app.post("/api/knowledge/path", async (req, reply) => {
-    const err = guard();
-    if (err) return reply.status(err.code).send({ error: err.error });
+    const err = guard(reply);
+    if (err) return err;
 
     const parsed = PathSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -115,8 +116,8 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
   // ─── GET /api/knowledge/export ────────────────────────────
 
   app.get("/api/knowledge/export", async (req, reply) => {
-    const err = guard();
-    if (err) return reply.status(err.code).send({ error: err.error });
+    const err = guard(reply);
+    if (err) return err;
 
     const query = req.query as { rootId?: string; depth?: string; format?: string };
     const rootId = parseInt(query.rootId ?? "0", 10);
@@ -139,8 +140,8 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
   // ─── POST /api/knowledge/triples ──────────────────────────
 
   app.post("/api/knowledge/triples", async (req, reply) => {
-    const err = guard();
-    if (err) return reply.status(err.code).send({ error: err.error });
+    const err = guard(reply);
+    if (err) return err;
 
     const parsed = AddTripleSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -153,8 +154,8 @@ export async function knowledgeGraphRoutes(app: FastifyInstance, ctx: AppContext
   // ─── DELETE /api/knowledge/triples ────────────────────────
 
   app.delete("/api/knowledge/triples", async (req, reply) => {
-    const err = guard();
-    if (err) return reply.status(err.code).send({ error: err.error });
+    const err = guard(reply);
+    if (err) return err;
 
     const parsed = DeleteTripleSchema.safeParse(req.body);
     if (!parsed.success) {

@@ -1,0 +1,9 @@
+# v3 Task 6 — 自动生成产物强制 LF 行尾
+#
+# 防止 git autocrlf=true 的 Windows 开发者把 generated.ts 改成 CRLF，
+# 触发 gen:types:check 漂移检测误报失败。
+packages/web-types/src/generated.ts text eol=lf
+packages/api/openapi/openapi.json text eol=lf
+
+# 守卫脚本：跨平台一致换行，避免 fork-exec 时 shell 解析差异
+scripts/*.mjs text eol=lf

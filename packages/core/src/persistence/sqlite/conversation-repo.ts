@@ -136,6 +136,10 @@ export function deleteConversation(id: string): boolean {
 /**
  * 原子替换会话的所有消息 — 用于压缩后持久化。
  * 在事务中先删除旧消息，再批量插入新消息，保证一致性。
+ *
+ * v3 Task 10 优化：批量 INSERT 替代逐行循环（消除 N+1 查询）。
+ *   - 每批最多 100 条消息（SQLite 默认参数上限 999 / 8 列 ≈ 124）
+ *   - 在同一事务内执行全部批量，保证原子性
  */
 export function replaceConvMessages(
   conversationId: string,
@@ -143,18 +147,58 @@ export function replaceConvMessages(
 ): void {
   const db = getDatabase();
   const now = new Date().toISOString();
+
+  // 空消息列表：直接清空消息并更新计数
+  if (messages.length === 0) {
+    db.run("BEGIN TRANSACTION");
+    try {
+      db.run("DELETE FROM conv_messages WHERE conversationId = ?", [conversationId]);
+      db.run(
+        "UPDATE conversations SET messageCount = 0, updatedAt = ?, lastMessagePreview = NULL WHERE id = ?",
+        [now, conversationId],
+      );
+      db.run("COMMIT");
+    } catch (err) {
+      db.run("ROLLBACK");
+      throw err;
+    }
+    scheduleSave();
+    return;
+  }
+
   db.run("BEGIN TRANSACTION");
   try {
     db.run("DELETE FROM conv_messages WHERE conversationId = ?", [conversationId]);
-    for (const msg of messages) {
-      db.run(
-        `INSERT INTO conv_messages (conversationId, role, content, toolCallId, toolCalls, toolName, timestamp, tokenCount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [conversationId, msg.role, msg.content ?? null, msg.toolCallId ?? null,
-         msg.toolCalls ?? null, msg.toolName ?? null, now, null],
-      );
+
+    // 批量插入：每批 100 条，避免 SQLite 参数上限
+    const BATCH_SIZE = 100;
+    const cols = ["conversationId", "role", "content", "toolCallId", "toolCalls", "toolName", "timestamp", "tokenCount"];
+    const placeholders = cols.map(() => "?").join(", ");
+
+    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE);
+      const valueRows: string[] = [];
+      const flatParams: unknown[] = [];
+
+      for (const msg of batch) {
+        valueRows.push(`(${placeholders})`);
+        flatParams.push(
+          conversationId,
+          msg.role,
+          msg.content ?? null,
+          msg.toolCallId ?? null,
+          msg.toolCalls ?? null,
+          msg.toolName ?? null,
+          now,
+          null, // tokenCount
+        );
+      }
+
+      const sql = `INSERT INTO conv_messages (${cols.join(", ")}) VALUES ${valueRows.join(", ")}`;
+      db.run(sql, flatParams);
     }
-    const preview = messages.length > 0 ? (messages[messages.length - 1].content ?? "").slice(0, 80) : null;
+
+    const preview = messages[messages.length - 1].content?.slice(0, 80) ?? null;
     db.run(
       "UPDATE conversations SET messageCount = ?, updatedAt = ?, lastMessagePreview = ? WHERE id = ?",
       [messages.length, now, preview, conversationId],

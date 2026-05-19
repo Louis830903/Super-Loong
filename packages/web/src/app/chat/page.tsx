@@ -462,7 +462,7 @@ export default function ChatPage() {
       const r = new api();
       r.continuous = false;
       r.interimResults = false;
-      const timeout = setTimeout(() => { try { r.abort(); } catch {} resolve(false); }, 2000);
+      const timeout = setTimeout(() => { try { r.abort(); } catch (err) { console.debug("[speech] abort failed", err); } resolve(false); }, 2000);
       r.onstart = () => { clearTimeout(timeout); r.stop(); };
       r.onresult = () => { clearTimeout(timeout); resolve(true); };
       r.onerror = () => { clearTimeout(timeout); resolve(false); };

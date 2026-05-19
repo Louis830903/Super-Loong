@@ -24,7 +24,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -75,6 +75,28 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# ── v3 Task 11：统一错误码异常处理器 ──────────────────────
+import sys as _sys
+_sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
+from error_codes import error_response
+
+_HTTP_STATUS_TO_CODE: dict[int, str] = {
+    400: "BAD_REQUEST",
+    404: "NOT_FOUND",
+    500: "INTERNAL_ERROR",
+    503: "SERVICE_UNAVAILABLE",
+}
+
+@app.exception_handler(HTTPException)
+async def _http_exc_handler(request: Request, exc: HTTPException):
+    code = _HTTP_STATUS_TO_CODE.get(exc.status_code, "INTERNAL_ERROR")
+    return error_response(exc.status_code, code, str(exc.detail))
+
+@app.exception_handler(Exception)
+async def _global_exc_handler(request: Request, exc: Exception):
+    logger.error(f"全局异常: {request.url.path} -> {type(exc).__name__}: {exc}")
+    return error_response(500, "INTERNAL_ERROR", f"{type(exc).__name__}: {exc}")
 
 
 # ── 数据模型 ──────────────────────────────────────────────────

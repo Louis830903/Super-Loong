@@ -188,7 +188,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     }
     const targetMeta = (target.config as unknown as Record<string, unknown>)?.metadata as Record<string, unknown> | undefined;
     if (targetMeta?.isBuiltin) {
-      return reply.status(403).send({ error: "内置专家 Agent 不可直接修改，请 Fork 后编辑" });
+      return Errors.builtinAgentImmutable(reply, "内置专家 Agent 不可直接修改，请 Fork 后编辑");
     }
 
     const parsed = AgentConfigSchema.partial().safeParse(request.body);
@@ -226,7 +226,7 @@ export async function agentRoutes(app: FastifyInstance, ctx: AppContext) {
     }
     const meta = (agent.config as unknown as Record<string, unknown>)?.metadata as Record<string, unknown> | undefined;
     if (meta?.isBuiltin) {
-      return reply.status(403).send({ error: "内置专家 Agent 不可删除，可使用 Fork 创建自定义副本" });
+      return Errors.builtinAgentImmutable(reply, "内置专家 Agent 不可删除，可使用 Fork 创建自定义副本");
     }
 
     const deleted = ctx.agentManager.deleteAgent(request.params.id);

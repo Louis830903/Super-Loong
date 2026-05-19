@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { describeErrorCode } from "@super-agent/web-types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -76,7 +77,13 @@ export async function apiFetch<T = unknown>(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     // P4-T2: 支持新格式 { success: false, error: { code, message } } 和旧格式 { error: "..." }
-    const message = err?.error?.message || err?.error || err?.detail || res.statusText;
+    // v3 Task 11：优先用 error.code 查字典得到中文提示，message 作 fallback。
+    //   脱敏后端在生产环境可能返回“内部服务器错误”等通用文案，前端按 code 可还原详细的中文语义。
+    const code = err?.error?.code;
+    const rawMessage = err?.error?.message || err?.error || err?.detail || res.statusText;
+    const message = typeof code === "string" && code.length > 0
+      ? describeErrorCode(code, rawMessage)
+      : rawMessage;
     showToast(message, "error");
     throw new Error(message);
   }
@@ -149,7 +156,12 @@ export async function downloadAuthorized(
   if (!res.ok) {
     // 尝试解析服务器返回的错误体（API-P1-03 脱敏后为通用文案）
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    const msg = err.error || err.detail || `下载失败 (${res.status})`;
+    // v3 Task 11：优先用 error.code 查字典，无码回退原始 message
+    const code = err?.error?.code;
+    const rawMsg = err?.error?.message || err?.error || err?.detail || `下载失败 (${res.status})`;
+    const msg = typeof code === "string"
+      ? describeErrorCode(code, rawMsg)
+      : String(rawMsg);
     showToast(msg, "error");
     throw new Error(msg);
   }

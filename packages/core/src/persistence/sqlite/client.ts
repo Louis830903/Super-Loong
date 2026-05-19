@@ -167,6 +167,15 @@ export function initDatabase(dbPath?: string): SqlJsDatabase {
 
   // WAL mode for automatic disk sync + concurrent reads
   _db.pragma("journal_mode = WAL");
+  // v3 Task 10：跨平台 synchronous 差异化
+  //   - Linux / macOS：synchronous=FULL（数据安全优先）
+  //   - Windows：synchronous=NORMAL（fsync 昂贵，NORMAL 平衡性能与安全）
+  if (process.platform === "win32") {
+    _db.pragma("synchronous = NORMAL");
+    logger.info("Windows detected, SQLite synchronous set to NORMAL");
+  } else {
+    _db.pragma("synchronous = FULL");
+  }
   _db.pragma("foreign_keys = ON");
 
   // ── Schema version table (must exist before migrations) ──

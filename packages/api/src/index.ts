@@ -25,6 +25,7 @@ import { getProviderById, getModelById, getModelCatalog } from "@super-agent/cor
 import { registerMiddleware } from "./middleware/index.js";
 import { registerAuth, authRoutes } from "./auth/index.js";
 import { registerWebSocket } from "./ws/index.js";
+import { sendError } from "./routes/response-helper.js";
 import { agentRoutes } from "./routes/agents.js";
 import { chatRoutes } from "./routes/chat.js";
 import { skillRoutes } from "./routes/skills.js";
@@ -140,7 +141,8 @@ async function main() {
       ) {
         return reply.sendFile("index.html");
       }
-      reply.code(404).send({ error: "Not found" });
+      // v3 Task 3：走 sendError 统一响应壳
+      return sendError(reply, 404, "NOT_FOUND", "Not found", undefined, true);
     });
     app.log.info({ webRoot }, "Static web serving enabled (production mode)");
   }
@@ -164,7 +166,15 @@ async function main() {
   // P4-T2 审查修正: 非生产模式设置通用 404 兜底（生产模式在 @fastify/static 后已设 SPA 兜底）
   if (process.env.NODE_ENV !== "production") {
     app.setNotFoundHandler((request, reply) => {
-      reply.code(404).send({ error: "Not Found", message: `Route ${request.method} ${request.url} not found` });
+      // v3 Task 3：走 sendError 统一响应壳
+      return sendError(
+        reply,
+        404,
+        "NOT_FOUND",
+        `Route ${request.method} ${request.url} not found`,
+        undefined,
+        true,
+      );
     });
   }
 
@@ -327,6 +337,11 @@ async function main() {
   await registerTracesRoutes(app);
   await versionRoutes(app);
   await updateRoutes(app);
+
+  // v3 Task 3：响应壳 onSend hook（路由全部注册完后再装，以便路由级 config 生效）
+  // FEATURE_FLAG_RESP_ENVELOPE=false 时 hook 直接 return payload，不影响现有响应
+  const { registerResponseEnvelope } = await import("./middleware/response-envelope.js");
+  await registerResponseEnvelope(app);
 
 // 启动定时版本轮询 + WebSocket 主动推送（每 6h 检查，发现更新推送给所有在线前端）
 const stopUpdatePoller = startUpdatePoller(app);

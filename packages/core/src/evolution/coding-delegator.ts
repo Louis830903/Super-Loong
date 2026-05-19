@@ -16,6 +16,9 @@ import { randomUUID } from "node:crypto";
 import type { CrewExecutor, CrewConfig, CrewResult } from "../collaboration/orchestrator.js";
 import type { SubagentExecutor } from "../collaboration/subagent-executor.js";
 import { ProcessSandbox } from "../security/sandbox.js";
+// v3 Task 2: CommandGuard 接管 CLI 子进程执行
+import { checkCompoundCommand } from "../security/command-guard.js";
+import { FeatureFlags } from "../config/feature-flags.js";
 // P1-3c 集成: QualityGate 五级闸门验证
 import { QualityGate } from "./quality-gate.js";
 
@@ -309,6 +312,12 @@ export class CodingDelegator {
   /**
    * CLI 工具委托（通过子进程直接执行）。
    * ProcessSandbox.execute() 用于沙箱化代码执行，CLI 委托使用直接 spawn。
+   *
+   * v3 Task 2 加固：spawnSync 前调 CommandGuard.checkCompoundCommand 检测。
+   *   - FEATURE_FLAG_GUARDED_EXEC=true：危险命令直接拒执（fail-closed）
+   *   - FEATURE_FLAG_GUARDED_EXEC=false（默认）：仅 logger.warn 告警，不拦截
+   *   @why 默认关闭是为了避免在生产环境意外拦截合法 CLI 委托，
+   *        上线前需灯度观察：prompt 尝试注入卸载命令 → 告警 → 决定开闸门。
    */
   private delegateToCLI(
     input: DelegationInput,
@@ -316,6 +325,36 @@ export class CodingDelegator {
   ): DelegationResult {
     const cmd = tool.delegateCmd.replace("{prompt}", input.prompt);
     const workDir = input.workDir ?? input.projectDir;
+
+    // v3 Task 2 安全检测：复合命令拆分后逐条走 42 条危险模式
+    const guardResult = checkCompoundCommand(cmd);
+    if (guardResult.isDangerous) {
+      const guardLog = {
+        tool: tool.name,
+        cmd: cmd.slice(0, 200),
+        category: guardResult.category,
+        patternKey: guardResult.patternKey,
+        level: guardResult.level,
+        description: guardResult.description,
+      };
+      if (FeatureFlags.guardedExec) {
+        logger.error(guardLog, "[GUARDED_EXEC] CLI 委托被 CommandGuard 拦截");
+        return {
+          success: false,
+          files: [],
+          output: "",
+          errors: [
+            `[GUARDED_EXEC] 检测到危险命令被拒绝（${guardResult.category}/${guardResult.patternKey}）：${guardResult.description ?? ""}。` +
+              ` 如需临时调试，可设 FEATURE_FLAG_GUARDED_EXEC=false（仅开发）。`,
+          ],
+          tier: "cli",
+          toolUsed: tool.name,
+          iterations: 0,
+        };
+      }
+      // 灯度观察期：仅告警不拦，给运维人量化决定何时开闸门的样本
+      logger.warn(guardLog, "[GUARDED_EXEC:OFF] 检测到危险命令但闸门未开，放行中");
+    }
 
     try {
       logger.info({ tool: tool.name, cmd }, "Delegating to CLI tool");

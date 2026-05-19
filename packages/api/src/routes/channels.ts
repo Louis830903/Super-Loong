@@ -15,6 +15,8 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AppContext } from "../context.js";
 import { sendSuccess, sendError, Errors } from "./response-helper.js";
+// v3 Task 4：向出调用 IM 网关的请求走 HMAC 签名（flag off 时退化为旧 x-api-key）
+import { signedGatewayHeaders } from "../middleware/internal-auth.js";
 
 // B-18: 从 SQLite 加载已持久化的 channel 配置
 const channels = new Map<string, { id: string; config: Record<string, unknown>; status: string }>();
@@ -32,11 +34,15 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
   const IM_GATEWAY_URL = process.env.IM_GATEWAY_URL || "http://localhost:8642";
   const IM_GATEWAY_API_KEY = process.env.IM_GATEWAY_API_KEY || "";
 
-  // 安全加固：构建带 API Key 的请求头
-  const gatewayHeaders = (): Record<string, string> => {
-    const h: Record<string, string> = { "Content-Type": "application/json" };
-    if (IM_GATEWAY_API_KEY) h["x-api-key"] = IM_GATEWAY_API_KEY;
-    return h;
+  // 安全加固：构建带签名 / API Key 的请求头
+  // v3 Task 4：开启 FEATURE_FLAG_INTERNAL_AUTH 后自动补 X-Internal-Token / X-Timestamp / X-Signature
+  // @why 保证与 Python 网关 server.py 中间件双侧一致、不可重放
+  const gatewayHeaders = (
+    method: string = "GET",
+    path: string = "",
+    body?: string | Buffer | null,
+  ): Record<string, string> => {
+    return signedGatewayHeaders(method, path, body);
   };
 
   app.get("/api/channels", async (_req, reply) => {
@@ -80,7 +86,7 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
     try {
       const resp = await fetch(`${IM_GATEWAY_URL}${path}`, {
         signal: AbortSignal.timeout(timeout),
-        headers: gatewayHeaders(),
+        headers: gatewayHeaders("GET", path),
       });
       if (!resp.ok) return sendError(reply, resp.status, "GATEWAY_ERROR", `Gateway ${resp.status}`);
       return sendSuccess(reply, await resp.json());
@@ -93,10 +99,11 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
 
   const proxyPOST = async (path: string, body: unknown, reply: any, timeout = 30000) => {
     try {
+      const bodyStr = JSON.stringify(body);
       const resp = await fetch(`${IM_GATEWAY_URL}${path}`, {
         method: "POST",
-        headers: gatewayHeaders(),
-        body: JSON.stringify(body),
+        headers: gatewayHeaders("POST", path, bodyStr),
+        body: bodyStr,
         signal: AbortSignal.timeout(timeout),
       });
       // 先读取原始文本，再尝试解析 JSON，避免非 JSON 响应触发 SyntaxError
@@ -217,10 +224,12 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
 
     // 1. 断开现有连接（直接 fetch，不通过 proxyPOST 避免 reply 竞争）
     try {
-      await fetch(`${IM_GATEWAY_URL}/api/gateway/channels/${platform}/disconnect`, {
+      const disconnectPath = `/api/gateway/channels/${platform}/disconnect`;
+      const disconnectBody = JSON.stringify({});
+      await fetch(`${IM_GATEWAY_URL}${disconnectPath}`, {
         method: "POST",
-        headers: gatewayHeaders(),
-        body: JSON.stringify({}),
+        headers: gatewayHeaders("POST", disconnectPath, disconnectBody),
+        body: disconnectBody,
         signal: AbortSignal.timeout(5000),
       });
     } catch (err: any) {
@@ -236,10 +245,12 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
 
     // 3. 使用持久化配置重新连接
     try {
-      const connectRes = await fetch(`${IM_GATEWAY_URL}/api/gateway/channels/${platform}/connect`, {
+      const connectPath = `/api/gateway/channels/${platform}/connect`;
+      const connectBody = JSON.stringify({ credentials: channelConfig.config });
+      const connectRes = await fetch(`${IM_GATEWAY_URL}${connectPath}`, {
         method: "POST",
-        headers: gatewayHeaders(),
-        body: JSON.stringify({ credentials: channelConfig.config }),
+        headers: gatewayHeaders("POST", connectPath, connectBody),
+        body: connectBody,
         signal: AbortSignal.timeout(10000),
       });
       const connectData: any = await connectRes.json();
@@ -276,7 +287,11 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
         health: gwData.health,
         reconnect: gwData.reconnect,
       };
-    } catch {}
+    } catch (err: unknown) {
+      // [v3 Task 5] 网关探测失败兜底：不影响 API 自身健康，但需可观察
+      // @why IM 网关可能未启动 / 端口不可达，此处吞错以保证 /health 始终可返回 API 状态
+      app.log.debug({ err: err instanceof Error ? err.message : String(err) }, "IM gateway health probe failed (non-fatal)");
+    }
     return sendSuccess(reply, {
       status: "ok",
       agents: ctx.agentManager.count,

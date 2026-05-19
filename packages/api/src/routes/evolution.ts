@@ -354,7 +354,7 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   // POST /api/evolution/search — 会话全文搜索
   app.post("/api/evolution/search", async (req, reply) => {
     if (!ctx.sessionSearch) {
-      return reply.status(501).send({ error: "SessionSearchEngine 未初始化" });
+      return Errors.serviceUninitialized(reply, "SessionSearchEngine 未初始化");
     }
     const parsed = SearchSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -373,7 +373,7 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   // POST /api/evolution/extract — 知识提取
   app.post("/api/evolution/extract", async (req, reply) => {
     if (!ctx.knowledgeExtractor) {
-      return reply.status(501).send({ error: "KnowledgeExtractor 未初始化" });
+      return Errors.serviceUninitialized(reply, "KnowledgeExtractor 未初始化");
     }
     const parsed = ExtractSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -393,7 +393,7 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   // GET /api/evolution/insights — 获取统计洞察报告
   app.get("/api/evolution/insights", async (req, reply) => {
     if (!ctx.insightsEngine) {
-      return reply.status(501).send({ error: "InsightsEngine 未初始化" });
+      return Errors.serviceUninitialized(reply, "InsightsEngine 未初始化");
     }
     try {
       // 将当前 CaseCollector 中的案例供给 InsightsEngine 生成报告
@@ -414,7 +414,7 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   // POST /api/evolution/verify — 运行验证管道
   app.post("/api/evolution/verify", async (req, reply) => {
     if (!ctx.verificationPipeline) {
-      return reply.status(501).send({ error: "VerificationPipeline 未初始化" });
+      return Errors.serviceUninitialized(reply, "VerificationPipeline 未初始化");
     }
     const parsed = VerifySchema.safeParse(req.body);
     if (!parsed.success) {
@@ -437,7 +437,7 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
   // GET /api/evolution/verify/results — 获取验证历史
   app.get("/api/evolution/verify/results", async (_req, reply) => {
     if (!ctx.verificationPipeline) {
-      return reply.status(501).send({ error: "VerificationPipeline 未初始化" });
+      return Errors.serviceUninitialized(reply, "VerificationPipeline 未初始化");
     }
     return sendSuccess(reply, {
       history: ctx.verificationPipeline.getHistory(),

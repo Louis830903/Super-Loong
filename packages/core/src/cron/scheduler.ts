@@ -182,7 +182,11 @@ export class CronScheduler {
     this.jobs.delete(id);
     this.runtimeState.delete(id);       // [v3] 清理运行时状态
     this.lastAlertAtMs.delete(id);      // [v3] 清理告警记录（修复 R-3）
-    try { deleteCronJobDB(id); } catch {}
+    // [v3 Task 5] DB 删除失败不影响内存态：内存已删，下次启动从 DB 重建时该任务也不会复活
+    // @why 容错优先：避免因 DB 短暂不可用导致 removeJob 整体失败
+    try { deleteCronJobDB(id); } catch (err: unknown) {
+      logger.debug({ id, err: err instanceof Error ? err.message : String(err) }, "deleteCronJobDB failed (non-fatal)");
+    }
     if (this._running) this.armTimer(); // [v3] 触发重新评估
     logger.info({ id }, "Cron job removed");
     return true;
@@ -224,7 +228,11 @@ export class CronScheduler {
     if (updates.expression) {
       job.nextRunAt = this.getNextRunTime(job.expression, job.timezone);
     }
-    try { saveCronJob(job); } catch {}
+    // [v3 Task 5] DB 持久化失败不影响内存调度：当次仍生效，重启后丢失
+    // @why updateJob 多用于热更新参数，DB 失败可下次手动重写
+    try { saveCronJob(job); } catch (err: unknown) {
+      logger.debug({ id: job.id, err: err instanceof Error ? err.message : String(err) }, "saveCronJob (updateJob) failed (non-fatal)");
+    }
     // [v3] 替代 per-job scheduleJob
     if (this._running && job.enabled) this.armTimer();
     return { ...job };
@@ -323,7 +331,10 @@ export class CronScheduler {
         // 超出宽限期: 跳过执行，推进到下次
         logger.info({ id: job.id, name: job.name, missedByMs }, "Missed job outside grace period, skipping");
         this.advanceSchedule(job);
-        try { saveCronJob(job); } catch {}
+        // [v3 Task 5] 推进 nextRunAt 后持久化；失败下次启动仍会重算
+        try { saveCronJob(job); } catch (err: unknown) {
+          logger.debug({ id: job.id, err: err instanceof Error ? err.message : String(err) }, "saveCronJob (advanceSchedule) failed (non-fatal)");
+        }
       }
     }
 
@@ -505,7 +516,11 @@ export class CronScheduler {
     }
 
     job.lastRunAt = new Date().toISOString();
-    try { saveCronJob(job); } catch {}
+    // [v3 Task 5] 失败重试用尽后落库；持久化失败不影响告警链路
+    // @why 告警必须发出，DB 失败仅丢失 lastRunAt 时间戳，可下次执行覆盖
+    try { saveCronJob(job); } catch (err: unknown) {
+      logger.debug({ id: job.id, err: err instanceof Error ? err.message : String(err) }, "saveCronJob (after retries) failed (non-fatal)");
+    }
     this.checkFailureAlert(job);
     logger.error({ id: job.id, maxAttempts }, "Cron job failed after all retries");
     return { ok: false, response: `All ${maxAttempts} attempts failed: ${lastError?.message}` };

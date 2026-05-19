@@ -125,12 +125,11 @@ export async function videoRoutes(app: FastifyInstance, ctx: AppContext): Promis
     const costResult = estimateCost(workflow);
 
     if (costResult.estimate_cny > body.cost_limit_cny && !body.cost_confirmed) {
-      return reply.status(402).send({
-        error: "预估成本超出上限，请确认后重试",
-        cost_estimate: costResult,
-        cost_limit_cny: body.cost_limit_cny,
-        hint: "设置 cost_confirmed: true 以确认执行",
-      });
+      return Errors.costLimitExceeded(
+        reply,
+        "预估成本超出上限，请确认后重试",
+        { cost_estimate: costResult, cost_limit_cny: body.cost_limit_cny, hint: "设置 cost_confirmed: true 以确认执行" },
+      );
     }
 
     // 2. 生成任务 ID 和工作区
@@ -324,12 +323,12 @@ export async function videoRoutes(app: FastifyInstance, ctx: AppContext): Promis
     });
 
     // 6. 立即返回任务信息（202 Accepted）
-    return reply.status(202).send({
+    return sendSuccess(reply, {
       id: jobId,
       status: "pending",
       cost_estimate: costResult,
       message: "视频任务已创建，正在排队执行",
-    });
+    }, 202);
   });
 
   // ──────────────────────────────────────────────────────────

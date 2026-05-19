@@ -7,6 +7,8 @@ import type { VoiceProvider, ConfigStore, IAgentRegistry, LLMProviderConfig, Emb
 import { createDedupCache, type DedupCache } from "./shared/dedup.js";
 import { KbParserSupervisor } from "./services/kb-parser-supervisor.js";
 import pino from "pino";
+// v3 Task 4 B4：CredentialVault 注入到 internal-auth 中间件
+import { setCredentialVault } from "./middleware/internal-auth.js";
 
 const logger = pino({ name: "context" });
 
@@ -184,6 +186,8 @@ export async function createAppContext(): Promise<AppContext> {
   const knowledgeGraph = new KnowledgeGraph();
   logger.info("Evolution advanced modules initialized (SessionSearch, KnowledgeExtractor, Insights, Verification, KnowledgeGraph)");
   const securityManager = new SecurityManager();
+  // v3 Task 4 B4：将 Vault 实例注入 internal-auth，启用凭据来源回退链
+  setCredentialVault(securityManager.vault);
 
   // ── Docker Sandbox (auto-detect availability) ──
   const dockerSandbox = new DockerSandbox();

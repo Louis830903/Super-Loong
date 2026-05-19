@@ -57,13 +57,10 @@ export async function fileRoutes(app: FastifyInstance) {
     }
 
     if (buffer.length > MAX_FILE_SIZE) {
-      return reply.status(413).send({
-        success: false,
-        error: {
-          code: "FILE_TOO_LARGE",
-          message: `文件过大 (${(buffer.length / 1024 / 1024).toFixed(1)}MB)，最大支持 ${MAX_FILE_SIZE / 1024 / 1024}MB`,
-        },
-      });
+      return Errors.fileTooLarge(
+        reply,
+        `文件过大 (${(buffer.length / 1024 / 1024).toFixed(1)}MB)，最大支持 ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+      );
     }
 
     try {

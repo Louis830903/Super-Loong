@@ -33,3 +33,20 @@ export type VideoAgentId = (typeof VIDEO_AGENT_IDS)[keyof typeof VIDEO_AGENT_IDS
 // ─── API Wire Types（CTR-P1-01：前端 API 契约单一数据源）───
 // 所有 interface 从 ./api-types 子模块 re-export，保持此 index.ts 简洁。
 export * from "./api-types";
+
+// ─── v3 Task 6 — 自动生成类型（zod schema → openapi.json → generated.ts）───
+// 与手写 api-types.ts 共存：
+//   - 已生成的 schema 优先用 SchemaOf<"XxxEnvelope"> 强类型访问
+//   - 未迁移路由继续走 ./api-types 手写 interface，逐步替换
+// 漂移检测由 pnpm gen:types:check 在 CI 强制执行，禁止手工修改 generated.ts。
+import type { components } from "./generated";
+export type { components, paths, operations, webhooks, $defs } from "./generated";
+
+/** OpenAPI components.schemas 全集类型别名。 */
+export type Schemas = components["schemas"];
+
+/** 按名字取出某个 schema 的 TS 类型。例：`SchemaOf<"ApiErrorEnvelope">` */
+export type SchemaOf<K extends keyof Schemas> = Schemas[K];
+
+// ─── v3 Task 11 — 错误码字典 + i18n 中文映射 ──────────────────────
+export * from "./error-codes";

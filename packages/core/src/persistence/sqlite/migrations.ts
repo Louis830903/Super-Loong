@@ -18,6 +18,8 @@
 import { logger } from "./logger.js";
 import { CURRENT_SCHEMA_VERSION, type SqlJsDatabase } from "./constants.js";
 import { getSchemaVersion, setSchemaVersion } from "./schema.js";
+// v3 Task 1：SQL 标识符白名单防御，所有动态拼接的表名/列名必须走 safeIdent
+import { safeIdent, assertSafeIdentifiers } from "./sql-safe.js";
 
 /**
  * Run all pending schema migrations sequentially.
@@ -764,7 +766,8 @@ function migrateV18(db: SqlJsDatabase): void {
       ];
       for (const [oldCol, newCol] of renames) {
         try {
-          db.run(`ALTER TABLE credentials RENAME COLUMN ${oldCol} TO ${newCol}`);
+          // v3 Task 1：表示识符白名单 —— oldCol/newCol 均为代码常量，步骤仅作防御深度
+          db.run(`ALTER TABLE credentials RENAME COLUMN ${safeIdent(oldCol, "column")} TO ${safeIdent(newCol, "column")}`);
           logger.info({ oldCol, newCol }, "Migration v18: renamed credentials column");
         } catch { /* 列已重命名或不存在，幂等跳过 */ }
       }
@@ -864,8 +867,11 @@ function migrateV20(db: SqlJsDatabase): void {
   try {
     // 辅助函数：将 INTEGER epoch ms 转换为 ISO 8601 TEXT
     // 若值已经是 ISO 8601 字符串（未来的幂等调用），保持原样
-    const toIsoExpr = (col: string) =>
-      `CASE WHEN typeof(${col}) = 'integer' THEN datetime(${col}/1000, 'unixepoch') ELSE ${col} END`;
+    // v3 Task 1：col 走 safeIdent 防御（实际来源是 tablesToConvert 常量数组）
+    const toIsoExpr = (col: string) => {
+      const c = safeIdent(col, "column");
+      return `CASE WHEN typeof(${c}) = 'integer' THEN datetime(${c}/1000, 'unixepoch') ELSE ${c} END`;
+    };
 
     const tablesToConvert: Array<{
       name: string;
@@ -976,8 +982,10 @@ function migrateV20(db: SqlJsDatabase): void {
 
     let convertedCount = 0;
     for (const table of tablesToConvert) {
+      // v3 Task 1：表名走白名单（防 tablesToConvert 未来被动态填充时夹带注入）
+      const tName = safeIdent(table.name, "table");
       // 检查列类型是否已经是 TEXT（幂等保护）
-      const colInfo = db.exec(`PRAGMA table_info(${table.name})`);
+      const colInfo = db.exec(`PRAGMA table_info(${tName})`);
       if (!colInfo.length) continue;
       const cols = colInfo[0].values.map((v: unknown[]) => ({ name: v[1] as string, type: (v[2] as string).toUpperCase() }));
       const needsConvert = table.timestampCols.some(tc => {
@@ -987,21 +995,22 @@ function migrateV20(db: SqlJsDatabase): void {
       if (!needsConvert) continue;
 
       // Build SELECT column list with conversion
-      const allCols = cols.map((c: { name: string; type: string }) => c.name);
+      // v3 Task 1：PRAGMA 返回的列名受信，但批量走白名单仅作防御深度
+      const allCols = assertSafeIdentifiers(cols.map((c: { name: string }) => c.name), "column");
       const selectCols = allCols.map((c: string) =>
         table.timestampCols.includes(c) ? toIsoExpr(c) : c
       ).join(", ");
 
-      const oldName = `${table.name}_v20_old`;
+      const oldName = safeIdent(`${table.name}_v20_old`, "table");
 
       // Step 1: Rename old table
-      db.run(`ALTER TABLE ${table.name} RENAME TO ${oldName}`);
+      db.run(`ALTER TABLE ${tName} RENAME TO ${oldName}`);
 
       // Step 2: Create new table with TEXT types
       db.run(table.createSql);
 
       // Step 3: Copy data with conversion
-      db.run(`INSERT INTO ${table.name} SELECT ${selectCols} FROM ${oldName}`);
+      db.run(`INSERT INTO ${tName} SELECT ${selectCols} FROM ${oldName}`);
 
       // Step 4: Drop old table
       db.run(`DROP TABLE ${oldName}`);
