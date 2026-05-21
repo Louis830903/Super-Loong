@@ -19,7 +19,7 @@ import { buildApp, MockCronScheduler } from "./test-helpers.js";
 // Mock @super-agent/core 的 cron 工具函数
 const { mockParseNL, mockValidateCron } = vi.hoisted(() => ({
   mockParseNL: vi.fn((text: string) => `0 9 * * *`),
-  mockValidateCron: vi.fn((expr: string) => ({ valid: true })),
+  mockValidateCron: vi.fn((expr: string): { valid: boolean; error?: string } => ({ valid: true })),
 }));
 
 vi.mock("@super-agent/core", () => ({
