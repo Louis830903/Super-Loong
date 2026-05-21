@@ -453,7 +453,7 @@ deploy_git_pull → deploy_build → deploy_restart → deploy_healthcheck ✅
 ### 🪄 安装步骤
 
 <details open>
-<summary><b>Windows（你在用的系统）</b></summary>
+<summary><b>Windows</b></summary>
 
 ```powershell
 # ① 克隆仓库（二选一）
@@ -535,6 +535,12 @@ DASHSCOPE_API_KEY=        # 阿里 DashScope（推荐，Qwen 系列性价比最�
 DEEPSEEK_API_KEY=          # DeepSeek V3/R1
 ZHIPU_API_KEY=             # 智谱 GLM-4.7
 
+# === 生产环境必填：认证配置（使用 start.bat 或 PM2 部署时）===
+AUTH_ENABLED=true          # 生产模式强制开启
+JWT_SECRET=                # 生成方式见上方
+ADMIN_USERNAME=admin       # Web UI 登录用户名
+ADMIN_PASSWORD=            # 请设置强密码
+
 # === 可选：视频生成（需要 RunningHub 账号）===
 RUNNINGHUB_API_KEY=        # https://www.runninghub.com 注册获取
 VIDEO_FORGE_URL=http://127.0.0.1:8199
@@ -554,8 +560,8 @@ ENABLE_A2A=true              # A2A 跨 Agent 协作协议
 
 ```bash
 # 检查 API 服务是否正常
-curl http://localhost:3001/api/health
-# 预期返回: {"status":"ok","uptime":...}
+curl http://localhost:3001/api/system/health
+# 预期返回: {"success":true,"data":{"status":"ok","agents":211,...}}
 
 # 检查 Web 前端是否正常
 curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
@@ -623,6 +629,22 @@ kill -9 <PID>
 </details>
 
 <details>
+<summary><b>Q: 生产部署报错 "AUTH_ENABLED 必须在生产环境设为 true"</b></summary>
+
+使用 `start.bat` 或 `pm2 start --env production` 部署时，`NODE_ENV=production` 会强制要求开启认证。请在 `.env` 或 `.env.production` 中配置：
+
+```bash
+AUTH_ENABLED=true
+JWT_SECRET=<你生成的强密钥>
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=<你的强密码>
+```
+
+生成 JWT_SECRET：`node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"`
+
+</details>
+
+<details>
 <summary><b>Q: 飞书/钉钉/企微 IM 网关怎么配置？</b></summary>
 
 详见 `services/im-gateway/` 目录下的各个渠道配置文档。飞书需要：
@@ -663,8 +685,18 @@ chmod +x start.sh && ./start.sh
 
 ```powershell
 copy .env.example .env.production
-notepad .env.production  # 至少填入 JWT_SECRET 和 API Key
+notepad .env.production
 ```
+
+生产环境必填配置项：
+
+| 配置项 | 说明 | 生成方式 |
+|--------|------|----------|
+| `AUTH_ENABLED=true` | 生产环境强制开启鉴权 | 直接设为 `true` |
+| `JWT_SECRET` | JWT 签名密钥 | `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` |
+| `ADMIN_USERNAME` | 管理员用户名 | 自定义，如 `admin` |
+| `ADMIN_PASSWORD` | 管理员密码 | 设置强密码 |
+| `LLM_API_KEY` | LLM 提供商密钥 | 从对应平台获取 |
 
 ### 常用管理命令
 
