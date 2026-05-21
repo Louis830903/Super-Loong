@@ -2,9 +2,13 @@ import sqlite3
 import json
 import os
 
+# 自动定位 monorepo 根目录（运行时相对于当前脚本位置）
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+
 for DB in [
-    r"D:\Ruanjian Kaifa\qoder\Super Lv\super-agent\packages\api\data\super-agent.db",
-    r"D:\Ruanjian Kaifa\qoder\Super Lv\super-agent\data\super-agent.db",
+    os.path.join(ROOT_DIR, "packages", "api", "data", "super-agent.db"),
+    os.path.join(ROOT_DIR, "data", "super-agent.db"),
 ]:
     if not os.path.exists(DB):
         continue

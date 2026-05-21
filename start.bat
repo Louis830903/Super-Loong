@@ -25,8 +25,34 @@ echo.
 :: 切换到脚本所在目录（monorepo 根）
 cd /d "%~dp0"
 
-:: [1/5] 检查 PM2
-echo [1/5] 检查 PM2...
+:: [1/6] 检查环境变量文件
+echo [1/6] 检查环境配置...
+if not exist ".env" (
+    if exist ".env.example" (
+        echo    .env 文件不存在，从模板创建...
+        copy .env.example .env >nul
+        echo    已创建 .env，请编辑填入 LLM_API_KEY 等必填项
+        echo    生产环境必须设置：AUTH_ENABLED=true, JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD
+    ) else (
+        echo    [错误] 未找到 .env 和 .env.example，无法继续
+        pause
+        exit /b 1
+    )
+)
+:: 检查 SA_ENCRYPTION_KEY 是否已生成
+findstr /C:"SA_ENCRYPTION_KEY=" .env | findstr /V /C:"SA_ENCRYPTION_KEY=$" /C:"SA_ENCRYPTION_KEY= " >nul 2>&1
+if %errorlevel% neq 0 (
+    echo    生成 SA_ENCRYPTION_KEY...
+    for /f %%i in ('node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"') do (
+        echo SA_ENCRYPTION_KEY=%%i>> .env
+    )
+    echo    SA_ENCRYPTION_KEY 已生成并写入 .env
+)
+echo    环境配置已就绪
+
+:: [2/6] 检查 PM2
+echo.
+echo [2/6] 检查 PM2...
 where pm2 >nul 2>&1
 if %errorlevel% neq 0 (
     echo    PM2 未安装，正在安装...
@@ -41,9 +67,23 @@ if %errorlevel% neq 0 (
 )
 echo    PM2 已就绪
 
-:: [2/5] 检查 Node.js 构建产物
+:: [3/6] 安装 Node.js 依赖
 echo.
-echo [2/5] 检查构建产物...
+echo [3/6] 检查 Node.js 依赖...
+if not exist "node_modules" (
+    echo    node_modules 不存在，正在安装依赖...
+    call pnpm install
+    if %errorlevel% neq 0 (
+        echo    [错误] 依赖安装失败，请检查网络或 pnpm 配置
+        pause
+        exit /b 1
+    )
+)
+echo    Node.js 依赖已就绪
+
+:: [4/6] 检查 Node.js 构建产物
+echo.
+echo [4/6] 检查构建产物...
 if not exist "packages\api\dist\index.js" (
     echo    未找到构建产物，正在构建...
     call pnpm build
@@ -55,9 +95,9 @@ if not exist "packages\api\dist\index.js" (
 )
 echo    构建产物已就绪
 
-:: [3/5] 检查 Python 微服务依赖（video-forge / IM 网关 / kb-parser）
+:: [5/6] 检查 Python 微服务依赖（video-forge / IM 网关 / kb-parser）
 echo.
-echo [3/5] 检查 Python 微服务依赖...
+echo [5/6] 检查 Python 微服务依赖...
 set PY_READY=1
 :: 检测 Python 3.11+
 python --version >nul 2>&1
@@ -119,9 +159,9 @@ if %PY_READY%==1 (
     )
 )
 
-:: [4/5] 启动 PM2
+:: [6/6] 启动 PM2
 echo.
-echo [4/5] 启动服务...
+echo [6/6] 启动服务...
 :: 先停掉旧实例（如果存在），避免端口冲突
 call pm2 delete super-agent-api 2>nul
 call pm2 delete super-agent-web 2>nul

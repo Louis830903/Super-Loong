@@ -674,10 +674,15 @@ chmod +x start.sh && ./start.sh
 > ⚠️ **Windows 用户**：脚本已内置 `chcp 65001` 切换 UTF-8 编码，避免中文乱码。如仍遇到乱码，手动执行 `chcp 65001` 后再运行。
 
 脚本会自动完成：
-1. 检查并安装 PM2（如未安装）
-2. 检查构建产物（如不存在则自动 `pnpm build`）
-3. 启动 4 个 PM2 进程：API + Web + IM 网关 + 视频引擎
-4. 配置开机自启
+1. 检查并创建 `.env` 文件（如不存在，从 `.env.example` 复制）
+2. 自动生成 `SA_ENCRYPTION_KEY` 加密密钥
+3. 检查并安装 PM2（如未安装）
+4. 检查并安装 Node.js 依赖（`pnpm install`）
+5. 检查构建产物（如不存在则自动 `pnpm build`）
+6. 启动 4 个 PM2 进程：API + Web + IM 网关 + 视频引擎
+7. 配置开机自启
+
+> 💡 **首次部署提示**：脚本会自动创建 `.env` 并生成加密密钥，但你仍需手动编辑 `.env` 填入 `LLM_API_KEY` 等必填项。生产环境还需配置 `AUTH_ENABLED=true`、`JWT_SECRET`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`。
 
 ### 环境配置
 

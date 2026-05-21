@@ -73,8 +73,31 @@ esac
 
 print_banner
 
-# [1/3] 检查 PM2
-echo -e "${YELLOW}[1/3] 检查 PM2...${NC}"
+# [1/5] 检查环境变量文件
+echo -e "${YELLOW}[1/5] 检查环境配置...${NC}"
+if [ ! -f ".env" ]; then
+  if [ -f ".env.example" ]; then
+    echo "   .env 文件不存在，从模板创建..."
+    cp .env.example .env
+    echo -e "${YELLOW}   已创建 .env，请编辑填入 LLM_API_KEY 等必填项${NC}"
+    echo -e "${YELLOW}   生产环境必须设置：AUTH_ENABLED=true, JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD${NC}"
+  else
+    echo -e "${RED}   [错误] 未找到 .env 和 .env.example，无法继续${NC}"
+    exit 1
+  fi
+fi
+# 检查 SA_ENCRYPTION_KEY 是否已生成
+if ! grep -q 'SA_ENCRYPTION_KEY=.' .env 2>/dev/null; then
+  echo "   生成 SA_ENCRYPTION_KEY..."
+  SA_KEY=$(node -e "console.log(require('crypto').randomBytes(48).toString('base64'))")
+  echo "SA_ENCRYPTION_KEY=${SA_KEY}" >> .env
+  echo "   SA_ENCRYPTION_KEY 已生成并写入 .env"
+fi
+echo -e "${GREEN}   环境配置已就绪${NC}"
+
+# [2/5] 检查 PM2
+echo ""
+echo -e "${YELLOW}[2/5] 检查 PM2...${NC}"
 if ! command -v pm2 &> /dev/null; then
   echo "   PM2 未安装，正在安装..."
   npm i -g pm2
@@ -85,9 +108,22 @@ if ! command -v pm2 &> /dev/null; then
 fi
 echo -e "${GREEN}   PM2 已就绪${NC}"
 
-# [2/3] 检查构建产物
+# [3/5] 安装 Node.js 依赖
 echo ""
-echo -e "${YELLOW}[2/3] 检查构建产物...${NC}"
+echo -e "${YELLOW}[3/5] 检查 Node.js 依赖...${NC}"
+if [ ! -d "node_modules" ]; then
+  echo "   node_modules 不存在，正在安装依赖..."
+  pnpm install
+  if [ $? -ne 0 ]; then
+    echo -e "${RED}   [错误] 依赖安装失败，请检查网络或 pnpm 配置${NC}"
+    exit 1
+  fi
+fi
+echo -e "${GREEN}   Node.js 依赖已就绪${NC}"
+
+# [4/5] 检查构建产物
+echo ""
+echo -e "${YELLOW}[4/5] 检查构建产物...${NC}"
 if [ ! -f "packages/api/dist/index.js" ]; then
   echo "   未找到构建产物，正在构建..."
   pnpm build
@@ -98,9 +134,9 @@ if [ ! -f "packages/api/dist/index.js" ]; then
 fi
 echo -e "${GREEN}   构建产物已就绪${NC}"
 
-# [3/3] 启动 PM2
+# [5/5] 启动 PM2
 echo ""
-echo -e "${YELLOW}[3/3] 启动服务...${NC}"
+echo -e "${YELLOW}[5/5] 启动服务...${NC}"
 # 先停掉旧实例（如果存在），避免端口冲突
 pm2 delete super-agent-api 2>/dev/null || true
 pm2 delete super-agent-web 2>/dev/null || true
