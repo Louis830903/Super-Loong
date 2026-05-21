@@ -470,25 +470,31 @@ export const downloadFfprobe = async (targetDir: string): Promise<string> => {
  *
  * 使用 uv 工具链（比 pip 快 10-100x）：
  * 1. `uv venv .venv` 创建虚拟环境
- * 2. `uv pip install -r requirements.lock` 安装锁定依赖
+ * 2. 安装依赖（优先级：requirements.lock → pyproject.toml → requirements.txt）
  *
- * @param videoForgeDir services/video-forge/ 目录
+ * @param serviceDir 服务目录（如 services/video-forge/ 或 services/im-gateway/）
  * @param pythonPath Python 可执行文件路径
  * @returns .venv 目录绝对路径
  */
 export const ensureUvVenv = async (
-  videoForgeDir: string,
+  serviceDir: string,
   pythonPath: string,
 ): Promise<string> => {
-  const venvDir = path.join(videoForgeDir, ".venv");
-  const requirementsFile = path.join(videoForgeDir, "requirements.lock");
+  const venvDir = path.join(serviceDir, ".venv");
 
-  // 检查 requirements.lock 是否存在
-  if (!fs.existsSync(requirementsFile)) {
+  // 依赖文件降级链：requirements.lock → pyproject.toml → requirements.txt
+  const candidates = [
+    { file: "requirements.lock", mode: "req" as const },
+    { file: "pyproject.toml",    mode: "pyproject" as const },
+    { file: "requirements.txt",  mode: "req" as const },
+  ];
+  const found = candidates.find((c) => fs.existsSync(path.join(serviceDir, c.file)));
+  if (!found) {
     throw new VenvSetupError(
-      `找不到 ${requirementsFile}，请确保 services/video-forge/ 目录结构完整`
+      `在 ${serviceDir} 中未找到依赖描述文件（requirements.lock / pyproject.toml / requirements.txt），请确保目录结构完整`
     );
   }
+  const depsFile = path.join(serviceDir, found.file);
 
   // 幂等：如果 .venv 已存在且有 pyvenv.cfg，跳过创建
   const pyvenvCfg = path.join(venvDir, "pyvenv.cfg");
@@ -507,7 +513,7 @@ export const ensureUvVenv = async (
     logger.info({ venvDir, pythonPath }, "正在创建 Python 虚拟环境 (uv venv)...");
     try {
       await execFileAsync("uv", ["venv", venvDir, "--python", pythonPath], {
-        cwd: videoForgeDir,
+        cwd: serviceDir,
         timeout: 60_000,
       });
       logger.info({ venvDir }, "虚拟环境创建成功");
@@ -517,13 +523,17 @@ export const ensureUvVenv = async (
   }
 
   // 安装依赖（每次都运行以确保同步，uv 内部有缓存，已安装的包秒过）
-  logger.info("正在安装 Python 依赖 (uv pip install)...");
+  // pyproject.toml 使用 `uv pip install .`，requirements 文件使用 `-r`
+  const installArgs = found.mode === "pyproject"
+    ? ["pip", "install", ".", "--python", venvDir]
+    : ["pip", "install", "-r", depsFile, "--python", venvDir];
+  logger.info({ depsFile: found.file, mode: found.mode }, "正在安装 Python 依赖 (uv pip install)...");
   try {
     await execFileAsync(
       "uv",
-      ["pip", "install", "-r", requirementsFile, "--python", venvDir],
+      installArgs,
       {
-        cwd: videoForgeDir,
+        cwd: serviceDir,
         timeout: 600_000, // 首次安装可能较慢（10 分钟）
         env: {
           ...process.env,
