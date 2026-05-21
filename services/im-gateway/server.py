@@ -31,6 +31,7 @@ import traceback as _tb
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from error_codes import error_response
+from otel_setup import init_otel, instrument_fastapi, shutdown_otel
 
 # HTTP status → 错误码快速映射
 _HTTP_STATUS_TO_CODE: dict[int, str] = {
@@ -471,8 +472,12 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理：启动 → 运行 → 优雅关闭"""
     global _flush_task
 
-    # ── 启动序列 ───────────────────────────────────
-    # 1. 状态持久化初始化
+    # ── 启动序列 (v3 T7: OTel 可观测性已集成) ───────────────────────────────────
+    # 1. v3 T7: OTel 可观测性（必须在任何 HTTP 调用之前）
+    init_otel(service_name="im-gateway")
+    instrument_fastapi(app)
+
+    # 2. 状态持久化初始化
     state_manager.initialize()
 
     # 2. 注册所有渠道插件
@@ -555,6 +560,7 @@ async def lifespan(app: FastAPI):
 
     await bridge.stop()
     state_manager.cleanup()
+    shutdown_otel()  # v3 T7: flush 所有 pending spans
     logger.info("IM Gateway 已关闭")
 
 

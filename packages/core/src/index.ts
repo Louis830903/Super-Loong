@@ -659,6 +659,9 @@ export {
 } from "./tracing/index.js";
 export type { Span, SpanEvent, TraceContext, SpanStatus, SpanCallback, TraceListItem } from "./tracing/index.js";
 
+// Telemetry — OpenTelemetry 全链路可观测性（v3 T7）
+export { initTelemetry, getTraceParent, traceLLMCall } from "./telemetry/instrumentation.js";
+
 // Runtime — 视频微服务环境自举（video-forge bootstrap）
 export {
   ensureVideoForgeDeps,

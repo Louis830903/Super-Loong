@@ -19,8 +19,18 @@
 import "./envelope.js";
 import "./channels.js";
 import "./gateway.js";
+import "./models.js";
+import "./agents.js";
+import "./voice.js";
+import "./cron.js";
+import "./files.js";
 
 export { registry } from "./registry-singleton.js";
 export * from "./envelope.js";
 export * from "./channels.js";
 export * from "./gateway.js";
+export * from "./models.js";
+export * from "./agents.js";
+export * from "./voice.js";
+export * from "./cron.js";
+export * from "./files.js";

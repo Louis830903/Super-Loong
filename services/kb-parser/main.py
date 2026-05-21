@@ -64,8 +64,16 @@ def _get_converter() -> Any:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """应用生命周期：启动时仅记录日志，关闭时清理。"""
+    # v3 T7: OTel 可观测性
+    import sys as _s, os as _o
+    _s.path.insert(0, _o.path.join(_o.path.dirname(__file__), ".."))
+    from otel_setup import init_otel, instrument_fastapi, shutdown_otel
+    init_otel(service_name="kb-parser")
+    instrument_fastapi(application)
+
     logger.info("kb-parser sidecar 已启动，等待首次 /parse 请求以初始化 Docling")
     yield
+    shutdown_otel()
     logger.info("kb-parser sidecar 正在关闭")
 
 

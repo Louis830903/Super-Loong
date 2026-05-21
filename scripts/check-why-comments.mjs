@@ -55,6 +55,14 @@ const ALLOWLIST = [
   // Task 12：API 鉴权收口
   "packages/api/src/auth/index.ts",
   // Task 12.5：双轨切换闸门（已在 Task 2 的 feature-flags.ts）
+  // Task 6：zod → OpenAPI schema 模块（v3 T6）
+  "packages/api/src/schemas/models.ts",
+  "packages/api/src/schemas/agents.ts",
+  "packages/api/src/schemas/voice.ts",
+  "packages/api/src/schemas/cron.ts",
+  "packages/api/src/schemas/files.ts",
+  // Task 7：OpenTelemetry 基础设施（v3 T7）
+  "packages/core/src/telemetry/instrumentation.ts",
 ];
 
 /** 提取所有"`export <kind> <name>` + 上方 JSDoc"匹配 */

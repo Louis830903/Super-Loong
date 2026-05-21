@@ -22,6 +22,9 @@ const MONITOR_PORT = 3002;
 const LOG_DIR = join(__dirname, "logs");
 const MAX_BUFFER = 2000;
 const API_ENTRY = join(__dirname, "dist", "index.js");
+
+// B4: 内置 INTERNAL_TOKEN 鉴权 — 防止未授权访问日志/Trace 数据
+const MONITOR_TOKEN = process.env.INTERNAL_TOKEN || "";
 // 独立监控窗口开关（环境变量 MONITOR_WINDOW=false 可禁用）
 const MONITOR_WINDOW_ENABLED = process.env.MONITOR_WINDOW !== "false";
 const MONITOR_PKG_DIR = join(__dirname, "..", "monitor");
@@ -124,10 +127,29 @@ child.on("exit", (code) => {
 });
 
 // ── HTTP Dashboard ──────────────────────────────────────
+// B4: 监控面板鉴权检查 — INTERNAL_TOKEN 非空时，对 SSE / API 端点校验 token
+function checkMonitorAuth(req) {
+  if (!MONITOR_TOKEN) return true; // 未配置 token 时放行（开发环境向后兼容）
+  // 支持两种传入方式：Header（Electron/API 调用）或 query param（浏览器 EventSource）
+  const headerToken = req.headers["x-internal-token"];
+  if (headerToken && headerToken === MONITOR_TOKEN) return true;
+  const urlObj = new URL(req.url, `http://localhost:${MONITOR_PORT}`);
+  const queryToken = urlObj.searchParams.get("token");
+  return queryToken === MONITOR_TOKEN;
+}
+
 const server = createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
 
-  if (req.url === "/events") {
+  // B4: 对数据端点强制鉴权（Dashboard HTML 页面本身不拦截，token 已内嵌于 SSE URL）
+  const pathname = new URL(req.url, `http://localhost:${MONITOR_PORT}`).pathname;
+  if ((pathname === "/events" || pathname.startsWith("/api/")) && !checkMonitorAuth(req)) {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Unauthorized", message: "Missing or invalid INTERNAL_TOKEN" }));
+    return;
+  }
+
+  if (req.url === "/events" || req.url.startsWith("/events?")) {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -141,14 +163,14 @@ const server = createServer((req, res) => {
     return;
   }
 
-  if (req.url === "/api/logs") {
+  if (req.url === "/api/logs" || req.url.startsWith("/api/logs?")) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(logBuffer));
     return;
   }
 
   // Trace 事件查询端点（供监控窗口使用）
-  if (req.url === "/api/traces") {
+  if (req.url === "/api/traces" || req.url.startsWith("/api/traces?")) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(traceBuffer));
     return;
@@ -309,7 +331,7 @@ document.querySelectorAll('.filter-btn').forEach(btn=>{
 });
 searchEl.addEventListener('input',refilter);
 document.getElementById('clear-btn').addEventListener('click',()=>{logsEl.innerHTML='';lineCount=0;statsEl.textContent='0 lines'});
-const evtSource=new EventSource('/events');
+const _monitorToken=${JSON.stringify(MONITOR_TOKEN)};const evtSource=new EventSource(_monitorToken?'/events?token='+encodeURIComponent(_monitorToken):'/events');
 evtSource.onmessage=(e)=>{try{addLogLine(JSON.parse(e.data))}catch(err){console.debug('[log-monitor] parse error',err)}};
 evtSource.onerror=()=>{document.querySelector('.pulse').style.background='#da3633';document.querySelector('#status-bar span').innerHTML='<span class="pulse" style="background:#da3633"></span>Disconnected - retrying...'};
 </script>

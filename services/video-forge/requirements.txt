@@ -32,3 +32,9 @@ beautifulsoup4>=4.14.2
 loguru>=0.7.0
 pyyaml>=6.0.0
 certifi>=2025.10.5
+
+# === 可观测性（v3 T7） ===
+opentelemetry-sdk>=1.29.0
+opentelemetry-exporter-otlp-proto-http>=1.29.0
+opentelemetry-instrumentation-fastapi>=0.50b0
+opentelemetry-instrumentation-httpx>=0.50b0

@@ -82,6 +82,13 @@ _core: MiniCore | None = None
 async def lifespan(application: FastAPI):
     """应用生命周期：启动时初始化 MiniCore，关闭时清理。"""
     global _core
+    # v3 T7: OTel 可观测性
+    import sys as _s
+    _s.path.insert(0, str(Path(__file__).parent.parent))
+    from otel_setup import init_otel, instrument_fastapi, shutdown_otel
+    init_otel(service_name="video-forge")
+    instrument_fastapi(application)
+
     logger.info("video-forge 启动中...")
     _core = MiniCore("config.yaml")
     await _core.initialize()
@@ -91,6 +98,7 @@ async def lifespan(application: FastAPI):
     if _core:
         await _core.cleanup()
         _core = None
+    shutdown_otel()
 
 
 app = FastAPI(

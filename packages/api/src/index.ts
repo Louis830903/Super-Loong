@@ -19,7 +19,7 @@ import dotenv from "dotenv";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createAppContext } from "./context.js";
-import { closeDatabase, loadAllAgentConfigs, saveAgentConfig, setTracingEnabled, ensureBuiltinAgents, HeartbeatRunner, DEFAULT_HEARTBEAT_CONFIG, checkForUpdates } from "@super-agent/core";
+import { closeDatabase, loadAllAgentConfigs, saveAgentConfig, setTracingEnabled, ensureBuiltinAgents, HeartbeatRunner, DEFAULT_HEARTBEAT_CONFIG, checkForUpdates, initTelemetry } from "@super-agent/core";
 import { getProviderById, getModelById, getModelCatalog } from "@super-agent/core";
 
 import { registerMiddleware } from "./middleware/index.js";
@@ -83,6 +83,9 @@ const LOG_FILE = path.join(
 );
 
 async function main() {
+  // v3 T7: OTel SDK 初始化——必须在所有 HTTP/DB 调用之前执行
+  await initTelemetry();
+
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? "info",
