@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=32&duration=3000&pause=1000&color=6366F1&center=true&vCenter=true&width=600&lines=%F0%9F%9B%B8%EF%B8%8F+Super+Agent;%E4%B8%80%E5%88%87%E7%9A%86%E5%8F%AF+Agent" alt="Super Agent" />
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=36&duration=3000&pause=1000&color=6366F1&center=true&vCenter=true&width=700&lines=%F0%9F%9B%B8%EF%B8%8F+Super+Agent;%E4%B8%80%E5%88%87%E7%9A%86%E5%8F%AF+Agent;The+Future+is+Agentic" alt="Super Agent" />
 </p>
 
 <p align="center">
-  <b>下一代模块化 AI Agent 平台</b><br/>
-  <sub>🧠 211 内置专家 · 🔮 HRR 向量记忆 · 🕸️ 知识图谱推理 · 🤝 A2A 跨进程通信 · 🧬 34 模块进化引擎 · 💬 三大平台 IM · 🎬 端到端视频生成 · 🖱️ 桌面操控</sub>
+  <b>下一代模块化 AI Agent 操作系统</b><br/>
+  <sub>🧠 211 内置专家 · 🔮 HRR 向量记忆 · 🕸️ 知识图谱推理 · 🤝 A2A 跨进程通信 · 🧬 34 模块进化引擎 · 💬 三大平台 IM · 🎬 端到端视频生成 · 🖱️ 桌面操控 · 🔒 三级安全沙箱</sub>
 </p>
 
 <p align="center">
@@ -16,15 +16,17 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Node.js-%E2%89%A5%2020-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" />
-  <img src="https://img.shields.io/badge/pnpm-%E2%89%A5%209-F69220?style=flat-square&logo=pnpm&logoColor=white" alt="pnpm" />
-  <img src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=next.js&logoColor=white" alt="Next.js" />
-  <img src="https://img.shields.io/badge/Fastify-5-000000?style=flat-square&logo=fastify&logoColor=white" alt="Fastify" />
-  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
-  <img src="https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind" />
-  <img src="https://img.shields.io/badge/SQLite-native%20(better--sqlite3)-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
-  <img src="https://img.shields.io/badge/Docker-Sandbox-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/Node.js-%E2%89%A5%2020-339933?style=flat-square&logo=node.js&logoColor=white" />
+  <img src="https://img.shields.io/badge/pnpm-%E2%89%A5%209-F69220?style=flat-square&logo=pnpm&logoColor=white" />
+  <img src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
+  <img src="https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=next.js&logoColor=white" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" />
+  <img src="https://img.shields.io/badge/Fastify-5-000000?style=flat-square&logo=fastify&logoColor=white" />
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" />
+  <img src="https://img.shields.io/badge/SQLite-WAL%20+%20FTS5-003B57?style=flat-square&logo=sqlite&logoColor=white" />
+  <img src="https://img.shields.io/badge/Docker-Sandbox-2496ED?style=flat-square&logo=docker&logoColor=white" />
+  <img src="https://img.shields.io/badge/PM2-Production-2B037A?style=flat-square&logo=pm2&logoColor=white" />
 </p>
 
 ---
@@ -32,13 +34,40 @@
 <div align="center">
 
 ```
-╔══════════════════════════════════════════════════════════════════════╗
-║  🧠 211 内置专家 │ 🔮 HRR 向量记忆 │ 🕸️ 知识图谱推理 │ 💬 三大平台 IM ║
-║  🤝 A2A 协议 │ 🧬 34 模块进化引擎 │ 🔒 三级沙箱 │ 🎬 端到端视频生成  ║
-╚══════════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  🧠 211 内置专家 │ 🔮 HRR 向量记忆 │ 🕸️ 知识图谱推理 │ 💬 三大平台 IM     ║
+║  🤝 A2A 协议    │ 🧬 34 模块自进化 │ 🔒 三级沙箱     │ 🎬 端到端视频生成  ║
+║  🖱️ 桌面操控    │ 🔧 50+ 内置工具  │ 📝 10 层提示工程 │ 🛒 电商运营自动化  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 
 </div>
+
+---
+
+## 📑 目录
+
+- [为什么选择 Super Agent？](#-为什么选择-super-agent)
+- [数字员工实战](#-数字员工实战)
+- [系统架构全景](#-系统架构全景)
+- [核心能力矩阵](#-核心能力矩阵)
+- [平台规模一览](#-平台规模一览)
+- [211 内置专家全景](#-211-内置专家全景)
+- [为什么不是其他平台？](#-为什么不是其他平台)
+- [系统操作能力](#️-系统操作能力--你真正的数字员工)
+- [快速开始](#-快速开始)
+- [生产部署](#-生产部署)
+- [架构一览](#️-架构一览)
+- [模型 Provider 矩阵](#-模型-provider-矩阵)
+- [安全架构](#-安全架构)
+- [Feature Flags 灰度体系](#-feature-flags-灰度体系)
+- [路线图](#️-路线图)
+- [Star 趋势](#-star-趋势)
+- [已知限制](#-已知限制)
+- [开发指南](#️-开发指南)
+- [贡献者](#-贡献者)
+- [社区与支持](#-社区与支持)
+- [开源协议](#-开源协议)
 
 ---
 
@@ -54,8 +83,12 @@ Super Agent 不是又一个 AI 聊天机器人——它是**全球唯一同时�
 > - 💬 **一套代码通三平台**：飞书/钉钉/企业微信，插件式热插拔无缝接入
 > - 🎬 **一句话出片**：ComfyUI 工作流 + RunningHub，从文案到成片全自动
 > - 🛒 **电商运营自动化**：微信小店 + 抖音小店双平台，商品管理/订单发货/日常巡检
+> - 🔒 **三级安全沙箱**：Process → Docker → SSH 自动降级，50+ 危险命令实时拦截
+> - 📊 **9 组 Feature Flags**：工业级灰度发布体系，每个功能可独立开关/回滚
 
-### 🤖 数字员工实战
+---
+
+## 🤖 数字员工实战
 
 把 Agent 当成真正的数字员工——**一句话，全自动搞定**：
 
@@ -69,20 +102,25 @@ Super Agent 不是又一个 AI 聊天机器人——它是**全球唯一同时�
 | 📊 "每天下午 6 点自动抓 GitHub Star 数，发到企微群" | 定时任务 → HTTP 请求 → 企微 Webhook 发送 |
 | 🛒 "帮我在微信小店后台批量上架这 20 个新品" | 浏览器自动登录 → 填写商品信息 → 批量上架 → 回报结果 |
 | 🧬 "分析最近的代码改动，生成改进提案并 diff 对比" | 代码分析 → LLM 审查 → targetCode 提案 → before/after diff → 提交审核 |
+| 🔐 "用 AES-256 加密存储这些 API Key，并配置自动轮转" | CredentialVault 加密 → TokenProxy 代理 → 安全存储 |
 
 **开箱即用，一切皆可 Agent。**
+
+---
+
+## 🏗️ 系统架构全景
 
 ```mermaid
 graph TB
     subgraph 用户层["👤 用户接入层"]
-        WebUI["🌐 Web UI<br/>Next.js 16 · 17 页面"]
+        WebUI["🌐 Web UI<br/>Next.js 16 · 18 页面"]
         IM["💬 三大平台 IM<br/>飞书 · 钉钉 · 企业微信<br/>插件式热插拔架构"]
-        API["🔌 API<br/>Fastify 5 · 22 路由"]
+        API["🔌 RESTful API<br/>Fastify 5 · 25 路由 · RBAC 鉴权"]
     end
 
     subgraph 核心层["🧠 核心引擎层"]
         Runtime["⚡ Agent 运行时<br/>工具调用 · 推理链 · 流式响应"]
-        Experts["🧠 211 内置专家<br/>16 行业 · 语义匹配 · 层级分配"]
+        Experts["🧠 211 内置专家<br/>17 部门 · 语义匹配 · 层级分配"]
         Memory["🔮 HRR 向量记忆<br/>相位绑定 · 知识图谱 · FTS5 全文"]
         Evolution["🧬 34 模块进化引擎<br/>自修改 · 编码委派 · 算子体系"]
         Sandbox["🔒 三级安全沙箱<br/>Process → Docker → SSH 自动降级"]
@@ -95,18 +133,19 @@ graph TB
         Skills["🎯 技能市场<br/>多源安装 · 就绪检查 · 安全审计"]
         KB["📚 知识库<br/>PDF/Word/Excel/PPT/HTML<br/>向量检索 + BM25 混合"]
         Cron["⏰ 定时任务<br/>自然语言 → Cron 表达式"]
+        Tools["🔧 50+ 内置工具<br/>24 核心 + 30 可选 + SysOps"]
     end
 
     subgraph 服务层["⚙️ 微服务层"]
         Video["🎬 视频生成<br/>ComfyUI + RunningHub"]
-        KBParser["📄 文档解析<br/>Docling"]
+        KBParser["📄 文档解析<br/>Docling · 10+ 格式"]
         Gateway["🌉 IM 网关<br/>FastAPI · 插件式渠道"]
     end
 
     subgraph 观测层["📊 可观测层"]
-        Tracing["🔍 全链路追踪<br/>OpenTelemetry"]
-        Monitor["🖥️ 监控面板<br/>Electron"]
-        TTS["🎙️ 语音 STT/TTS<br/>阿里云集成"]
+        Tracing["🔍 全链路追踪<br/>OpenTelemetry · 9 组 Feature Flags"]
+        Monitor["🖥️ 监控面板<br/>Electron 桌面级实时监控"]
+        TTS["🎙️ 语音 STT/TTS<br/>阿里云 · Groq 集成"]
     end
 
     用户层 --> 核心层
@@ -124,7 +163,7 @@ graph TB
 <td width="50%">
 
 ### 🧠 211 内置专家 Agent
-16 个行业、211 个领域专家开箱即用——从金融风控到游戏开发，从法律文档到供应链优化。**Hierarchical 智能分配**自动语义匹配最合适的专家处理任务，A2A 协议实现跨专家协作。
+17 个部门、211 个领域专家开箱即用——从金融风控到游戏开发，从法律文档到供应链优化。**Hierarchical 智能分配**自动语义匹配最合适的专家处理任务，A2A 协议实现跨专家协作。
 
 **炸裂点**：不是「配置 211 个选项」，而是实打实的 211 套独立 System Prompt + Toolset。**一个任务来了，自动找到最对口的专家接手**——金融问题不会让码农专家回答。
 
@@ -142,9 +181,9 @@ graph TB
 <td width="50%">
 
 ### 🔮 HRR 向量记忆 + 知识图谱
-**HRR 全息相位向量**实现符号级记忆绑定/解绑操作，而非简单的余弦相似度。**知识图谱** RDF 三元组 + 传递闭包推理（`parentOf → ancestorOf`）。**FTS5 全文搜索**中英文混合。
+**HRR 全息相位向量**实现符号级记忆绑定/解绑操作，而非简单的余弦相似度。**知识图谱** RDF 三元组 + 传递闭包推理（`parentOf → ancestorOf`）。**FTS5 全文搜索**中英文混合，BM25 打分 + unicode61 分词。
 
-**炸裂点**：不只是"向量搜索"，是真正的符号推理级记忆。
+**炸裂点**：不只是"向量搜索"，是真正的符号推理级记忆——Agent 能「记住」「理解」「推理」。
 
 </td>
 <td width="50%">
@@ -160,17 +199,17 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 <td width="50%">
 
 ### 🧬 双引擎自我进化（Phase 2 全面落地）
-**Nudge 反思引擎**：每次对话后自动反思，提取洞察，优化策略。**进化引擎 Phase 2**：34 个进化模块全面落地——自适应执行器动态调整策略、自动学习器从交互中提取可复用模式、**源码级自修改引擎**（LLM 分析代码缺陷 → 产出 targetCode 提案 → before/after diff 对比 → 沙箱验证后应用）、编码委派器智能分配编码任务给子代理、意图分解器 + 策略学习器自动优化任务处理路径。20+ 算子体系（base/recombination/refinement/revision）驱动技能自动进化，质量关卡 + 审计 + 预算控制确保安全放权。
+**Nudge 反思引擎**：每次对话后自动反思，提取洞察，优化策略。**进化引擎 Phase 2**：34 个进化模块全面落地——自适应执行器动态调整策略、自动学习器从交互中提取可复用模式、**源码级自修改引擎**（LLM 分析代码缺陷 → 产出 targetCode 提案 → before/after diff 对比 → 沙箱验证后应用）、编码委派器智能分配编码任务给子代理。20+ 算子体系（base/recombination/refinement/revision）驱动技能自动进化，质量关卡 + 审计 + 预算控制确保安全放权。
 
-**炸裂点**：不仅是「生成技能文件」——Agent 能**自己写代码改进自己**，有 diff 对比、沙箱验证、人工审批三道关卡，渐进式自动化放权。
+**炸裂点**：不仅是「生成技能文件」——Agent 能**自己写代码改进自己**，有 diff 对比、沙箱验证、人工审批三道关卡。
 
 </td>
 <td width="50%">
 
-### 🔒 三级安全沙箱
-**Process → Docker → SSH** 三级自动降级。`CredentialVault` AES-256 加密密钥库，`TokenProxy` 代理敏感凭证。**危险命令实时拦截**：`rm -rf`、`sudo`、`curl|bash` 等 50+ 模式。
+### 🔒 三级安全沙箱 + 凭据保险柜
+**Process → Docker → SSH** 三级自动降级。`CredentialVault` AES-256 加密密钥库，`TokenProxy` 代理敏感凭证。**危险命令实时拦截**：`rm -rf`、`sudo`、`curl|bash` 等 50+ 模式。**9 组 Feature Flags** 支持灰度回滚。
 
-**炸裂点**：代码执行全覆盖，危险操作 0 容忍。
+**炸裂点**：代码执行全覆盖，危险操作 0 容忍，凭据 0 明文。
 
 </td>
 </tr>
@@ -184,35 +223,15 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 | 📌 钉钉 | OAuth 2.0 新 API 升级完成 |
 | 💼 企业微信 | 已对接，消息收发畅通 |
 
-**插件式热插拔架构**——钉钉已升级 OAuth 2.0 新 API，对标 jiuwenclaw 参考实现。
-
-**炸裂点**：一套代码三平台复用，消息格式自动适配，渠道零耦合。
+**插件式热插拔架构**——一套代码三平台复用，消息格式自动适配，渠道零耦合。
 
 </td>
 <td width="50%">
 
-### 🎬 端到端视频生成
-**ComfyUI 工作流** + **RunningHub 云端模型**，从文案到成片全链路自动化。视频 Crew 专用编排（7 文件 ~2300 行），多 Agent 协同出片。
+### 🎬 端到端视频生成 + 🧩 MCP 生态
+**ComfyUI 工作流** + **RunningHub 云端模型**，从文案到成片全链路自动化。视频 Crew 专用编排，多 Agent 协同出片。
 
-**炸裂点**：一句话生成专业级视频，Agent 自己当导演。
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-### 🧩 MCP 生态 & 技能市场
-**stdio/SSE/HTTP** 三种 MCP 传输，Bearer/API-Key/Basic 认证。技能市场**多源安装**（GitHub/SkillHub/ClawHub/Local），**就绪检查**校验依赖/密钥/信任等级，**安全审计引擎**扫描恶意代码。
-
-**炸裂点**：安装技能前自动安全检查，不是无脑装。
-
-</td>
-<td width="50%">
-
-### 📚 知识库 + 定时任务 + 全链路追踪
-知识库支持 10+ 文件格式，BM25 + 向量混合检索。**自然语言 → Cron 表达式**（LLM 翻译）。**OpenTelemetry** 全链路追踪，**20+ 工具分类**覆盖文件/桌面/运维/浏览器/Git/视频。**Electron 独立监控窗口**实时查看 Agent 状态。
-
-**炸裂点**：知识入库 → Agent 决策 → 定时执行 → 全链路追踪——从「知道」到「做到」到「回溯」完整闭环。
+**MCP 生态**：**stdio/SSE/HTTP** 三种传输，Bearer/API-Key/Basic 认证。技能市场**多源安装**（GitHub/SkillHub/ClawHub/Local），**安全审计引擎**扫描恶意代码。
 
 </td>
 </tr>
@@ -224,62 +243,74 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 
 | 维度 | 数字 | 说明 |
 |------|:--:|------|
-| 🧠 内置专家 Agent | **211** | 16 个行业，从金融到供应链 |
-| 🔌 API 路由 | **22** | Fastify 5 全 RESTful |
-| 🌐 Web 页面 | **17** | Next.js 16 全功能面板 |
+| 🧠 内置专家 Agent | **211** | 17 个部门，从金融到供应链，165 翻译 + 46 原创 |
+| 🔌 API 路由 | **25** | Fastify 5 全 RESTful，RBAC 四级鉴权 |
+| 🌐 Web 页面 | **18** | Next.js 16 全功能面板，React 19 |
 | 💬 IM 渠道 | **3** | 飞书/钉钉/企业微信，插件式热插拔 |
-| 🔧 内置工具 | **36** | 文件/桌面/运维/Docker/Git/浏览器/视频/安全 |
+| 🔧 内置工具 | **50+** | 24 核心同步 + 30 可选延迟加载 + SysOps 系列 |
 | 🧬 进化模块 | **34** | 自适应执行器 · 自修改引擎 · 算子体系 · 质量关卡 |
-| 📄 知识库格式 | **10+** | PDF/Word/Excel/PPT/Markdown/HTML/EPUB/CSV/JSON |
-| 🏭 Python 微服务 | **3** | IM 网关 · 视频引擎 · 文档解析器 |
+| 📄 知识库格式 | **10+** | PDF/Word/Excel/PPT/Markdown/HTML/EPUB/CSV/JSON/TXT |
+| 🏭 Python 微服务 | **3** | IM 网关 · 视频引擎 · 文档解析器（Docling） |
 | 🔒 沙箱层级 | **3** | Process → Docker → SSH 自动降级 |
 | 📝 提示层级 | **10** | L1-L6 缓存 + L7-L10 动态注入 |
-| 💾 持久化表 | **6** | SQLite WAL，配置持久化加密存储 |
-| 📦 核心代码 | **~40K+ 行** | TypeScript (~4M 含 node_modules) + Python IM 网关 |
+| 🚦 Feature Flags | **9** | 双轨切换 + 灰度回滚 + 自动过期检测 |
+| 💾 持久化 | **SQLite WAL** | FTS5 全文搜索 + BM25 打分 + 加密存储 |
+| 🤖 LLM Provider | **8+** | DashScope/DeepSeek/智谱/Moonshot/火山/MiniMax/OpenAI/Ollama |
 
 > 这不是一个 Demo——这是**生产级智能体操作系统**。
 
 ---
 
-## 🆚 为什么不是其他平台？
+## 🧠 211 内置专家全景
 
-不是说竞品不好——而是 **Super Agent 做到了别人没做到的事**：
+<table>
+<tr><td>
+
+| 部门 | 数量 | 核心角色 |
+|------|:----:|----------|
+| 🔧 工程部 | **33** | 前端开发 · 后端架构 · AI 工程 · DevOps · 安全 · 移动端 · 数据 |
+| 🎨 设计部 | **8** | UI/UX · 品牌 · 动效 · 3D · 信息架构 |
+| 📣 营销部 | **35** | SEO · 社媒 · 内容 · 增长黑客 · 品牌策略 |
+| 💰 付费媒体部 | **7** | Google Ads · Meta · 程序化购买 · ROI 优化 |
+| 💼 销售部 | **8** | SDR · AE · 销售策略 · CRM · 谈判 |
+| 🏦 金融部 | **8** | 风控 · 财务分析 · 审计 · 合规 · 投资 |
+| 👥 人力资源部 | **2** | 招聘 · 人才发展 |
+| ⚖️ 法务部 | **2** | 合同审查 · 知识产权 |
+| 🚛 供应链部 | **3** | 采购 · 物流 · 库存优化 |
+| 📦 产品部 | **5** | PM · 需求分析 · 竞品 · 数据驱动 |
+| 📋 项目管理部 | **6** | Scrum Master · 风险管理 · 资源调度 |
+| 🧪 测试部 | **9** | 自动化 · 性能 · 安全 · 移动端 |
+| 🎧 支持部 | **8** | 客服 · 技术支持 · 知识库管理 |
+| ⚡ 专项部 | **45** | 电商运营 · 小程序 · IoT · 区块链 · 云原生 |
+| 🥽 空间计算部 | **6** | AR/VR · 3D 建模 · 空间交互 |
+| 🎮 游戏开发部 | **20** | Unity · Unreal · 关卡设计 · AI NPC · 音效 |
+| 📚 学术部 | **6** | 论文检索 · 文献综述 · 实验设计 |
+
+</td></tr>
+</table>
+
+> 165 个英文版翻译 + 46 个中国市场原创智能体，覆盖 16 种工具类型。
+
+---
+
+## 🆚 为什么不是其他平台？
 
 | 能力维度 | Super Agent | Claude Code / Cursor | Coze / Dify | AutoGPT / crewAI |
 |----------|:-----------:|:---------------------:|:-----------:|:----------------:|
-| 🖱️ **桌面操控** | ✅ 鼠键+截屏+窗口 | ❌ | ❌ | ❌ |
+| 🖱️ **桌面操控** | ✅ 鼠键+截屏+窗口+OCR | ❌ | ❌ | ❌ |
 | 🧠 **内置专家** | ✅ **211 个开箱即用** | ❌ 需手动配置 | ⚠️ 可视化编排 | ⚠️ 需手写 Agent |
 | 🔮 **记忆系统** | ✅ HRR 代数向量+知识图谱 | ⚠️ 仅对话上下文 | ⚠️ 基础向量库 | ⚠️ 依赖外部 |
-| 🧬 **自我进化** | ✅ 自动生成技能文件热加载 | ❌ | ❌ | ❌ |
-| 💬 **IM 集成** | ✅ **飞书/钉钉/企微 原生适配** | ❌ | ⚠️ 需插件 | ❌ |
+| 🧬 **自我进化** | ✅ **34 模块源码级自修改** | ❌ | ❌ | ❌ |
+| 💬 **IM 集成** | ✅ **飞书/钉钉/企微 原生** | ❌ | ⚠️ 需插件 | ❌ |
 | 🎬 **视频生成** | ✅ ComfyUI 端到端 | ❌ | ❌ | ❌ |
 | 🔒 **安全沙箱** | ✅ **三级降级+50+危险拦截** | ⚠️ 基础沙箱 | ❌ | ❌ |
 | 🤝 **A2A 协议** | ✅ 跨进程 Agent 通信 | ❌ | ❌ | ❌ |
 | 🧩 **MCP 生态** | ✅ stdio/SSE/HTTP+安全审计 | ✅ stdio | ⚠️ 插件市场 | ❌ |
+| 🔧 **内置工具** | ✅ **50+ 工具** | ⚠️ 依赖插件 | ⚠️ 部分内置 | ⚠️ 依赖外部 |
+| 🚦 **灰度发布** | ✅ **9 组 Feature Flags** | ❌ | ❌ | ❌ |
 | 🏗️ **部署形态** | ✅ **独立运行，自建服务** | ✅ 编辑器插件 | ⚠️ SaaS 锁定 | ⚠️ 纯框架 |
 
 > **一句话：Super Agent 是「有手的 AI」**——能聊天、能操作电脑、能管部署、能出视频。别的平台是「大脑」，Super Agent 是「大脑 + 双手」。
-
----
-
-## 📈 Star 趋势
-
-<p align="center">
-  <a href="https://star-history.com/#Louis830903/Super-Loong&Date">
-    <img src="https://api.star-history.com/svg?repos=Louis830903/Super-Loong&type=Date" alt="Star History Chart" width="720" />
-  </a>
-</p>
-
----
-
-## 🗺️ 路线图
-
-| 阶段 | 状态 | 内容 |
-|------|:----:|------|
-| 🏗️ **v0.1 Alpha** | ✅ 已完成 | 核心运行时 + 211 专家 + 记忆系统 + 三平台 IM + 安全沙箱 + MCP 生态 + 技能市场 |
-| 🚀 **v0.2 Beta** | ✅ 已完成 | 进化引擎 Phase 2（34 个模块）· 自修改引擎 · 编码委派 · FTS5 原生支持 · A2A 跨进程打通 · 电商运营技能 · 进化 UI 完善 · IM 网关 PM2 直管 · 视频引擎 PM2 直管 · kb-parser 标准化 |
-| 🎯 **v0.5 里程碑** | 🔨 进行中 | 多模态 Agent 打通 · 视频端到端出片 · 分布式 Agent 协作 · SSE 流稳定性 |
-| 🌟 **v1.0 正式版** | 📋 规划中 | 插件市场 · 云端一键部署 · Agent 商店 · 企业级权限系统 · 社区贡献生态 |
 
 ---
 
@@ -287,40 +318,50 @@ L1-L6 静态缓存层（系统身份/安全策略/记忆/技能）+ L7-L10 动�
 
 > **这是 Super Agent 与所有其他 Agent 平台的终极分水岭。**
 
-Agent 不仅仅是"聊天机器人"——它能**像真人一样操作你的电脑**，接管鼠标键盘、操控窗口、执行运维部署。**有手、有眼、有判断力**。
+### 🔧 50+ 内置工具体系
 
-```typescript
-// Agent 不只是回复文字——它直接动手
-"帮我在 VS Code 里打开这个项目，然后 npm install"
-→ window_focus("VS Code") → keyboard_type("code .\n") → run_shell("npm install")
-// 全部自动完成，你只需看着
-```
+**核心同步工具**（24 个，始终可用）：
 
-### 🖱️ 桌面精确控制
+| 工具组 | 数量 | 工具列表 |
+|--------|:----:|----------|
+| 📁 文件系统 | 4 | `read_file` · `write_file` · `list_directory` · `search_files` |
+| 💻 代码执行 | 3 | `run_python` · `run_javascript` · `run_shell` |
+| 🌐 Web 工具 | 3 | `http_request` · `scrape_url` · `web_search` |
+| 📊 系统数据 | 5 | `get_current_time` · `json_parse` · `base64_encode` · `calculate` · `generate_uuid` |
+| ⚙️ 配置管理 | 1 | `configure_service` |
+| 🔀 Git 工具 | 4 | `git_status` · `git_log` · `git_diff` · `git_commit` |
+| 📋 效率工具 | 4 | `todo_manage` · `timer_set` · `clipboard_copy` · `env_info` |
 
-分层混合 GUI 控制引擎，**8 大核心工具**覆盖所有桌面交互场景，支持 macOS / Linux / Windows 三平台：
+**可选延迟加载工具**（30+ 个，按需加载）：
+
+| 工具组 | 数量 | 工具列表 |
+|--------|:----:|----------|
+| 🌐 浏览器 | 6 | `browser_navigate` · `browser_snapshot` · `browser_click` · `browser_type` · `browser_screenshot` · `browser_close` |
+| 🖼️ 图像生成 | 3 | `image_generate` · `image_edit` · `image_config` |
+| 🎙️ 语音 | 3 | `tts_speak` · `stt_transcribe` · `voice_status` |
+| 🔄 数据变换 | 5 | `csv_parse` · `xlsx_read` · `regex_extract` · `text_diff` · `hash_digest` |
+| 📄 媒体处理 | 3 | `pdf_extract` · `markdown_render` · `qrcode_generate` |
+| 👁️ 视觉分析 | 3 | `vision_analyze` · `ocr_extract` · `vision_config` |
+| 🎬 视频合成 | 7+ | `forge_image` · `forge_video` · `forge_video_status` · `forge_tts` · `forge_compose_frame` · `forge_concat` · `forge_add_bgm` |
+
+### 🖱️ 桌面精确控制（SysOps 系列）
+
+分层混合 GUI 控制引擎，支持 macOS / Linux / Windows 三平台：
 
 | 工具 | 能力 | 跨平台方案 |
 |------|------|------------|
 | `mouse_click` | 鼠标点击（左键/右键/中键） | macOS: `cliclick`，Linux: `xdotool`，Windows: PowerShell Win32 API |
-| `mouse_move` | 鼠标移动到指定坐标 | 同上，支持绝对坐标与相对位移 |
-| `mouse_drag` | 鼠标拖拽（起点→终点） | 支持拖拽文件、选区、滑块等 |
+| `mouse_move` | 鼠标移动到指定坐标 | 支持绝对坐标与相对位移 |
+| `mouse_drag` | 鼠标拖拽（起点→终点） | 支持拖拽文件、选区、滑块 |
 | `mouse_scroll` | 滚轮滚动（上下/左右） | 精确控制滚动步长与方向 |
 | `keyboard_type` | 键盘输入文本（含中文） | 模拟逐键击键，支持 Unicode |
 | `keyboard_key` | 组合键/特殊键（Ctrl+C 等） | 支持修饰键 + 功能键组合 |
-| `window_focus` | 聚焦指定窗口 | 按标题/进程名匹配，自动切换焦点 |
+| `window_focus` | 聚焦指定窗口 | 按标题/进程名匹配 |
 | `window_list` | 枚举所有窗口 | 返回窗口标题 + PID + 应用名列表 |
-
-```typescript
-// 示例：Agent 自主操作桌面
-await agent.use("mouse_click", { x: 500, y: 300, button: "left" });
-await agent.use("keyboard_type", { text: "你好，世界！" });
-await agent.use("window_focus", { title: "Visual Studio Code" });
-```
 
 ### 🧠 Computer Use 视觉循环
 
-这是 **能力天花板**——Agent 通过「截屏 → 视觉推理 → 执行操作 → 再截屏」的闭环，像人类一样**看懂屏幕并自主操作**：
+Agent 通过「截屏 → 视觉推理 → 执行操作 → 再截屏」的闭环，像人类一样**看懂屏幕并自主操作**：
 
 ```
 ┌──────────┐    ┌──────────┐    ┌──────────┐
@@ -334,82 +375,17 @@ await agent.use("window_focus", { title: "Visual Studio Code" });
 
 - **最大 20 步安全上限**：防止无穷循环失控
 - **每步截图存档**：完整操作轨迹可回放审计
-- **Feature Flag 控制**：可按需开关，避免滥用
+- **Feature Flag 控制**：`SUPER_AGENT_COMPUTER_USE=true` 按需开启
 
-### 📱 应用管理
+### 🚀 运维 / Docker / 网络 工具链
 
-跨平台应用生命周期管理，**4 个工具**搞定一切应用操作：
-
-| 工具 | 能力 | 跨平台实现 |
-|------|------|------------|
-| `app_launch` | 启动应用程序 | macOS: `open -a`，Linux: `xdg-open`，Windows: `Start-Process` |
-| `app_quit` | 退出应用程序 | macOS: `osascript -e 'quit app'`，Linux/Windows: `taskkill` |
-| `app_list` | 列出运行中的应用 | 跨平台进程枚举 + 窗口匹配 |
-| `app_switch` | 切换到指定应用 | 组合 `window_focus` + 应用激活 |
-
-### 📸 屏幕捕获与 OCR
-
-Agent 能「看见」屏幕上的任何内容：
-
-| 工具 | 能力 | 说明 |
-|------|------|------|
-| `screen_capture` | 全屏 / 区域 / 窗口截图 | 输出 Base64 图片，直接喂给视觉模型 |
-| `screen_ocr` | 屏幕文字识别 | 截图后 OCR 提取文字，用于内容识别与校验 |
-
-### 🚀 运维部署工具链
-
-Agent 直接接管部署流水线，从代码拉取到健康检查一气呵成：
-
-| 工具 | 能力 | 智能策略 |
-|------|------|----------|
-| `deploy_git_pull` | 拉取最新代码 | 自动处理冲突、子模块更新 |
-| `deploy_build` | 构建项目 | 自动检测技术栈：Node(pnpm/npm) / Python(uv/pip) / Go / Rust |
-| `deploy_restart` | 重启服务 | 自动检测运行方式：pm2 / systemctl / docker |
-| `deploy_rollback` | 部署回滚 | git checkout HEAD~1 / revert / 备份还原 |
-| `deploy_healthcheck` | 健康检查 | HTTP curl + 进程存活双重验证 |
-
-```bash
-# Agent 一句话完成全链路部署
-deploy_git_pull → deploy_build → deploy_restart → deploy_healthcheck ✅
-```
-
-### 🐳 Docker 容器管理
-
-完整容器生命周期管理，同时兼容 **Docker** 和 **Podman**：
-
-| 工具 | 能力 |
-|------|------|
-| `docker_ps` | 容器列表 + 状态 + 资源占用 |
-| `docker_logs` | 实时/历史日志查看 |
-| `docker_exec` | 容器内执行命令 |
-| `docker_lifecycle` | 启动 / 停止 / 重启 / 删除容器 |
-| `docker_images` | 镜像列表 + 清理 |
-| `docker_compose` | `docker compose up/down/ps/logs` 一键编排 |
-
-### 🌐 网络诊断工具组
-
-网络排障一站通，**5 个经典诊断工具**内置：
-
-| 工具 | 能力 | 场景 |
-|------|------|------|
-| `net_ping` | ICMP 连通性测试 | 判断主机是否可达 |
-| `net_traceroute` | 路由追踪 | 定位网络瓶颈在哪一跳 |
-| `net_ports` | 端口占用检测 (`ss`/`lsof`) | 排查端口冲突 |
-| `net_dns` | DNS 解析 (`nslookup`) | 域名解析问题排查 |
-| `net_curl` | HTTP 请求测试 | 接口连通性 + 响应内容检查 |
-
-### ⚙️ 服务与定时任务
-
-系统级服务管理，支持 macOS(`launchctl`) / Linux(`systemctl`) / Windows(`Get-Service`)：
-
-| 工具 | 能力 |
-|------|------|
-| `service_status` | 查看服务运行状态 |
-| `service_control` | 启动 / 停止 / 重启系统服务 |
-| `service_logs` | 查看服务日志 |
-| `cron_manage` | 定时任务管理（crontab / launchd / Task Scheduler） |
-
-> **一句话总结**：从鼠标键盘到 Docker 部署，从截屏 OCR 到网络诊断——Super Agent 具备**完整的生产级电脑操控能力**。别的 Agent 只能「回复文字」，Super Agent 能「上手干活」。这才是真正的「数字员工」，不是聊天玩具。
+| 工具组 | 核心工具 | 场景 |
+|--------|----------|------|
+| 🚀 部署 | `deploy_git_pull` · `deploy_build` · `deploy_restart` · `deploy_rollback` · `deploy_healthcheck` | 全链路自动部署 |
+| 🐳 Docker | `docker_ps` · `docker_logs` · `docker_exec` · `docker_lifecycle` · `docker_images` · `docker_compose` | 容器全生命周期 |
+| 🌐 网络 | `net_ping` · `net_traceroute` · `net_ports` · `net_dns` · `net_curl` | 网络排障一站通 |
+| ⚙️ 服务 | `service_status` · `service_control` · `service_logs` · `cron_manage` | 系统服务管理 |
+| 📱 应用 | `app_launch` · `app_quit` · `app_list` · `app_switch` | 跨平台应用管理 |
 
 ---
 
@@ -417,27 +393,22 @@ deploy_git_pull → deploy_build → deploy_restart → deploy_healthcheck ✅
 
 ### 📋 环境要求
 
-#### 硬件要求
-
 | 级别 | CPU | 内存 | 磁盘 | 说明 |
 |------|-----|------|------|------|
-| **最小** | 2 核 | 4 GB | 2 GB | 基础对话功能，不含视频/Docker |
+| **最小** | 2 核 | 4 GB | 2 GB | 基础对话功能 |
 | **推荐** | 4 核 | 8 GB | 10 GB SSD | 全功能流畅运行 |
 | **最优** | 8 核+ | 16 GB+ | 50 GB+ SSD | 多 Agent 协作 + 视频生成 + 知识库 |
 
-> 💡 **LLM 推理不占本地资源**——所有模型调用走云端 API（DashScope / DeepSeek / 智谱等），这是最大成本节省。仅当本地跑 Ollama 时才需 GPU（建议 8 GB+ 显存）。
+> 💡 **LLM 推理不占本地资源**——所有模型调用走云端 API，仅 Ollama 本地推理需 GPU（建议 8 GB+ 显存）。
 
-#### 软件依赖
+| 依赖 | 版本 | 安装方式 |
+|------|------|----------|
+| ![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A5%2020-339933?style=flat-square&logo=node.js) | ≥ 20.0.0 | `nvm install 20` 或 [nodejs.org](https://nodejs.org) |
+| ![pnpm](https://img.shields.io/badge/pnpm-%E2%89%A5%209-F69220?style=flat-square&logo=pnpm) | ≥ 9.0.0 | `npm i -g pnpm` 或 `corepack enable` |
+| ![Python](https://img.shields.io/badge/Python-%E2%89%A5%203.11-3776AB?style=flat-square&logo=python) | ≥ 3.11 | [python.org](https://python.org) 或 `pyenv` |
+| ![Git](https://img.shields.io/badge/Git-%E2%89%A5%202.40-F05032?style=flat-square&logo=git) | ≥ 2.40 | [git-scm.com](https://git-scm.com) |
 
-| 依赖 | 版本 | 说明 | 安装方式 |
-|------|------|------|----------|
-| ![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A5%2020-339933?style=flat-square&logo=node.js) | ≥ 20.0.0 | TypeScript 运行时 | `nvm install 20` 或 [nodejs.org](https://nodejs.org) |
-| ![pnpm](https://img.shields.io/badge/pnpm-%E2%89%A5%209-F69220?style=flat-square&logo=pnpm) | ≥ 9.0.0 | Monorepo 包管理 | `npm i -g pnpm` 或 `corepack enable` |
-| ![Python](https://img.shields.io/badge/Python-%E2%89%A5%203.11-3776AB?style=flat-square&logo=python) | ≥ 3.11 | IM 网关 / 视频生成 / 文档解析 | [python.org](https://python.org) 或 `pyenv` |
-| ![uv](https://img.shields.io/badge/uv-推荐-8040FF?style=flat-square) | 最新 | Python 依赖管理（替代 pip） | `pip install uv` 或 [astral.sh](https://astral.sh) |
-| ![Git](https://img.shields.io/badge/Git-%E2%89%A5%202.40-F05032?style=flat-square&logo=git) | ≥ 2.40 | 版本管理 | [git-scm.com](https://git-scm.com) |
-
-#### LLM API Key（至少配置一个）
+### LLM API Key（至少配置一个）
 
 | 提供商 | 环境变量 | 获取地址 |
 |--------|----------|----------|
@@ -445,10 +416,10 @@ deploy_git_pull → deploy_build → deploy_restart → deploy_healthcheck ✅
 | DeepSeek | `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com) |
 | 智谱 GLM | `ZHIPU_API_KEY` | [open.bigmodel.cn](https://open.bigmodel.cn) |
 | Moonshot (Kimi) | `MOONSHOT_API_KEY` | [platform.moonshot.cn](https://platform.moonshot.cn) |
-| 火山方舟 | `ARK_API_KEY` | [console.volcengine.com](https://console.volcengine.com/ark) |
+| 火山方舟 | `ARK_API_KEY` | [console.volcengine.com/ark](https://console.volcengine.com/ark) |
 | MiniMax | `MINIMAX_API_KEY` | [platform.minimaxi.com](https://platform.minimaxi.com) |
 | OpenAI（可选） | `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com) |
-| Ollama（本地） | 自动检测 `http://127.0.0.1:11434` | `ollama pull qwen3` |
+| Ollama（本地） | 自动检测 | `ollama pull qwen3` |
 
 ### 🪄 安装步骤
 
@@ -457,10 +428,8 @@ deploy_git_pull → deploy_build → deploy_restart → deploy_healthcheck ✅
 
 ```powershell
 # ① 克隆仓库（二选一）
-# GitHub（推荐，公开仓库，无需认证）
 git clone https://github.com/Louis830903/Super-Loong.git
-# Gitee（国内速度快，需私人令牌代替密码）
-# git clone https://gitee.com/lv--dapang/super-loong.git
+# git clone https://gitee.com/lv--dapang/super-loong.git  # 国内镜像
 cd Super-Loong
 
 # ② 一键初始化（自动完成全部准备工作）
@@ -469,7 +438,7 @@ pnpm setup
 #   ✅ 创建 .env（从 .env.example）
 #   ✅ 生成 SA_ENCRYPTION_KEY（强随机密钥）
 #   ✅ 安装 pnpm + Node.js 依赖
-#   ✅ Seed 内置技能到运行时目录（含电商运营等 7 个技能）
+#   ✅ Seed 内置技能到运行时目录
 #   ✅ 自动开启全链路追踪 + A2A 协作协议
 #   ✅ 安装 Python 微服务依赖（IM 网关 + 视频引擎 + 文档解析）
 
@@ -480,11 +449,25 @@ notepad .env
 pnpm dev
 ```
 
-> ⚠️ **Windows 用户注意**：PowerShell 不支持 `&&` 作为语句分隔符，请逐行执行或用 `;` 代替。
+> ⚠️ PowerShell 不支持 `&&`，请逐行执行或用 `;` 代替。
 >
-> 🔐 **Gitee 用户注意**：Gitee 已禁用密码登录，clone 时密码栏需填入 [私人令牌](https://gitee.com/profile/personal_access_tokens)（Personal Access Token），不能填 Gitee 密码。
+> 🔐 Gitee 已禁用密码登录，需用[私人令牌](https://gitee.com/profile/personal_access_tokens)代替密码。
 >
-> 🛡️ **pnpm 安全提示**：安装后如看到 `ERR_PNPM_IGNORED_BUILDS`，运行 `pnpm approve-builds` 用空格勾选 `cpu-features`、`electron`、`ssh2` 回车确认。如 Electron 报 `ECONNRESET`，先执行 `$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"` 再重新 `pnpm install`。
+> 🛡️ 安装后如看到 `ERR_PNPM_IGNORED_BUILDS`，运行 `pnpm approve-builds` 勾选即可。
+
+</details>
+
+<details>
+<summary><b>macOS / Linux</b></summary>
+
+```bash
+git clone https://github.com/Louis830903/Super-Loong.git && cd Super-Loong
+pnpm setup
+nano .env  # 填入 API Key
+pnpm dev
+```
+
+</details>
 
 启动后访问：
 
@@ -496,76 +479,31 @@ pnpm dev
 | 🖥️ **监控面板** | Electron 窗口 | 桌面级实时监控（自动弹出） |
 | 🎬 **视频引擎** | http://localhost:8199 | 视频生成（按需启动） |
 
-</details>
-
-<details>
-<summary><b>macOS / Linux</b></summary>
+### 🔧 核心配置
 
 ```bash
-# ① 克隆仓库（二选一）
-# GitHub（推荐，公开仓库，无需认证）
-git clone https://github.com/Louis830903/Super-Loong.git && cd Super-Loong
-# Gitee（国内速度快，需私人令牌代替密码）
-# git clone https://gitee.com/lv--dapang/super-loong.git && cd Super-Loong
+# === 必填：加密密钥（pnpm setup 自动生成）===
+SA_ENCRYPTION_KEY=
 
-# ② 一键初始化
-pnpm setup
+# === 必填：至少一个 LLM Provider ===
+DASHSCOPE_API_KEY=        # 推荐，Qwen 系列性价比最高
 
-# ③ 编辑 .env 填入 API Key
-nano .env
-
-# ④ 启动
-pnpm dev
-```
-
-启动后访问：http://localhost:3000
-
-</details>
-
-### 🔧 配置说明
-
-`.env` 文件核心配置项：
-
-```bash
-# === 必填：加密密钥（自动生成 64 位 hex）===
-SA_ENCRYPTION_KEY=        # 首次运行时自动生成，也可手动：openssl rand -hex 32
-
-# === 必填：至少配置一个 LLM Provider ===
-DASHSCOPE_API_KEY=        # 阿里 DashScope（推荐，Qwen 系列性价比最高）
-DEEPSEEK_API_KEY=          # DeepSeek V3/R1
-ZHIPU_API_KEY=             # 智谱 GLM-4.7
-
-# === 生产环境必填：认证配置（使用 start.bat 或 PM2 部署时）===
-AUTH_ENABLED=true          # 生产模式强制开启
-JWT_SECRET=                # 生成方式见上方
-ADMIN_USERNAME=admin       # Web UI 登录用户名
+# === 生产环境必填 ===
+AUTH_ENABLED=true          # 生产模式强制开启鉴权
+JWT_SECRET=                # node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+ADMIN_USERNAME=admin
 ADMIN_PASSWORD=            # 请设置强密码
 
-# === 可选：视频生成（需要 RunningHub 账号）===
-RUNNINGHUB_API_KEY=        # https://www.runninghub.com 注册获取
-VIDEO_FORGE_URL=http://127.0.0.1:8199
-
-# === 可选：IM 网关（飞书/钉钉/企微）===
-# 飞书: 在飞书开放平台创建应用，获取 App ID + App Secret
-# 钉钉: 在钉钉开放平台创建应用，获取 Client ID + Client Secret  
-# 企微: 在企业微信管理后台获取 Corp ID + Secret
-# 详细配置见 services/im-gateway/.env.example
-
 # === 可选：高级功能开关（pnpm setup 已自动开启）===
-ENABLE_TRACING=true          # 全链路追踪（Dashboard 可查看调用链）
-ENABLE_A2A=true              # A2A 跨 Agent 协作协议
+ENABLE_TRACING=true          # 全链路追踪
+ENABLE_A2A=true              # A2A 跨 Agent 协作
 ```
 
 ### ✅ 验证安装
 
 ```bash
-# 检查 API 服务是否正常
 curl http://localhost:3001/api/system/health
-# 预期返回: {"success":true,"data":{"status":"ok","agents":211,...}}
-
-# 检查 Web 前端是否正常
-curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
-# 预期返回: 200
+# 预期: {"success":true,"data":{"status":"ok","agents":211,...}}
 ```
 
 ### ⚠️ 常见问题
@@ -573,211 +511,113 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
 <details>
 <summary><b>Q: 启动报错 "SA_ENCRYPTION_KEY is required"</b></summary>
 
-编辑 `.env` 文件，设置 `SA_ENCRYPTION_KEY`（64 位 hex）。生成方式：
-
 ```bash
-# 方式一（推荐）
-openssl rand -hex 32
-
-# 方式二（Node.js）
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+openssl rand -hex 32  # 生成密钥，填入 .env 的 SA_ENCRYPTION_KEY
 ```
-
 </details>
 
 <details>
-<summary><b>Q: pnpm install 很慢 / 报网络错误</b></summary>
-
-国内用户建议配置镜像源：
+<summary><b>Q: pnpm install 很慢</b></summary>
 
 ```bash
 pnpm config set registry https://registry.npmmirror.com
 ```
-
 </details>
 
 <details>
-<summary><b>Q: Python 依赖安装失败（pip install -r requirements.txt 报错）</b></summary>
+<summary><b>Q: Python 依赖安装失败</b></summary>
 
-确保 Python ≥ 3.11，然后重试：
-
-```bash
-python --version  # 确认版本
-cd services/im-gateway
-pip install -r requirements.txt
-cd ../video-forge
-pip install -r requirements.txt
-cd ../kb-parser
-pip install -r requirements.txt
-```
-
+确保 Python ≥ 3.11：`python --version`，然后分别在 `services/im-gateway`、`services/video-forge`、`services/kb-parser` 目录执行 `pip install -r requirements.txt`。
 </details>
 
 <details>
-<summary><b>Q: 端口被占用（3000 / 3001 / 8642）</b></summary>
+<summary><b>Q: 端口被占用</b></summary>
 
 ```powershell
-# Windows — 查找并结束占用进程
-netstat -ano | findstr :3000
-taskkill /PID <PID> /F
-
-# macOS/Linux — 查找并结束占用进程
-lsof -i :3000
-kill -9 <PID>
+# Windows
+netstat -ano | findstr :3000; taskkill /PID <PID> /F
+# macOS/Linux
+lsof -i :3000; kill -9 <PID>
 ```
-
 </details>
 
 <details>
 <summary><b>Q: 生产部署报错 "AUTH_ENABLED 必须在生产环境设为 true"</b></summary>
 
-使用 `start.bat` 或 `pm2 start --env production` 部署时，`NODE_ENV=production` 会强制要求开启认证。请在 `.env` 或 `.env.production` 中配置：
-
-```bash
-AUTH_ENABLED=true
-JWT_SECRET=<你生成的强密钥>
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=<你的强密码>
-```
-
-生成 JWT_SECRET：`node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"`
-
-</details>
-
-<details>
-<summary><b>Q: 飞书/钉钉/企微 IM 网关怎么配置？</b></summary>
-
-详见 `services/im-gateway/` 目录下的各个渠道配置文档。飞书需要：
-
-1. 在[飞书开放平台](https://open.feishu.cn)创建企业自建应用
-2. 开启「机器人」能力，配置事件订阅地址为 `https://你的域名:8642/feishu/event`
-3. 将 App ID / App Secret 填入 IM 网关对应的 `.env` 文件
-
+在 `.env` 中配置 `AUTH_ENABLED=true`、`JWT_SECRET`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`。
 </details>
 
 ---
 
 ## 🚀 生产部署
 
-> 使用 PM2 进程守护，实现崩溃自动重启、开机自启、日志管理。
+> PM2 进程守护，实现崩溃自动重启、开机自启、日志管理。
 
 ### 一键启动
 
 ```powershell
-# Windows
+# Windows — 6 步自动完成
 .\start.bat
 
 # Linux / macOS
 chmod +x start.sh && ./start.sh
 ```
 
-> ⚠️ **Windows 用户**：脚本已内置 `chcp 65001` 切换 UTF-8 编码，避免中文乱码。如仍遇到乱码，手动执行 `chcp 65001` 后再运行。
-
-脚本会自动完成：
-1. 检查并创建 `.env` 文件（如不存在，从 `.env.example` 复制）
-2. 自动生成 `SA_ENCRYPTION_KEY` 加密密钥
-3. 检查并安装 PM2（如未安装）
-4. 检查并安装 Node.js 依赖（`pnpm install`）
-5. 检查构建产物（如不存在则自动 `pnpm build`）
-6. 启动 4 个 PM2 进程：API + Web + IM 网关 + 视频引擎
-7. 配置开机自启
-
-> 💡 **首次部署提示**：脚本会自动创建 `.env` 并生成加密密钥，但你仍需手动编辑 `.env` 填入 `LLM_API_KEY` 等必填项。生产环境还需配置 `AUTH_ENABLED=true`、`JWT_SECRET`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`。
-
-### 环境配置
-
-生产模式会加载 `.env.production` 文件（叠加在 `.env` 之上）：
-
-```powershell
-copy .env.example .env.production
-notepad .env.production
-```
-
-生产环境必填配置项：
-
-| 配置项 | 说明 | 生成方式 |
-|--------|------|----------|
-| `AUTH_ENABLED=true` | 生产环境强制开启鉴权 | 直接设为 `true` |
-| `JWT_SECRET` | JWT 签名密钥 | `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` |
-| `ADMIN_USERNAME` | 管理员用户名 | 自定义，如 `admin` |
-| `ADMIN_PASSWORD` | 管理员密码 | 设置强密码 |
-| `LLM_API_KEY` | LLM 提供商密钥 | 从对应平台获取 |
-
-### 常用管理命令
-
-| 命令 | 说明 |
-|------|------|
-| `pm2 status` | 查看所有服务运行状态 |
-| `pm2 logs super-agent-api` | 查看 API 日志 |
-| `pm2 logs super-agent-web` | 查看前端日志 |
-| `pm2 logs super-agent-gateway` | 查看 IM 网关日志 |
-| `pm2 logs super-agent-video-forge` | 查看视频引擎日志 |
-| `pm2 restart all` | 重启所有服务 |
-| `pm2 stop all` | 停止所有服务 |
-| `npm run logs:prod` | 快捷查看 API 日志 |
-| `npm run status:prod` | 快捷查看状态 |
-
-### 开机自启
-
-首次运行 `start.bat` / `start.sh` 后，PM2 会自动配置开机自启：
-
-- **Windows**：通过 `pm2-windows-startup` 注册为 Windows 服务
-- **Linux**：通过 `pm2 startup systemd` 注册 systemd 服务
-- **macOS**：通过 `pm2 startup launchd` 注册 launchd 服务
-
-> 💡 如需取消开机自启：`pm2 unstartup`
-
-### 日志查看
-
-日志文件位于 `super-agent/logs/` 目录：
-
-```bash
-# 实时查看
-pm2 logs
-
-# 查看文件
-cat logs/pm2-api-out.log
-cat logs/pm2-web-out.log
-cat logs/pm2-gateway-out.log
-cat logs/pm2-video-forge-out.log
-```
+`start.bat` 自动完成 **6 步**：
+1. 检查并创建 `.env`，自动生成 `SA_ENCRYPTION_KEY`
+2. 检查并安装 PM2 + 开机自启组件
+3. 安装 Node.js 依赖（`pnpm install`）
+4. 构建 API + Web 产物（`pnpm build`）
+5. 检测 Python 3.11+，安装三个微服务依赖
+6. 启动 4 个 PM2 进程，配置开机自启
 
 ### 进程架构
 
 ```
-PM2 (进程守护) — 4 进程平级，统一管理崩溃重启与日志
-├── super-agent-api         ← Node.js Fastify 服务  :3001
-├── super-agent-web         ← Next.js 16 前端        :3000
-├── super-agent-gateway     ← Python IM 网关          :8642
+PM2 (进程守护) — 4 进程平级，统一管理
+├── super-agent-api         ← Node.js Fastify 5     :3001
+├── super-agent-web         ← Next.js 16 + React 19  :3000
+├── super-agent-gateway     ← Python FastAPI IM 网关  :8642
 └── super-agent-video-forge ← Python 视频生成引擎     :8199
 
-注：kb-parser（文档解析）由 API 按需懒启动，不常驻。
-    生产环境通过 DISABLE_* 环境变量禁止 API 内部嵌套 spawn。
+注：kb-parser 由 API 按需懒启动，不常驻。
 ```
+
+### 管理命令
+
+| 命令 | 说明 |
+|------|------|
+| `start.bat status` / `pm2 status` | 查看服务状态 |
+| `start.bat logs` / `pm2 logs` | 查看日志 |
+| `start.bat restart` / `pm2 restart all` | 重启所有服务 |
+| `start.bat stop` / `pm2 stop all` | 停止所有服务 |
 
 ---
 
 ## 🏗️ 架构一览
 
 ```
-super-agent/                        # 📦 Monorepo 根
+super-agent/                        # 📦 Monorepo (pnpm workspace)
 │
-├── 📁 packages/                    # TypeScript 包
-│   ├── 🧠 core/                    #   核心引擎：Agent 运行时 · 记忆 · 进化 · 安全
-│   ├── 🔌 api/                     #   Fastify 5 API 服务
-│   ├── 🌐 web/                     #   Next.js 16 前端（14 页面）
+├── 📁 packages/                    # 7 个 TypeScript 包
+│   ├── 🧠 core/                    #   核心引擎：Agent 运行时 · 记忆 · 进化 · 安全 · 50+ 工具
+│   ├── 🔌 api/                     #   Fastify 5 API · 25 路由 · RBAC 鉴权
+│   ├── 🌐 web/                     #   Next.js 16 + React 19 · 18 页面
 │   ├── 🖥️ monitor/                 #   Electron 桌面监控面板
 │   ├── 🔬 research/                #   评估基准与学术研究
-│   └── 📐 web-types/               #   前后端共享类型与常量
+│   ├── 📐 web-types/               #   前后端共享类型与常量
+│   └── 🧪 e2e/                     #   端到端测试
 │
-├── 📁 services/                    # Python 微服务
+├── 📁 services/                    # 3 个 Python 微服务
 │   ├── 🌉 im-gateway/              #   三平台 IM 适配网关（FastAPI）
-│   ├── 🎬 video-forge/             #   视频生成引擎（ComfyUI）
+│   ├── 🎬 video-forge/             #   视频生成引擎（ComfyUI + RunningHub）
 │   └── 📄 kb-parser/               #   文档解析服务（Docling）
 │
+├── 📁 video-intro/                 # 🎬 Remotion 产品视频（横屏 30s + 竖屏 60s）
 ├── 📁 data/                        # 运行时数据（不入库）
 ├── 📁 docs/                        # 项目文档
-├── ⚙️ .env.example                 # 环境变量模板
+├── ⚙️ ecosystem.config.cjs         # PM2 生产配置
+├── ⚙️ .env.example                 # 环境变量模板（169 项）
 └── 📜 package.json                 # Monorepo 入口
 ```
 
@@ -789,7 +629,7 @@ super-agent/                        # 📦 Monorepo 根
 <tr>
 <td align="center" width="25%">
   <b>☁️ 阿里 DashScope</b><br/>
-  <sub>Qwen 全系列 · 多模态</sub>
+  <sub>Qwen 全系列 · 多模态 · 推荐</sub>
 </td>
 <td align="center" width="25%">
   <b>🔍 DeepSeek</b><br/>
@@ -819,24 +659,82 @@ super-agent/                        # 📦 Monorepo 根
 </td>
 <td align="center" width="25%">
   <b>🏠 Ollama</b><br/>
-  <sub>本地模型 · 离线运行</sub>
+  <sub>本地模型 · 离线运行 · 零成本</sub>
 </td>
 </tr>
 </table>
 
 ---
 
+## 🔐 安全架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    三级安全沙箱体系                           │
+├─────────────────────────────────────────────────────────────┤
+│  Level 1 │ Process 沙箱     │ 子进程隔离 · 资源限制         │
+│  Level 2 │ Docker 沙箱      │ 容器隔离 · 网络限制           │
+│  Level 3 │ SSH 远程沙箱     │ 独立主机 · 完全隔离           │
+├─────────────────────────────────────────────────────────────┤
+│  自动降级：Docker 不可用时自动回退 Process                    │
+├─────────────────────────────────────────────────────────────┤
+│  CredentialVault    │ AES-256 加密密钥库                     │
+│  TokenProxy         │ 代理敏感凭证，Agent 不接触明文         │
+│  CommandGuard       │ 50+ 危险命令模式实时拦截               │
+│  注入防护           │ 恶意 Prompt 自动清洗                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🚦 Feature Flags 灰度体系
+
+9 组双轨切换闸门，支持渐进式灰度发布与自动过期检测：
+
+| Flag | 功能 | 默认 | 说明 |
+|------|------|:----:|------|
+| `guardedExec` | CommandGuard 接管命令执行 | OFF | 危险命令自动拦截 |
+| `respEnvelope` | 统一响应壳 | OFF | `{success, data, error, traceId}` |
+| `internalAuth` | IM 网关 HMAC 鉴权 | OFF | API ⇄ IM 网关双侧签名 |
+| `vaultEnvFallback` | Vault 引导期 .env 兜底 | OFF | 迁移期安全过渡 |
+| `zodCodegen` | Zod → OpenAPI 类型生成 | OFF | 编译时漂移检测 |
+| `otelTracing` | OpenTelemetry 全链路追踪 | OFF | 错误链路 100% 采样 |
+| `llmCache` | LLM 语义缓存 | OFF | 低温度请求缓存 |
+| `errorCodeDualEmit` | 错误码双发 | ON | code + message 兼容期 |
+| `vaultFailFast` | 凭据缺失启动即失败 | 生产ON | 生产环境密钥强检查 |
+
+> 每个 Flag 注册了 `rolloutDate`（灰度日期）和 `sunsetDate`（代码清理日期），CI 自动检测过期 Flag。
+
+---
+
+## 🗺️ 路线图
+
+| 阶段 | 状态 | 内容 |
+|------|:----:|------|
+| 🏗️ **v0.1 Alpha** | ✅ 已完成 | 核心运行时 + 211 专家 + 记忆系统 + 三平台 IM + 安全沙箱 + MCP + 技能市场 |
+| 🚀 **v0.2 Beta** | ✅ 已完成 | 进化引擎 Phase 2（34 模块）· 自修改引擎 · A2A · 电商运营 · FTS5 · RBAC 鉴权 |
+| 🎯 **v0.5 里程碑** | 🔨 进行中 | 多模态 Agent · 视频端到端出片 · 分布式协作 · SSE 流稳定性 |
+| 🌟 **v1.0 正式版** | 📋 规划中 | 插件市场 · 云端一键部署 · Agent 商店 · 企业级权限 · 社区生态 |
+
+---
+
+## 📈 Star 趋势
+
+<p align="center">
+  <a href="https://star-history.com/#Louis830903/Super-Loong&Date">
+    <img src="https://api.star-history.com/svg?repos=Louis830903/Super-Loong&type=Date" alt="Star History Chart" width="720" />
+  </a>
+</p>
+
+---
+
 ## 📝 已知限制
 
-### 多模态能力
-
-当前版本以文本交互为主，**图像/音频/视频多模态输入**正在 v0.5 中打通。目前视觉模型可通过 `screen_capture` 截屏 OCR 间接参与推理。
-
-### SSE 流稳定性
-
-SSE 流式响应在极端场景（网络抖动、大上下文）下偶有断流，**v0.5 正在优化**重连与错误恢复机制。
-
-> 💡 FTS5 全文搜索已在 v0.2 通过 better-sqlite3 原生支持，BM25 打分 + unicode61 分词开箱即用。
+| 限制 | 说明 | 计划 |
+|------|------|------|
+| 多模态输入 | 以文本交互为主，图像/音频/视频输入接入中 | v0.5 打通 |
+| SSE 流稳定性 | 极端场景偶有断流 | v0.5 优化重连 |
+| FTS5 | 已通过 better-sqlite3 原生支持 | ✅ 已完成 |
 
 ---
 
@@ -852,15 +750,26 @@ pnpm clean        # 清理构建产物
 ```
 
 <details>
-<summary>🔧 按模块启动（高级）</summary>
+<summary>🔧 按模块启动</summary>
 
 ```bash
-pnpm dev:api       # 仅启动 API 服务
+pnpm dev:api       # 仅启动 API
 pnpm dev:web       # 仅启动 Web UI
 pnpm dev:monitor   # 仅启动监控面板
 pnpm dev:gateway   # 仅启动 IM 网关
 ```
+</details>
 
+<details>
+<summary>🧪 测试命令</summary>
+
+```bash
+pnpm test:core     # 核心引擎测试
+pnpm test:api      # API 测试
+pnpm test:web      # Web 测试
+pnpm test:e2e      # 端到端测试
+pnpm test:all      # 全量测试
+```
 </details>
 
 ---
@@ -878,44 +787,31 @@ pnpm dev:gateway   # 仅启动 IM 网关
 ## 🌍 社区与支持
 
 <p align="center">
-  <a href="https://github.com/Louis830903/Super-Loong/issues"><img src="https://img.shields.io/badge/💬-讨论%20%26%20建议-6366f1?style=for-the-badge&logo=github&labelColor=1f2937" alt="Discussions" /></a>
+  <a href="https://github.com/Louis830903/Super-Loong/issues"><img src="https://img.shields.io/badge/💬-讨论%20%26%20建议-6366f1?style=for-the-badge&logo=github&labelColor=1f2937" /></a>
   &nbsp;
-  <a href="https://github.com/Louis830903/Super-Loong/issues/new"><img src="https://img.shields.io/badge/🐛-报告%20Bug-f87171?style=for-the-badge&logo=github&labelColor=1f2937" alt="Bug Report" /></a>
+  <a href="https://github.com/Louis830903/Super-Loong/issues/new"><img src="https://img.shields.io/badge/🐛-报告%20Bug-f87171?style=for-the-badge&logo=github&labelColor=1f2937" /></a>
   &nbsp;
-  <a href="#"><img src="https://img.shields.io/badge/⭐-给个%20Star-fbbf24?style=for-the-badge&logo=github&labelColor=1f2937" alt="Star" /></a>
+  <a href="#"><img src="https://img.shields.io/badge/⭐-给个%20Star-fbbf24?style=for-the-badge&logo=github&labelColor=1f2937" /></a>
 </p>
 
 ---
 
 ## 📜 开源协议
 
-Super Agent 采用 **MIT License** —— 业界最宽松的开源协议之一，在**保留版权声明**的前提下，赋予你最大的使用自由。
-
-### 你拥有以下权利
+Super Agent 采用 **MIT License** —— 业界最宽松的开源协议。
 
 | 权利 | 说明 |
 |------|------|
-| 🆓 **免费商用** | 可用于商业项目、SaaS 产品、企业内部工具，无需付费 |
-| ✂️ **自由修改** | 可以修改、定制、二次开发，无需公开你的改动 |
-| 📦 **自由分发** | 可以作为独立产品或嵌入到你的项目中分发 |
-| 🔗 **闭源使用** | 修改后的代码可以选择不开源，没有 "传染性" Copyleft 限制 |
-| 🔀 **子许可** | 可以在你的产品中以其他协议重新许可 |
-
-### 你需要注意
+| 🆓 **免费商用** | 可用于商业项目、SaaS 产品、企业内部工具 |
+| ✂️ **自由修改** | 可修改、定制、二次开发，无需公开改动 |
+| 📦 **自由分发** | 可作为独立产品或嵌入分发 |
+| 🔗 **闭源使用** | 修改后的代码可选择不开源 |
+| 🔀 **子许可** | 可以其他协议重新许可 |
 
 | 注意事项 | 说明 |
 |----------|------|
-| 📋 **保留版权声明** | 分发时需保留原始 MIT License 声明和版权信息 |
-| ⚠️ **无担保** | 软件按"原样"提供，作者不承担任何质量或适用性担保 |
-| 🛡️ **无责任** | 因使用本软件产生的任何损失，作者不承担法律责任 |
-
-### 第三方依赖
-
-本项目依赖的第三方库（React、Next.js、Fastify、Python 生态等）遵循各自的许可证。使用前请确认各依赖的许可证条款与你的用途兼容。
-
-### 全文
-
-完整许可证文本请参阅 [LICENSE](LICENSE) 文件。
+| 📋 **保留版权声明** | 分发时保留原始 MIT License |
+| ⚠️ **无担保** | 软件按"原样"提供 |
 
 ```
 MIT License
@@ -939,7 +835,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND...
 
 ## 🤝 贡献
 
-欢迎提交 Issue、PR 或 Star ⭐！
+欢迎提交 Issue、PR 或 Star！
 
 <div align="center">
 
