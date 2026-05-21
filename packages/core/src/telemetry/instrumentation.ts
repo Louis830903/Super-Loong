@@ -97,9 +97,10 @@ export async function initTelemetry(): Promise<void> {
     };
     process.on("SIGTERM", shutdown);
     process.on("SIGINT", shutdown);
-  } catch (err: any) {
+  } catch (err: unknown) {
     // OTel 依赖未安装 → 优雅降级，不影响主业务
-    console.warn(`[OTel] Failed to initialize (missing deps?): ${err.message}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[OTel] Failed to initialize (missing deps?): ${msg}`);
     console.warn("[OTel] Install with: pnpm add @opentelemetry/sdk-node @opentelemetry/auto-instrumentations-node @opentelemetry/exporter-trace-otlp-http @opentelemetry/resources @opentelemetry/semantic-conventions");
   }
 }
@@ -109,6 +110,7 @@ export async function initTelemetry(): Promise<void> {
  */
 export function getTraceParent(): string | null {
   try {
+    // 同步函数无法 await import()，require() 是唯一选项；Node ESM 模式下通过 CJS 互操作解析
     const { trace, context } = require("@opentelemetry/api");
     const span = trace.getSpan(context.active());
     if (!span) return null;
@@ -139,8 +141,9 @@ export async function traceLLMCall<T>(
           const result = await fn();
           span.setStatus({ code: SpanStatusCode.OK });
           return result;
-        } catch (err: any) {
-          span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
+        } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          span.setStatus({ code: SpanStatusCode.ERROR, message: errMsg });
           span.recordException(err);
           throw err;
         } finally {

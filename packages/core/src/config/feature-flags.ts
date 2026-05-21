@@ -142,11 +142,7 @@ export const FeatureFlags = {
    * @env SA_VAULT_FAIL_FAST（显式覆盖） / NODE_ENV=production（默认开启）
    */
   get vaultFailFast(): boolean {
-    const explicit = process.env.SA_VAULT_FAIL_FAST;
-    if (explicit !== undefined && explicit !== "") {
-      return parseBoolEnv("SA_VAULT_FAIL_FAST", false);
-    }
-    return process.env.NODE_ENV === "production";
+    return parseBoolEnv("SA_VAULT_FAIL_FAST", process.env.NODE_ENV === "production");
   },
 } as const;
 

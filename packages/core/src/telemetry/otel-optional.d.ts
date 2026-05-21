@@ -74,6 +74,11 @@ declare module "@opentelemetry/api" {
     startActiveSpan<T>(
       name: string,
       options: Record<string, unknown>,
+      fn: (span: Span) => Promise<T>,
+    ): Promise<T>;
+    startActiveSpan<T>(
+      name: string,
+      options: Record<string, unknown>,
       fn: (span: Span) => T,
     ): T;
   }

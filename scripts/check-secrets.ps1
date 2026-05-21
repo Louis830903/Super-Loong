@@ -29,6 +29,20 @@ foreach ($file in $Files) {
         $pat = $patterns[$name]
         $matches = [regex]::Matches($content, $pat)
         foreach ($m in $matches) {
+            # Generic High-Entropy 后置过滤：排除文件路径、JSDoc 注释中的合法长字符串
+            if ($name -eq 'Generic High-Entropy') {
+                $val = $m.Value
+                # 跳过：匹配值前后紧邻路径分隔符（/、\、.）的大概率是文件路径
+                $before = if ($m.Index -gt 0) { $content[$m.Index - 1] } else { '' }
+                $after  = if ($m.Index + $m.Length -lt $content.Length) { $content[$m.Index + $m.Length] } else { '' }
+                if ($before -match '[/\\.]' -or $after -match '[/\\.]') { continue }
+                # 跳过：匹配值本身包含 / 或 \（路径特征）
+                if ($val -match '[/\\]') { continue }
+                # 跳过：所在行是 JSDoc 注释（以 * 或 // 开头）
+                $lineStart = $content.LastIndexOf("`n", [Math]::Max(0, $m.Index - 1)) + 1
+                $lineText = $content.Substring($lineStart, $m.Index - $lineStart)
+                if ($lineText -match '^\s*(\*|//)') { continue }
+            }
             $lineNum = ($content.Substring(0, $m.Index).Split("`n")).Count
             $msg = "$file" + ":" + $lineNum + ": [" + $name + "] " + $m.Value
             Write-Host $msg
