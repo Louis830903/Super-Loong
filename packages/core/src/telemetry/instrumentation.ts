@@ -18,7 +18,7 @@
  * @issue V3-007
  */
 
-import { getFeatureFlag } from "../config/feature-flags.js";
+import { FeatureFlags } from "../config/feature-flags.js";
 
 // ─── 类型声明（延迟 import，避免未安装时崩溃）─────────────────
 
@@ -34,7 +34,7 @@ let sdk: OTelSDK | null = null;
  * 仅在 OTEL_ENABLED=true 且 feature flag OTEL_TRACE 启用时生效。
  */
 export async function initTelemetry(): Promise<void> {
-  const enabled = process.env.OTEL_ENABLED === "true" && getFeatureFlag("OTEL_TRACE");
+  const enabled = process.env.OTEL_ENABLED === "true" && FeatureFlags.otelTracing;
   if (!enabled) {
     console.log("[OTel] Telemetry disabled (OTEL_ENABLED !== true or OTEL_TRACE flag off)");
     return;
