@@ -21,8 +21,10 @@ const logger = pino({ name: "auth" });
 
 // ─── Types ───────────────────────────────────────────────────
 
+/** @why RBAC 四级角色枚举，权限矩阵和 JWT payload 均依赖此类型 */
 export type Role = "admin" | "operator" | "viewer" | "agent";
 
+/** @why JWT 解码后的用户对象结构，贯穿 request.authUser 全链路 */
 export interface AuthUser {
   id: string;
   name: string;
@@ -32,6 +34,7 @@ export interface AuthUser {
   exp?: number;
 }
 
+/** @why API Key 记录结构，支持 X-API-Key 头认证和密钥生命周期管理 */
 export interface ApiKeyRecord {
   key: string;
   name: string;
@@ -64,6 +67,7 @@ const PERMISSIONS: Record<Role, Set<string>> = {
   ]),
 };
 
+/** @why 权限判定核心函数，requirePermission 守卫和前端权限展示均复用 */
 export function hasPermission(role: Role, permission: string): boolean {
   const perms = PERMISSIONS[role];
   return perms.has("*") || perms.has(permission);
@@ -140,18 +144,17 @@ function getApiKeyStore(): ApiKeyStore {
 
 // ─── Register Auth Plugin ────────────────────────────────────
 
+/** @why Fastify 认证插件注册入口，控制 JWT/API-Key 双通道鉴权的启停 */
 export async function registerAuth(app: FastifyInstance): Promise<void> {
   const enabled = process.env.AUTH_ENABLED === "true";
 
-  // v3 Task 12：生产环境必须开启鉴权，避免匿名访问漏洞
-  // @why 原设计 AUTH_ENABLED 默认 false 是为了开发便捷，但生产环境下
-  //       忘设会导致所有 API 裸奔（原 plan 所谓"ALLOW_ANON_API"问题的实际表现）。
-  //       这里在 production 模式下 fail-fast，迫使运维显式设置。
+  // v3 Task 12：生产环境未启用鉴权时给出醒目警告（非阻断）
+  // @why 允许用户首次部署后在 UI 中完成所有配置（包括鉴权），
+  //       不应在启动阶段 crash 阻止用户进入界面。
   if (!enabled && process.env.NODE_ENV === "production") {
-    throw new Error(
-      "[SECURITY] AUTH_ENABLED 必须在生产环境设为 true。\n" +
-      "  设置 AUTH_ENABLED=true 并配置 JWT_SECRET / API_KEY 后重启。\n" +
-      "  生成 JWT_SECRET: node -e \"console.log(require('crypto').randomBytes(64).toString('hex'))\""
+    app.log.warn(
+      "[SECURITY] AUTH_ENABLED 未开启，所有 API 以匿名身份访问。\n" +
+      "  建议在系统设置中启用鉴权并配置 JWT_SECRET / ADMIN_PASSWORD。"
     );
   }
 
@@ -267,6 +270,7 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
 
 // ─── Require Permission Decorator ────────────────────────────
 
+/** @why 路由级权限守卫工厂，按 RBAC 矩阵拦截无权限请求 */
 export function requirePermission(permission: string) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     if (process.env.AUTH_ENABLED !== "true") return;
@@ -283,6 +287,7 @@ export function requirePermission(permission: string) {
 
 // ─── Auth API Routes ─────────────────────────────────────────
 
+/** @why 认证相关 REST 路由（登录/刷新/密钥管理），仅 AUTH_ENABLED=true 时注册 */
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   if (process.env.AUTH_ENABLED !== "true") return;
 
