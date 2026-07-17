@@ -191,6 +191,8 @@ export async function getAllBuiltinTools(): Promise<ToolDefinition[]> {
     { name: "media",          load: () => import("./media.js").then(m => m.mediaTools) },
     { name: "vision",         load: () => import("./vision.js").then(m => m.visionTools) },
     { name: "video-forge",    load: () => import("./video-forge.js").then(m => m.videoForgeTools) },
+    { name: "excel",          load: () => import("./excel-write.js").then(m => m.excelTools) },
+    { name: "insight",        load: () => import("./data-insight.js").then(m => m.insightTools) },
   ];
 
   // ── SysOps 系统操作工具 (Feature Flag 控制) ──

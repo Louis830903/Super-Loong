@@ -16,6 +16,8 @@ import pino from "pino";
 import type { AppContext } from "../context.js";
 import { safeEqualSecret } from "./secret-equal.js";
 import { sendError } from "../routes/response-helper.js";
+import { getApiKeyStore } from "./api-key-store.js";
+import type { ApiKeyRecord } from "./api-key-store.js";
 
 const logger = pino({ name: "auth" });
 
@@ -32,16 +34,6 @@ export interface AuthUser {
   apiKey?: string;
   iat?: number;
   exp?: number;
-}
-
-/** @why API Key 记录结构，支持 X-API-Key 头认证和密钥生命周期管理 */
-export interface ApiKeyRecord {
-  key: string;
-  name: string;
-  role: Role;
-  createdAt: Date;
-  lastUsedAt: Date | null;
-  enabled: boolean;
 }
 
 // ─── Permission Matrix ───────────────────────────────────────
@@ -73,74 +65,8 @@ export function hasPermission(role: Role, permission: string): boolean {
   return perms.has("*") || perms.has(permission);
 }
 
-// ─── In-Memory API Key Store ─────────────────────────────────
-
-class ApiKeyStore {
-  private keys = new Map<string, ApiKeyRecord>();
-
-  constructor() {
-    // Bootstrap from env: SUPER_AGENT_API_KEYS=name1:key1:role1,name2:key2:role2
-    const raw = process.env.SUPER_AGENT_API_KEYS ?? "";
-    for (const entry of raw.split(",").filter(Boolean)) {
-      const [name, key, role] = entry.split(":");
-      if (name && key) {
-        this.keys.set(key, {
-          key,
-          name,
-          role: (role as Role) ?? "operator",
-          createdAt: new Date(),
-          lastUsedAt: null,
-          enabled: true,
-        });
-      }
-    }
-  }
-
-  validate(key: string): ApiKeyRecord | null {
-    const record = this.keys.get(key);
-    if (!record || !record.enabled) return null;
-    record.lastUsedAt = new Date();
-    return record;
-  }
-
-  list(): ApiKeyRecord[] {
-    return [...this.keys.values()].map((k) => ({ ...k, key: k.key.slice(0, 8) + "..." }));
-  }
-
-  create(name: string, role: Role): ApiKeyRecord {
-    const key = `sk-${randomUUID().replace(/-/g, "")}`;
-    const record: ApiKeyRecord = {
-      key,
-      name,
-      role,
-      createdAt: new Date(),
-      lastUsedAt: null,
-      enabled: true,
-    };
-    this.keys.set(key, record);
-    return record;
-  }
-
-  revoke(key: string): boolean {
-    const record = this.keys.get(key);
-    if (!record) return false;
-    record.enabled = false;
-    return true;
-  }
-
-  delete(key: string): boolean {
-    return this.keys.delete(key);
-  }
-}
-
-// ─── Singleton ───────────────────────────────────────────────
-
-let apiKeyStore: ApiKeyStore;
-
-function getApiKeyStore(): ApiKeyStore {
-  if (!apiKeyStore) apiKeyStore = new ApiKeyStore();
-  return apiKeyStore;
-}
+// ─── API Key Store (SQLite 持久化) ──────────────────────────
+// 已迁移到 ./api-key-store.ts，支持 SQLite 持久化 + 内存缓存
 
 // ─── Register Auth Plugin ────────────────────────────────────
 

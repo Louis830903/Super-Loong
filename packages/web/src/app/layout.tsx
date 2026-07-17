@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/layout/sidebar";
 import { ToastContainer } from "@/components/ui/toast";
+import { AuthGuard } from "@/components/auth/auth-guard";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -52,10 +53,9 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className="min-h-full bg-background text-foreground">
-        <Sidebar />
-        <main className="main-content min-h-screen transition-all duration-200">
-          <div className="p-6 lg:p-8">{children}</div>
-        </main>
+        <AuthGuard sidebar={<Sidebar />}>
+          {children}
+        </AuthGuard>
         <ToastContainer />
       </body>
     </html>
