@@ -58,10 +58,15 @@ import { registerWellKnownRoute, a2aPlugin } from "./a2a/server.js";
 // Load .env from monorepo root (two levels up from packages/api/)
 // 使用 import.meta.dirname 绝对路径，避免 PM2 从 monorepo 根目录运行时 cwd 路径错误
 const monorepoRoot = path.resolve(import.meta.dirname ?? __dirname, "../..");
-dotenv.config({ path: path.join(monorepoRoot, ".env") });
+// 修复：monorepoRoot 应该是 super-agent 目录，而不是 packages 目录
+const actualRoot = monorepoRoot.endsWith("packages") ? path.resolve(monorepoRoot, "..") : monorepoRoot;
+const envPath = path.join(actualRoot, ".env");
+console.log("[dotenv] Loading .env from:", envPath);
+dotenv.config({ path: envPath });
+console.log("[dotenv] SA_ENCRYPTION_KEY:", process.env.SA_ENCRYPTION_KEY ? "已设置" : "未设置");
 // 生产环境时叠加加载 .env.production（后加载覆盖前加载）
 if (process.env.NODE_ENV === "production") {
-  dotenv.config({ path: path.join(monorepoRoot, ".env.production") });
+  dotenv.config({ path: path.join(actualRoot, ".env.production") });
 }
 // 本地 .env 最后加载（最高优先级）
 dotenv.config();

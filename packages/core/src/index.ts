@@ -410,6 +410,9 @@ export type {
   SandboxBackend,
 } from "./security/sandbox.js";
 
+// Encryption Key (v3 Task 5.5: 统一密钥管理)
+export { getEncryptionKey, getLegacyEncryptionKey, decryptWithFallback, hasLegacyEncryptionKey, isWeakEncryptionKey } from "./security/encryption-key.js";
+
 // Docker Sandbox
 export { DockerSandbox } from "./security/docker-sandbox.js";
 export type { DockerSandboxConfig } from "./security/docker-sandbox.js";
