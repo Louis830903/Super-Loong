@@ -24,6 +24,7 @@
     "@super-agent/web-types": "workspace:*",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^4.0.0",
+    "cron": "^4.4.0",
     "cron-parser": "^5.5.0",
     "eventemitter3": "^5.0.1",
     "gray-matter": "^4.0.3",

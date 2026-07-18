@@ -193,6 +193,8 @@ export async function getAllBuiltinTools(): Promise<ToolDefinition[]> {
     { name: "video-forge",    load: () => import("./video-forge.js").then(m => m.videoForgeTools) },
     { name: "excel",          load: () => import("./excel-write.js").then(m => m.excelTools) },
     { name: "insight",        load: () => import("./data-insight.js").then(m => m.insightTools) },
+    { name: "chart",          load: () => import("./chart-generator.js").then(m => [m.chartGenerateTool]) },
+    { name: "insight-enhanced", load: () => import("./data-insight-enhanced.js").then(m => [m.dataInsightEnhancedTool]) },
   ];
 
   // ── SysOps 系统操作工具 (Feature Flag 控制) ──

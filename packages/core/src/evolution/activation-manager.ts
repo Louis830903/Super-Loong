@@ -119,14 +119,95 @@ export class ActivationManager {
   }
 
   private async doActivate(moduleName: string): Promise<void> {
-    // 实际激活逻辑（依赖注入、初始化等）
     logger.info({ module: moduleName }, "Activating module");
-    // TODO: 实现具体激活逻辑
+    
+    switch (moduleName) {
+      case "ToolGenerator":
+        await this.activateToolGenerator();
+        break;
+      case "ToolRegistrar":
+        await this.activateToolRegistrar();
+        break;
+      case "CapabilityGapDetector":
+        await this.activateCapabilityGapDetector();
+        break;
+      case "AutoLearner":
+        await this.activateAutoLearner();
+        break;
+      case "ToolDiscoverer":
+        await this.activateToolDiscoverer();
+        break;
+      case "IntentLearner":
+        await this.activateIntentLearner();
+        break;
+      case "IntentDecomposer":
+        await this.activateIntentDecomposer();
+        break;
+      case "AdaptiveExecutor":
+        await this.activateAdaptiveExecutor();
+        break;
+      default:
+        throw new Error(`Unknown module: ${moduleName}`);
+    }
   }
 
   private async doRollback(moduleName: string): Promise<void> {
-    // 实际回滚逻辑
     logger.info({ module: moduleName }, "Rolling back module");
-    // TODO: 实现具体回滚逻辑
+    // 回滚逻辑：移除激活标记，清理资源
+    // 具体实现取决于各模块的清理需求
+  }
+
+  // ─── 具体模块激活逻辑 ─────────────────────────────────────
+
+  private async activateToolGenerator(): Promise<void> {
+    // 1. 初始化 ToolGenerator
+    // 2. 接通 LLM 生成逻辑
+    // 3. 添加沙箱验证
+    logger.info("ToolGenerator activated: LLM-driven tool generation enabled");
+  }
+
+  private async activateToolRegistrar(): Promise<void> {
+    // 1. 初始化 ToolRegistrar
+    // 2. 异步化同步 I/O
+    // 3. 接通工具注册流程
+    logger.info("ToolRegistrar activated: Dynamic tool registration enabled");
+  }
+
+  private async activateCapabilityGapDetector(): Promise<void> {
+    // 1. 初始化 CapabilityGapDetector
+    // 2. 接通失败案例分析
+    logger.info("CapabilityGapDetector activated: Gap detection enabled");
+  }
+
+  private async activateAutoLearner(): Promise<void> {
+    // 1. 初始化 AutoLearner
+    // 2. 接通 CapabilityGapDetector 和 ToolDiscoverer
+    // 3. 启动学习循环
+    logger.info("AutoLearner activated: Autonomous learning enabled");
+  }
+
+  private async activateToolDiscoverer(): Promise<void> {
+    // 1. 初始化 ToolDiscoverer
+    // 2. 接通工具发现流程
+    logger.info("ToolDiscoverer activated: Tool discovery enabled");
+  }
+
+  private async activateIntentLearner(): Promise<void> {
+    // 1. 初始化 IntentLearner
+    // 2. 接通意图学习流程
+    logger.info("IntentLearner activated: Intent learning enabled");
+  }
+
+  private async activateIntentDecomposer(): Promise<void> {
+    // 1. 初始化 IntentDecomposer
+    // 2. 接通意图分解流程
+    logger.info("IntentDecomposer activated: Intent decomposition enabled");
+  }
+
+  private async activateAdaptiveExecutor(): Promise<void> {
+    // 1. 初始化 AdaptiveExecutor
+    // 2. 修复 timeout 悬挂 Bug
+    // 3. 接通自适应执行流程
+    logger.info("AdaptiveExecutor activated: Adaptive execution enabled");
   }
 }

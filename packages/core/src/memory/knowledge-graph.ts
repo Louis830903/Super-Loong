@@ -160,6 +160,21 @@ export class KnowledgeGraph {
   }
 
   /**
+   * 搜索实体（模糊匹配）。
+   * 用于记忆关联查询，返回匹配的实体 ID 列表。
+   */
+  searchEntities(query: string): number[] {
+    const results = this.db.exec(
+      "SELECT id FROM entities WHERE name LIKE ? COLLATE NOCASE",
+      [`%${query}%`],
+    );
+    if (results.length && results[0].values.length) {
+      return results[0].values.map((row: any[]) => row[0] as number);
+    }
+    return [];
+  }
+
+  /**
    * 按名称查找或创建实体，返回实体 ID。
    * 用于关系写入路径（实体不存在时自动创建）。
    */
