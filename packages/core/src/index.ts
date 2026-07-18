@@ -135,6 +135,12 @@ export type { ExtractedEntity, EntityRow } from "./memory/entity-resolver.js";
 // ✨ T6: 知识图谱核心模块
 export { KnowledgeGraph } from "./memory/knowledge-graph.js";
 export type { Triple, TripleInput, Subgraph, ExportFormat } from "./memory/knowledge-graph.js";
+// P0-3: 自动记忆系统（对话后自动提取实体/摘要/行动项，每 10 轮触发）
+export { AutoMemorySystem } from "./memory/auto-memory.js";
+export type { ConversationSummary } from "./memory/auto-memory.js";
+// P0-4: 个人知识库归档（对话按 session 归档为知识，LLM 提炼结构化条目）
+export { KnowledgeArchiver } from "./memory/knowledge-archiver.js";
+export type { ArchiveMessage, DistilledKnowledge } from "./memory/knowledge-archiver.js";
 // ✨ T6: 关系抽取器
 export { extractRelations } from "./memory/relation-extractor.js";
 export type { RelationCandidate } from "./memory/relation-extractor.js";

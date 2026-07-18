@@ -114,44 +114,34 @@ ${text}
   }
 
   /**
-   * 将实体链接到知识图谱
+   * 将实体写入知识图谱（修正：用真实 entityId，消除 sessionId as any 类型错误）
+   *
+   * sessionId 不是实体，不能当 objectId。正确做法：
+   * 把实体名 getOrCreateEntityId 获得真实数字 ID，确保实体节点落库。
+   * 实体与会话的关联通过 memory metadata.sessionId 保留（add 时已写）。
    */
   private async linkEntityToGraph(entity: ExtractedEntity, sessionId: string): Promise<void> {
-    // 查找或创建实体
-    const entityId = this.knowledgeGraph.findEntityId(entity.name);
-
-    if (!entityId) {
-      // 创建新实体（通过添加三元组）
-      logger.debug({ entity: entity.name }, "New entity discovered");
+    try {
+      // getOrCreateEntityId：不存在则创建，返回真实数字 ID（保证实体节点落库）
+      const entityId = this.knowledgeGraph.getOrCreateEntityId(entity.name);
+      logger.debug({ entity: entity.name, entityId, sessionId }, "Entity linked to graph");
+    } catch (err) {
+      logger.warn({ entity: entity.name, err }, "Failed to link entity to graph");
     }
-
-    // 添加会话关联
-    await this.knowledgeGraph.addTriple({
-      subjectId: entityId ?? 0,
-      predicate: "mentioned_in",
-      objectId: sessionId as any,
-      confidence: entity.confidence,
-      source: "auto_memory",
-    });
   }
-
+  
   /**
-   * 建立跨会话关联
+   * 建立跨会话关联（修正：same_as 自指无意义，改为按实体名关联已存在实体）
+   *
+   * 同名实体在不同会话中出现时，getOrCreateEntityId 会返回同一 ID
+   *（INSERT OR IGNORE + COLLATE NOCASE），天然实现跨会话实体统一。
+   * 无需写 same_as 自指三元组（那是无意义的脏数据）。
+   * 实体间的真实关系由 MemoryManager.add() 的 addRelationsFromText 抽取。
    */
-  private async linkToPreviousSessions(entities: ExtractedEntity[], topics: string[]): Promise<void> {
-    for (const entity of entities) {
-      const previousId = this.knowledgeGraph.findEntityId(entity.name);
-      if (previousId) {
-        // 建立"同一实体"关联
-        await this.knowledgeGraph.addTriple({
-          subjectId: previousId,
-          predicate: "same_as",
-          objectId: previousId,
-          confidence: 0.95,
-          source: "auto_memory",
-        });
-      }
-    }
+  private async linkToPreviousSessions(_entities: ExtractedEntity[], _topics: string[]): Promise<void> {
+    // 跨会话实体统一已由 getOrCreateEntityId 的 COLLATE NOCASE 天然保证（同名=同 ID），
+    // 无需额外 same_as 三元组。保留方法签名以便后续扩展更复杂的跨会话推理。
+    return;
   }
 
   /**

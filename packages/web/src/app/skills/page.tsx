@@ -14,7 +14,16 @@ interface Skill {
   enabled: boolean;
   triggers: string[];
   content: string;
+  // P0-2: 技能来源（区分本地/项目/市场）
+  source?: "user" | "project" | "marketplace";
 }
+
+// P0-2: 来源标签映射（中文展示 + 颜色）
+const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
+  user: { label: "本地", cls: "bg-blue-600/10 text-blue-400" },
+  project: { label: "项目", cls: "bg-amber-600/10 text-amber-400" },
+  marketplace: { label: "市场", cls: "bg-purple-600/10 text-purple-400" },
+};
 
 interface MarketSkill {
   id: string;
@@ -237,9 +246,16 @@ export default function SkillsPage() {
                             </button>
                           </div>
                         </div>
-                        {/* 版本 + 触发词 */}
+                        {/* 版本 + 来源标签 + 触发词 */}
                         <div className="mt-2 flex items-center gap-2 flex-wrap">
                           <span className="text-xs text-zinc-600">v{skill.version}</span>
+                          {/* P0-2: 来源标签——市场页区分本地/项目/市场技能 */}
+                          {(() => {
+                            const badge = SOURCE_BADGE[skill.source ?? "user"];
+                            return badge ? (
+                              <span className={`rounded px-1.5 py-0.5 text-xs ${badge.cls}`}>{badge.label}</span>
+                            ) : null;
+                          })()}
                           {skill.triggers && skill.triggers.slice(0, 3).map((t) => (
                             <span key={t} className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">{t}</span>
                           ))}

@@ -29,8 +29,25 @@ export function AuthGuard({
   // 初始检查 + 监听 auth-expired 事件
   useEffect(() => {
     const checkAuth = () => {
-      const token = localStorage.getItem("super-agent.auth-token");
-      setAuthed(!!token);
+      // 检查 AUTH_ENABLED 环境变量（通过 API 获取）
+      fetch("/api/system/health")
+        .then(res => res.json())
+        .then(data => {
+          // 如果 AUTH_ENABLED=false，直接视为已认证
+          if (data.data?.authEnabled === false) {
+            setAuthed(true);
+            return;
+          }
+          
+          // 否则检查 token
+          const token = localStorage.getItem("super-agent.auth-token");
+          setAuthed(!!token);
+        })
+        .catch(() => {
+          // 如果 API 不可用，默认检查 token
+          const token = localStorage.getItem("super-agent.auth-token");
+          setAuthed(!!token);
+        });
     };
 
     checkAuth();

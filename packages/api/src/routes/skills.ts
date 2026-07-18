@@ -27,6 +27,8 @@ function serializeSkill(s: any) {
     content: s.content ?? "",
     filePath: s.filePath,
     loadedAt: s.loadedAt,
+    // P0-2: 技能来源（市场页区分本地/项目/市场），老数据无 source 时兜底 user
+    source: s.source ?? "user",
   };
 }
 

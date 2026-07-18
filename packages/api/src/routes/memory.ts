@@ -213,5 +213,50 @@ export async function memoryRoutes(app: FastifyInstance, ctx: AppContext): Promi
     return sendSuccess(reply, { contradictions, count: contradictions.length });
   });
 
+  // ─── P0-4: 个人知识库归档 ────────────────
+
+  /** 归档一段对话为知识库条目（LLM 提炼结构化） */
+  app.post<{
+    Body: {
+      sessionId: string;
+      agentId: string;
+      category?: string;
+      messages: Array<{ role: string; content: string }>;
+    };
+  }>("/api/memory/archive", async (request, reply) => {
+    const archiver = ctx.knowledgeArchiver;
+    if (!archiver) return Errors.serviceUnavailable(reply, "KnowledgeArchiver 未启用");
+    const { sessionId, agentId, category, messages } = request.body;
+    if (!sessionId || !agentId || !Array.isArray(messages) || messages.length === 0) {
+      return Errors.badRequest(reply, "sessionId / agentId / messages 必填，且 messages 非空");
+    }
+    await archiver.archiveConversation(sessionId, agentId, category ?? "未分类", messages);
+    return sendSuccess(reply, { archived: true, sessionId });
+  });
+
+  /** 搜索知识库归档条目 */
+  app.get<{
+    Querystring: { q: string; agentId: string };
+  }>("/api/memory/archive/search", async (request, reply) => {
+    const archiver = ctx.knowledgeArchiver;
+    if (!archiver) return Errors.serviceUnavailable(reply, "KnowledgeArchiver 未启用");
+    const { q, agentId } = request.query;
+    if (!q || !agentId) return Errors.badRequest(reply, "q / agentId 必填");
+    const results = await archiver.searchKnowledge(q, agentId);
+    return sendSuccess(reply, { results, total: results.length });
+  });
+
+  /** 知识库归档统计（总数 + 分类） */
+  app.get<{
+    Querystring: { agentId: string };
+  }>("/api/memory/archive/stats", async (request, reply) => {
+    const archiver = ctx.knowledgeArchiver;
+    if (!archiver) return Errors.serviceUnavailable(reply, "KnowledgeArchiver 未启用");
+    const { agentId } = request.query;
+    if (!agentId) return Errors.badRequest(reply, "agentId 必填");
+    const stats = await archiver.getStats(agentId);
+    return sendSuccess(reply, stats);
+  });
+
   app.log.info("Memory routes registered");
 }

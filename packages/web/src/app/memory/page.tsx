@@ -5,9 +5,10 @@ import { apiFetch } from "@/lib/utils";
 import { useAgents } from "@/hooks/useAgents";
 import {
   Brain, Search, Trash2, Clock, Plus, Pencil, Save,
-  AlertTriangle, RefreshCw, X, BookOpen, Zap,
+  AlertTriangle, RefreshCw, X, BookOpen, Zap, Archive,
 } from "lucide-react";
 import { GuidedEmptyState } from "@/components/ui/guided-empty-state";
+import { ArchivePanel } from "./archive-panel";
 
 import type { MemoryEntry } from "@/types/api-types";
 
@@ -33,7 +34,7 @@ export default function MemoryPage() {
   const [searchMode, setSearchMode] = useState<"semantic" | "fts">("semantic");
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<{ total: number; byType: Record<string, number> }>({ total: 0, byType: {} });
-  const [tab, setTab] = useState<"list" | "core" | "contradictions">("list");
+  const [tab, setTab] = useState<"list" | "core" | "contradictions" | "archive">("list");
 
   // 创建/编辑状态
   const [showCreate, setShowCreate] = useState(false);
@@ -177,6 +178,7 @@ export default function MemoryPage() {
     { id: "list" as const, label: "记忆列表", icon: Brain },
     { id: "core" as const, label: "核心记忆", icon: BookOpen },
     { id: "contradictions" as const, label: "矛盾检测", icon: AlertTriangle },
+    { id: "archive" as const, label: "知识归档", icon: BookOpen },
   ];
 
   return (
@@ -375,7 +377,7 @@ export default function MemoryPage() {
             </div>
           )}
         </div>
-      ) : (
+      ) : tab === "contradictions" ? (
         <div className="space-y-4">
           <div className="flex justify-end">
             <button onClick={runContradictionCheck} disabled={contradLoading} className="flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
@@ -416,7 +418,9 @@ export default function MemoryPage() {
             </div>
           )}
         </div>
-      )}
+      ) : tab === "archive" ? (
+        <ArchivePanel agentId={coreAgentId || agents[0]?.id || ""} />
+      ) : null}
 
       {/* 创建记忆模态 */}
       {showCreate && (

@@ -41,6 +41,8 @@ export interface SkillSnapshotEntry {
   platforms?: string[];
   commands?: string[];
   filePath: string;
+  /** 技能来源（P0-2：快照存取不丢失，老快照无此字段时 undefined） */
+  source?: "user" | "project" | "marketplace";
 }
 
 export interface SkillSnapshot {

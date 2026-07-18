@@ -33,6 +33,8 @@ export class AgentManager extends EventEmitter<AgentManagerEvents> {
   private platform?: string;
   // 进化引擎引用（Phase A-1: Nudge 自动化闭环）
   private _evolution: EvolutionEngine | null = null;
+  // P0-3: 自动记忆系统引用（对话后自动提取，每 10 轮触发）
+  private _autoMemory: import("../memory/auto-memory.js").AutoMemorySystem | null = null;
 
   /** Set the security manager for all agents. */
   setSecurityManager(sm: SecurityManager): void {
@@ -47,6 +49,16 @@ export class AgentManager extends EventEmitter<AgentManagerEvents> {
   /** Set the skill loader for all agents. */
   setSkillLoader(sl: SkillLoader): void {
     this.skillLoader = sl;
+  }
+
+  /** P0-3: 设置自动记忆系统（对话后自动提取实体/摘要，每 10 轮触发） */
+  setAutoMemory(am: import("../memory/auto-memory.js").AutoMemorySystem): void {
+    this._autoMemory = am;
+  }
+
+  /** P0-3: 获取自动记忆系统引用（runtime 经 this.manager 访问） */
+  get autoMemory(): import("../memory/auto-memory.js").AutoMemorySystem | null {
+    return this._autoMemory;
   }
 
   /** Set the default platform for all agents. */

@@ -797,6 +797,9 @@ export class AgentRuntime {
           toolCalls: calledTools, success: true,
         });
 
+        // P0-3: 自动记忆提取（每 10 轮，异步不阻塞）
+        this.maybeExtractAutoMemory(session.id);
+
         return {
           sessionId: session.id,
           response: cleanText,
@@ -1154,6 +1157,9 @@ export class AgentRuntime {
           agentResponse: session.messages[session.messages.length - 1]?.content as string ?? "",
           toolCalls: calledTools, success: true,
         });
+
+        // P0-3: 自动记忆提取（每 10 轮，异步不阻塞）
+        this.maybeExtractAutoMemory(session.id);
         return;
       }
 
@@ -1413,6 +1419,42 @@ export class AgentRuntime {
       llm: this.llm,
       agentId: this.id,
     });
+  }
+
+  /**
+   * P0-3: 自动记忆提取——每 10 轮对话异步提取一次（不阻塞主回复）。
+   *
+   * 触发时机：在 chat/chatStream 收尾调用（与 recordEvolutionInteraction 平级，但解耦）。
+   * 成本控制：session.metadata.autoMemoryTurnCount 计数，% 10 === 0 才触发，
+   *   每次只调 1 次 LLM（合并提取摘要/实体/主题/行动项）。
+   * 故障隔离：fire-and-forget + catch，提取失败不影响对话。
+   */
+  private maybeExtractAutoMemory(sessionId: string): void {
+    const autoMemory = this.manager?.autoMemory;
+    if (!autoMemory) return;
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    try {
+      const meta = session.metadata as Record<string, unknown>;
+      const n = ((meta.autoMemoryTurnCount as number) ?? 0) + 1;
+      meta.autoMemoryTurnCount = n;
+      // 每 10 轮触发一次
+      if (n % 10 !== 0) return;
+      // 取最近 20 条消息（约 10 轮一问一答），只取纯文本
+      const recent = this.getRecentMessages(20)
+        .map((m) => ({
+          role: m.role,
+          content: typeof m.content === "string" ? m.content : "",
+        }))
+        .filter((m) => m.content.length > 0);
+      if (recent.length === 0) return;
+      // 异步执行，不阻塞主回复
+      autoMemory
+        .processConversation(sessionId, this.id, recent)
+        .catch((err) => logger.debug({ err, sessionId }, "P0-3: auto-memory extract failed (non-fatal)"));
+    } catch (err) {
+      logger.debug({ err, sessionId }, "P0-3: maybeExtractAutoMemory failed (non-fatal)");
+    }
   }
 
   private recordEvolutionInteraction(data: {

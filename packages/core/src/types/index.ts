@@ -243,6 +243,15 @@ export interface SkillFrontmatter {
   };
 }
 
+/**
+ * 技能来源：用于市场页区分本地技能与市场安装的技能。
+ * - user: 用户主目录 ~/.super-agent/skills
+ * - project: 项目级目录（SA_SKILLS_DIR 或 <cwd>/skills）
+ * - marketplace: 市场安装
+ * 可选字段：老快照/老数据无此字段时按 undefined 处理（UI 兜底为 user）。
+ */
+export type SkillSource = "user" | "project" | "marketplace";
+
 export interface Skill {
   id: string;
   frontmatter: SkillFrontmatter;
@@ -250,6 +259,8 @@ export interface Skill {
   filePath: string;
   enabled: boolean;
   loadedAt: Date;
+  /** 技能来源（P0-2：市场页区分本地/项目/市场技能，可选，老数据兜底 user） */
+  source?: SkillSource;
   /** Spec v3 Task 2: 技能就绪状态缓存 */
   readiness?: {
     status: "available" | "setup_needed" | "unsupported";

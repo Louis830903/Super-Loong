@@ -21,7 +21,7 @@ import { parseSkillFile } from "./parser.js";
 import { evaluateReadiness } from "./readiness.js";
 import { SkillSnapshotCache } from "./snapshot-cache.js";
 import type { SkillSnapshotEntry } from "./snapshot-cache.js";
-import type { Skill, SkillFrontmatter } from "../types/index.js";
+import type { Skill, SkillFrontmatter, SkillSource } from "../types/index.js";
 
 const logger = pino({ name: "skill-loader" });
 
@@ -38,6 +38,8 @@ export class SkillLoader extends EventEmitter<SkillLoaderEvents> {
   private watcher: ReturnType<typeof watch> | null = null;
   // Phase 3: 双层技能缓存（学 Hermes 磁盘快照）
   private snapshotCache = new SkillSnapshotCache();
+  // P0-2: 目录 → 来源映射（用于市场页区分本地/项目/市场技能）
+  private dirSourceMap = new Map<string, SkillSource>();
 
   constructor(private dirs: string[]) {
     super();
@@ -48,6 +50,31 @@ export class SkillLoader extends EventEmitter<SkillLoaderEvents> {
       logger.info({ dir: claudeSkillsDir }, "Auto-discovered .claude/skills directory");
     }
     this.watchDirs = dirs;
+    // P0-2: 建立目录来源映射。约定：第一个目录（paths.skills()）=user，
+    // 包含 marketplace 子串的目录=marketplace，其余（项目级/环境变量）=project。
+    this.watchDirs.forEach((dir, idx) => {
+      const lower = dir.toLowerCase();
+      if (lower.includes("marketplace")) {
+        this.dirSourceMap.set(dir, "marketplace");
+      } else if (idx === 0) {
+        this.dirSourceMap.set(dir, "user");
+      } else {
+        this.dirSourceMap.set(dir, "project");
+      }
+    });
+  }
+
+  /**
+   * P0-2: 根据文件路径反查所属 watchDir 的来源。
+   * 用于热重载（handleFileChange）时根据 path 前缀匹配判定来源。
+   * 无法匹配时兜底 user。
+   */
+  private resolveSourceByPath(filePath: string): SkillSource {
+    const lower = filePath.toLowerCase();
+    for (const [dir, source] of this.dirSourceMap) {
+      if (lower.startsWith(dir.toLowerCase())) return source;
+    }
+    return "user";
   }
 
   /** Scan all configured directories and load skills. */
@@ -69,6 +96,8 @@ export class SkillLoader extends EventEmitter<SkillLoaderEvents> {
             filePath: entry.filePath,
             enabled: true,
             loadedAt: new Date(),
+            // P0-2: 快照恢复来源；老快照无 source 时根据路径反查兜底
+            source: entry.source ?? this.resolveSourceByPath(entry.filePath),
           };
           this.skills.set(entry.id, skill);
           this.emit("skill:loaded", skill);
@@ -84,7 +113,8 @@ export class SkillLoader extends EventEmitter<SkillLoaderEvents> {
         logger.warn({ dir }, "Skill directory not found, skipping");
         continue;
       }
-      this.scanDirectory(dir);
+      // P0-2: 按目录来源扫描，扫描到的技能带上 source
+      this.scanDirectory(dir, this.dirSourceMap.get(dir) ?? "user");
     }
     logger.info({ count: this.skills.size }, "Skills loaded (full scan)");
 
@@ -98,6 +128,8 @@ export class SkillLoader extends EventEmitter<SkillLoaderEvents> {
       platforms: undefined,
       commands: undefined,
       filePath: s.filePath,
+      // P0-2: 持久化来源，二次加载不丢失
+      source: s.source,
     }));
     this.snapshotCache.persist(this.watchDirs, undefined, entries);
 
@@ -160,7 +192,7 @@ export class SkillLoader extends EventEmitter<SkillLoaderEvents> {
     return undefined;
   }
 
-  private scanDirectory(dir: string): void {
+  private scanDirectory(dir: string, source: SkillSource): void {
     try {
       const entries = readdirSync(dir);
       for (const entry of entries) {
@@ -171,13 +203,13 @@ export class SkillLoader extends EventEmitter<SkillLoaderEvents> {
           // Look for SKILL.md inside the directory
           const skillFile = join(fullPath, "SKILL.md");
           if (existsSync(skillFile)) {
-            this.loadSkillFile(skillFile);
+            this.loadSkillFile(skillFile, source);
           }
         } else if (
           stat.isFile() &&
           (entry.endsWith(".md") || entry.endsWith(".skill.md"))
         ) {
-          this.loadSkillFile(fullPath);
+          this.loadSkillFile(fullPath, source);
         }
       }
     } catch (error) {
@@ -185,7 +217,7 @@ export class SkillLoader extends EventEmitter<SkillLoaderEvents> {
     }
   }
 
-  private loadSkillFile(filePath: string): Skill | null {
+  private loadSkillFile(filePath: string, source?: SkillSource): Skill | null {
     try {
       const raw = readFileSync(filePath, "utf-8");
 
@@ -201,6 +233,8 @@ export class SkillLoader extends EventEmitter<SkillLoaderEvents> {
         filePath,
         enabled: true,
         loadedAt: new Date(),
+        // P0-2: 来源优先用传入值（全量扫描），否则根据路径反查（热重载）
+        source: source ?? this.resolveSourceByPath(filePath),
       };
 
       // Spec v3 Task 2: 计算就绪状态并缓存
@@ -240,7 +274,8 @@ export class SkillLoader extends EventEmitter<SkillLoaderEvents> {
     if (path.endsWith(".md")) {
       // Phase 3: 文件变更时使缓存失效
       this.snapshotCache.invalidate();
-      this.loadSkillFile(path);
+      // P0-2: 热重载时根据路径反查来源
+      this.loadSkillFile(path, this.resolveSourceByPath(path));
     }
   }
 

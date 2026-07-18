@@ -300,6 +300,7 @@ export async function channelRoutes(app: FastifyInstance, ctx: AppContext) {
       sessions: ctx.agentManager.listAgents().length,
       gateway: gatewayHealth,
       uptime: process.uptime(),
+      authEnabled: process.env.AUTH_ENABLED === "true",
     });
   });
 

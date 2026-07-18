@@ -2,7 +2,7 @@
  * Application context shared across all route handlers.
  */
 
-import { AgentManager, SkillLoader, MessageRouter, MemoryManager, CollaborationOrchestrator, EvolutionEngine, SecurityManager, MCPRegistry, MCPMarketplace, CronScheduler, SkillMarketplace, SubagentManager, SubagentAnnouncer, SubagentExecutor, builtinTools, getAllBuiltinTools, createMemoryTools, createSkillTools, initDatabase, SQLiteBackend, QwenEmbedding, HRRProvider, AliyunVoiceProvider, DockerSandbox, SSHSandbox, ProviderStore, initConfigStore, paths, ensureDirectories, loadNudgeConfig, ConfigStoreAdapter, SourceRouter, injectSysopsSecurityRules, TaskStore, InMemoryAgentRegistry, PushNotificationDispatcher, SessionSearchEngine, KnowledgeExtractor, InsightsEngine, VerificationPipeline, KnowledgeGraph, getProviderById, getModelById, KnowledgeBaseProvider } from "@super-agent/core";
+import { AgentManager, SkillLoader, MessageRouter, MemoryManager, CollaborationOrchestrator, EvolutionEngine, SecurityManager, MCPRegistry, MCPMarketplace, CronScheduler, SkillMarketplace, SubagentManager, SubagentAnnouncer, SubagentExecutor, builtinTools, getAllBuiltinTools, createMemoryTools, createSkillTools, initDatabase, SQLiteBackend, QwenEmbedding, HRRProvider, AliyunVoiceProvider, DockerSandbox, SSHSandbox, ProviderStore, initConfigStore, paths, ensureDirectories, loadNudgeConfig, ConfigStoreAdapter, SourceRouter, injectSysopsSecurityRules, TaskStore, InMemoryAgentRegistry, PushNotificationDispatcher, SessionSearchEngine, KnowledgeExtractor, InsightsEngine, VerificationPipeline, KnowledgeGraph, getProviderById, getModelById, KnowledgeBaseProvider, AutoMemorySystem, LLMProvider, KnowledgeArchiver } from "@super-agent/core";
 import type { VoiceProvider, ConfigStore, IAgentRegistry, LLMProviderConfig, EmbeddingProvider, DoclingClient, KBEmbedder } from "@super-agent/core";
 import { createDedupCache, type DedupCache } from "./shared/dedup.js";
 import { KbParserSupervisor } from "./services/kb-parser-supervisor.js";
@@ -60,6 +60,8 @@ export interface AppContext {
   verificationPipeline?: VerificationPipeline;
   /** Task 3.5: 知识图谱三元组存储 */
   knowledgeGraph?: KnowledgeGraph;
+  /** P0-4: 个人知识库归档器（对话归档为结构化知识） */
+  knowledgeArchiver?: KnowledgeArchiver;
   /** 传输层无关的请求去重缓存（WS/HTTP 共用） */
   dedup: DedupCache;
   /**
@@ -137,7 +139,18 @@ export async function createAppContext(): Promise<AppContext> {
     : new HRRProvider();
 
   const agentManager = new AgentManager();
-  const skillLoader = new SkillLoader([paths.skills()]);
+  // P0-2: 技能多目录扫描——用户目录 + 项目级目录（让项目内本地技能也能被发现）
+  // 优先级：SA_SKILLS_DIR 环境变量 → <cwd>/skills（存在才加）
+  const skillDirs = [paths.skills()];
+  const { existsSync: _existsSync } = await import("node:fs");
+  const _pathMod = await import("node:path");
+  const projectSkills = process.env.SA_SKILLS_DIR
+    || (_existsSync(_pathMod.join(process.cwd(), "skills")) ? _pathMod.join(process.cwd(), "skills") : null);
+  if (projectSkills && !skillDirs.includes(projectSkills)) {
+    skillDirs.push(projectSkills);
+    logger.info({ projectSkills }, "P0-2: 项目级技能目录已加入扫描");
+  }
+  const skillLoader = new SkillLoader(skillDirs);
   const router = new MessageRouter(agentManager);
   const memoryManager = new MemoryManager({ backend: sqliteBackend, embedder });
 
@@ -490,6 +503,34 @@ export async function createAppContext(): Promise<AppContext> {
     return config;
   };
 
+  // ─── P0-3: 自动记忆系统装配 ─────
+  // 对话后自动提取实体/摘要/行动项（每 10 轮触发，合并 1 次 LLM 调用）。
+  // 依赖：memoryManager + knowledgeGraph + 一个可用 LLMProvider（active provider）。
+  // 无 active provider 时优雅降级：不装配（自动记忆不启用，不报错）。
+  const autoMemoryLlmConfig = applyActiveProvider();
+  let knowledgeArchiver: KnowledgeArchiver | undefined;
+  if (autoMemoryLlmConfig) {
+    const autoMemory = new AutoMemorySystem(
+      memoryManager,
+      knowledgeGraph,
+      new LLMProvider(autoMemoryLlmConfig),
+    );
+    agentManager.setAutoMemory(autoMemory);
+    logger.info("P0-3: AutoMemorySystem 已装配 — Agent 对话每 10 轮自动提取记忆");
+    // P0-4: 知识库归档器（复用同一 LLM 配置，LLM 提炼结构化知识条目）
+    knowledgeArchiver = new KnowledgeArchiver(
+      memoryManager,
+      knowledgeGraph,
+      new LLMProvider(autoMemoryLlmConfig),
+    );
+    logger.info("P0-4: KnowledgeArchiver 已装配（LLM 提炼）");
+  } else {
+    logger.info("P0-3: 未配置 active provider，自动记忆暂不启用（配置模型后重启生效）");
+    // P0-4: 无 LLM 也装配归档器（降级为原文归档）
+    knowledgeArchiver = new KnowledgeArchiver(memoryManager, knowledgeGraph);
+    logger.info("P0-4: KnowledgeArchiver 已装配（无 LLM，降级原文归档）");
+  }
+
   // ─── 知识库 Docling sidecar（知识库 Spec §T7，可选） ─────
   // 懒启动：此处仅构造 supervisor 与 client 句柄，首次上传扫描件时才 spawn Python。
   // 环境变量 DISABLE_KB_PARSER_SIDECAR=true 时完全跳过（router 无 docling → 行为回退到纯 TS 解析）
@@ -508,5 +549,5 @@ export async function createAppContext(): Promise<AppContext> {
     );
   }
 
-  return { agentManager, skillLoader, router, memoryManager, collaborationOrchestrator, subagentManager, subagentAnnouncer, subagentExecutor, evolutionEngine, securityManager, mcpRegistry, mcpMarketplace, cronScheduler, skillMarketplace, providerStore, configStore, voiceProvider, availableSTTProviders: [], embedder, sessionSearch, knowledgeExtractor, insightsEngine, verificationPipeline, knowledgeGraph, dedup, a2aTaskStore, a2aRegistry, a2aPushDispatcher, applyActiveProvider, kbParserClient, kbParserStop };
+  return { agentManager, skillLoader, router, memoryManager, collaborationOrchestrator, subagentManager, subagentAnnouncer, subagentExecutor, evolutionEngine, securityManager, mcpRegistry, mcpMarketplace, cronScheduler, skillMarketplace, providerStore, configStore, voiceProvider, availableSTTProviders: [], embedder, sessionSearch, knowledgeExtractor, insightsEngine, verificationPipeline, knowledgeGraph, knowledgeArchiver, dedup, a2aTaskStore, a2aRegistry, a2aPushDispatcher, applyActiveProvider, kbParserClient, kbParserStop };
 }
