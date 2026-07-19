@@ -27,4 +27,4 @@ export type NativeDatabase = BetterSqlite3.Database;
  * Schema 当前版本号（每次新增 migration 必须同步 bump，并在 runMigrations 中新增 migrateVN 调用）。
  * 版本语义：v1 = baseline（initDatabase 内 CREATE TABLE 事务块）；v2..v17 = migrations.ts 内 migrateVN 函数。
  */
-export const CURRENT_SCHEMA_VERSION = 20;
+export const CURRENT_SCHEMA_VERSION = 22;

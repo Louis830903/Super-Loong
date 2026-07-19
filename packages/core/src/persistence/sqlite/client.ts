@@ -51,6 +51,24 @@ class SqlJsCompatDB {
   /** sql.js 兼容 exec：接受 params 数组，返回 QueryExecResult[] */
   exec(sql: string, params?: unknown[]): QueryExecResult[] {
     if (!params || params.length === 0) {
+      // 【修复】better-sqlite3 的 real.exec() 只执行不返回行，旧实现对所有无参查询 return []，
+      // 会吞掉"不带参数的 SELECT"结果（sql.js→better-sqlite3 迁移遗留缺陷）。
+      // 安全策略：仅将【读查询】(SELECT/WITH/PRAGMA) 改走 prepare().all() 返回真实行；
+      // 其余一切语句（DDL/写/多语句）一律保持原生 real.exec() 行为，零回归。
+      if (/^\s*(SELECT|WITH|PRAGMA)\b/i.test(sql)) {
+        try {
+          const stmt = this.real.prepare(sql);
+          if (stmt.reader) {
+            const rows = stmt.all() as Record<string, unknown>[];
+            if (rows.length === 0) return [];
+            const columns = Object.keys(rows[0]);
+            const values = rows.map((row) => columns.map((col) => row[col]));
+            return [{ columns, values }];
+          }
+        } catch {
+          // 读查询预编译失败（极少见）→ 回退原生 exec
+        }
+      }
       this.real.exec(sql);
       return [];
     }

@@ -14,6 +14,8 @@ from .gateway import WeComGateway
 from .outbound import WeComOutbound
 from .status import WeComStatus
 from .lifecycle import WeComLifecycle
+from .doctor import WeComDoctor
+from .security import WeComSecurity
 
 
 class WeComConfigAdapter:
@@ -52,6 +54,8 @@ def create_plugin() -> ChannelPlugin:
     outbound = WeComOutbound()
     status = WeComStatus(gateway=gateway)
     lifecycle = WeComLifecycle(gateway=gateway, outbound=outbound)
+    doctor = WeComDoctor()
+    security = WeComSecurity()
 
     return ChannelPlugin(
         id="wecom",
@@ -65,4 +69,6 @@ def create_plugin() -> ChannelPlugin:
         health_adapter=gateway,        # WeComGateway 兼容 HealthAdapter 属性
         status_adapter=status,
         lifecycle_adapter=lifecycle,
+        doctor_adapter=doctor,         # P2-2: 配置自检（对齐飞书）
+        security_adapter=security,     # P2-2: 安全审计 + 回调签名校验
     )

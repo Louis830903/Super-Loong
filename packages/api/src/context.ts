@@ -190,6 +190,16 @@ export async function createAppContext(): Promise<AppContext> {
   // [审查 P0-1]: 从 SQLite 恢复独立存储的分析器 Agent 配置
   await evolutionEngine.loadAnalyzerConfig();
 
+  // P1-3: 按 STAGE 分阶段激活自进化模块（默认 STAGE=0 全关，零回归）
+  //   0=关 / 1=仅缺口检测 / 2=+工具骨架生成提案 / 3=+自主学习。
+  const evolutionStage = parseInt(process.env.SUPER_AGENT_EVOLUTION_STAGE ?? "0", 10);
+  if (evolutionStage > 0) {
+    await evolutionEngine.activateEvolutionStage(evolutionStage).catch((err) =>
+      logger.warn({ err }, "P1-3: evolution stage activation failed (non-fatal)"),
+    );
+    logger.info({ stage: evolutionStage }, "P1-3: 自进化模块已按 STAGE 激活");
+  }
+
   // Task 3.4: 初始化 Evolution 高级子模块（无必需参数，均使用内部默认配置）
   const sessionSearch = new SessionSearchEngine();
   const knowledgeExtractor = new KnowledgeExtractor();

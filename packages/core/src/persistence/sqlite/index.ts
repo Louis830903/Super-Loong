@@ -101,6 +101,20 @@ export {
 } from "./collab-repo.js";
 export { purgeEvolutionCases } from "./maintenance-repo.js";
 
+// ── P1-1 / P1-2：进化引擎持久化（能力缺口 / 工具提案）──
+export {
+  saveCapabilityGap,
+  loadCapabilityGaps,
+  deleteCapabilityGap,
+} from "./capability-gap-store.js";
+export {
+  saveToolProposal,
+  loadToolProposals,
+  getToolProposal,
+  updateToolProposalStatus,
+  deleteToolProposal,
+} from "./tool-proposal-store.js";
+
 // ── 批 3：核心高耦合四块（Memory Backend / FTS / Conversation / Subagent）──
 // 说明：SQLiteBackend 与 EntityRow 来自 memory-backend；FTS 仅 re-export 供上游消费的 5 个函数，
 //       hasFTS5 / hasFTS5v6 / resetFts5Cache 是内部符号，不进公开 API 面。

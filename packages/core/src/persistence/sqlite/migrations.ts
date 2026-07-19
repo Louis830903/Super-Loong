@@ -25,6 +25,7 @@ import { migrateV2, migrateV3, migrateV4, migrateV5, migrateV6, migrateV7, migra
 import { migrateV10, migrateV11, migrateV12, migrateV13, migrateV14, migrateV15, migrateV16 } from "./migrations-v10-v16.js";
 import { migrateV17, migrateV18 } from "./migrations-v17-v18.js";
 import { migrateV19, migrateV20 } from "./migrations-v19-v20.js";
+import { migrateV21, migrateV22 } from "./migrations-v21-v22.js";
 
 /**
  * Run all pending schema migrations sequentially.
@@ -98,4 +99,10 @@ export function runMigrations(db: SqlJsDatabase): void {
 
   // ── v20: 时间戳类型统一 INTEGER → TEXT（P3-T9）──
   if (currentVersion < 20) migrateV20(db);
+
+  // ── v21: capability_gaps 表（P1-1 能力缺口持久化）──
+  if (currentVersion < 21) migrateV21(db);
+
+  // ── v22: tool_proposals 表（P1-2 工具骨架提案）──
+  if (currentVersion < 22) migrateV22(db);
 }

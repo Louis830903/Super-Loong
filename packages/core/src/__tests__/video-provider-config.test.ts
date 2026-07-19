@@ -233,8 +233,11 @@ describe("ModelDef pricing 字段", () => {
     expect(ds).toBeDefined();
     const chat = ds!.models.find((m) => m.id === "deepseek-chat");
     expect(chat?.pricing).toBeDefined();
-    expect(chat!.pricing!.input).toBe(1);
-    expect(chat!.pricing!.output).toBe(2);
+    // 目录已迁移到 DeepSeek V4 系列，deepseek-chat 为 V4 Flash 遗留别名，
+    // 采用 USD/1M_tokens 计价。断言"有正价 + 单位正确"，不硬编码具体价（避免随行情/迁移失效）。
+    expect(chat!.pricing!.input).toBeGreaterThan(0);
+    expect(chat!.pricing!.output).toBeGreaterThan(0);
+    expect(chat!.pricing!.unit).toBe("USD/1M_tokens");
   });
 
   it("Moonshot/Kimi 模型应有 pricing", () => {

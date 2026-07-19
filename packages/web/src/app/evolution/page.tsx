@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { apiFetch } from "@/lib/utils";
+import { GapsPanel } from "./gaps-panel";
+import { ToolProposalsPanel } from "./tool-proposals-panel";
 import {
   Sparkles, CheckCircle, XCircle, Clock, ThumbsUp, ThumbsDown,
   BarChart3, Lightbulb, Play, Trash2, RefreshCw, Camera,
@@ -16,7 +18,7 @@ export default function EvolutionPage() {
   const [stats, setStats] = useState<EvolutionStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedProposal, setSelectedProposal] = useState<SkillProposal | null>(null);
-  const [tab, setTab] = useState<"proposals" | "snapshots" | "nudge">("proposals");
+  const [tab, setTab] = useState<"proposals" | "snapshots" | "nudge" | "gaps" | "toolgen">("proposals");
 
   // 快照状态
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
@@ -232,6 +234,8 @@ export default function EvolutionPage() {
     { id: "proposals" as const, label: "技能提案", icon: Lightbulb },
     { id: "snapshots" as const, label: "快照管理", icon: Camera },
     { id: "nudge" as const, label: "Nudge 配置", icon: Settings2 },
+    { id: "gaps" as const, label: "能力缺口", icon: Settings2 },
+    { id: "toolgen" as const, label: "工具提案", icon: Wrench },
   ];
 
   return (
@@ -690,7 +694,7 @@ export default function EvolutionPage() {
             </div>
           )}
         </div>
-      ) : (
+      ) : tab === "nudge" ? (
         <div className="space-y-4">
           {nudgeEditing ? (
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6 space-y-5">
@@ -767,7 +771,12 @@ export default function EvolutionPage() {
             <div className="py-8 text-center text-zinc-500">加载配置中...</div>
           )}
         </div>
-      )}
+      ) : null}
+
+      {/* P1-1: 能力缺口面板（此前 GapsPanel 已导入但未渲染，一并接通） */}
+      {tab === "gaps" && <GapsPanel />}
+      {/* P1-2/P1-3: 工具提案 + 自进化模块激活状态 */}
+      {tab === "toolgen" && <ToolProposalsPanel />}
     </div>
   );
 }

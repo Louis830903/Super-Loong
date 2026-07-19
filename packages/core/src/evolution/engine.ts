@@ -45,6 +45,15 @@ import { StrategyLearner } from "./strategy-learner.js";
 import type { StrategyCacheEntry, ToolPatternStats, PromptFeedbackEntry } from "./strategy-learner.js";
 // P1-2: 编码委托器
 import { CodingDelegator } from "./coding-delegator.js";
+// P1-1: 能力缺口检测器
+import { CapabilityGapDetector } from "./capability-gap-detector.js";
+import type { CapabilityGap } from "./capability-gap-detector.js";
+// P1-2: 工具骨架生成器 + 提案持久化
+import { ToolGenerator } from "./tool-generator.js";
+import type { ToolRequirement } from "./tool-generator.js";
+import { saveToolProposal, loadToolProposals, getToolProposal, updateToolProposalStatus } from "../persistence/sqlite.js";
+// P1-3: 孤岛模块激活管理器
+import { ActivationManager } from "./activation-manager.js";
 // P2-T17: prompt 注入扫描（flushBeforeReset 记忆状态安全门控）
 import { scanMemoryContent, sanitizeMemoryContent } from "../prompt/injection-guard.js";
 // P4-T1a: review prompts 提取到独立文件
@@ -273,6 +282,14 @@ export class EvolutionEngine extends EventEmitter {
   private _analyzerModelId: string | null = null;
   /** ProviderStore 引用（可选，用于解析分析器 LLM 的 apiKey/baseUrl） */
   private providerStore?: { get(id: string): { apiKey?: string; baseUrl?: string; isEnabled?: boolean } | null | undefined };
+  /** P1-1: 能力缺口检测器（对话中自动发现"缺什么工具/能力"） */
+  private gapDetector: CapabilityGapDetector;
+  /** P1-2: 工具骨架生成器（缺口 → 工具提案） */
+  private toolGenerator: ToolGenerator;
+  /** P1-3: 孤岛模块激活管理器（按 STAGE 分阶段激活自进化模块） */
+  readonly activationManager: ActivationManager;
+  /** P1-2/P1-3: ToolGenerator 是否已激活（STAGE>=2 时置 true） */
+  private _toolGenActivated = false;
 
   constructor(
     agentManager: AgentManager,
@@ -305,6 +322,198 @@ export class EvolutionEngine extends EventEmitter {
     // P1-2: 编码委托器（供外部调用委托 AI 编程任务）
     this.codingDelegator = new CodingDelegator();
     this.providerStore = providerStore;
+    // P1-1: 初始化能力缺口检测器（persist=true → 缺口跨重启持久化到 capability_gaps 表）
+    this.gapDetector = new CapabilityGapDetector({ persist: true });
+    // P1-2: 工具骨架生成器
+    this.toolGenerator = new ToolGenerator();
+    // P1-3: 激活管理器 + 注入真实开关钩子（激活 ToolGenerator → 打开 P1-2 工具提案生成）
+    this.activationManager = new ActivationManager();
+    this.activationManager.setHooks({
+      ToolGenerator: {
+        activate: () => { this._toolGenActivated = true; },
+        deactivate: () => { this._toolGenActivated = false; },
+      },
+    });
+  }
+
+  /** P1-1: 查询已检测到的能力缺口（供路由展示） */
+  getCapabilityGaps(filter?: { status?: string; minPriority?: number }): CapabilityGap[] {
+    return this.gapDetector.getGaps(filter as any);
+  }
+
+  // ─── P1-2: 工具骨架生成提案（Flag/STAGE 门控 + 人工审核） ──────────
+
+  /** 工具提案生成频次阈值（缺口出现 N 次才提议生成工具） */
+  private static readonly TOOLGEN_FREQUENCY_THRESHOLD = 3;
+
+  /**
+   * P1-2: 缺口达阈值时尝试生成工具提案（安全门控 + 异步容错）。
+   * 门控：SUPER_AGENT_EVOLUTION_TOOLGEN=true 或 ToolGenerator 已激活(STAGE>=2)。
+   */
+  private maybeProposeToolForGap(gap: CapabilityGap): void {
+    const enabled = process.env.SUPER_AGENT_EVOLUTION_TOOLGEN === "true" || this._toolGenActivated;
+    if (!enabled) return;
+    if (!gap.solvable) return;
+    if (gap.frequency < EvolutionEngine.TOOLGEN_FREQUENCY_THRESHOLD) return;
+    if (gap.suggestedFix && gap.suggestedFix !== "generate_tool") return;
+    // 异步生成，不阻塞主流程
+    this.generateToolProposal(gap).catch((err) =>
+      logger.debug({ err, gapId: gap.id }, "P1-2: tool proposal generation failed (non-fatal)"),
+    );
+  }
+
+  /**
+   * P1-2: 为缺口生成工具骨架提案（generateSkeleton → LLM 填充 → 存 pending_review）。
+   * 绝不自动注册/热加载——只生成候选代码，等人工审核。
+   */
+  async generateToolProposal(gap: CapabilityGap): Promise<string | null> {
+    const toolName = this.deriveToolName(gap);
+    const req: ToolRequirement = {
+      description: gap.description.slice(0, 300),
+      category: this.mapGapCategory(gap.category),
+      toolName,
+    };
+
+    // 1. 生成骨架
+    const skeleton = this.toolGenerator.generateSkeleton(req);
+
+    // 2. LLM 填充 execute 函数体（无 LLM 时保留骨架 TODO）
+    let generated = skeleton;
+    const llmConfig = this.resolveAnalyzerLlmConfig();
+    if (llmConfig) {
+      try {
+        const llm = new LLMProvider(llmConfig);
+        const prompt = `你是 TypeScript 工具开发者。请为以下需求编写 execute 函数体（只输出函数体代码，不要 markdown 围栏，不要重复函数签名）：\n\n工具名：${toolName}\n需求：${gap.description}\n\n要求：\n- 使用 async/await\n- 返回 { content: [{ type: "text", text: "..." }] } 形式的 ToolResult\n- 禁用 eval、不删除文件、不执行 shell\n- 参数从 params 读取`;
+        const resp = await llm.complete({ messages: [{ role: "user", content: prompt }] });
+        const body = this.extractExecuteBody(resp.content ?? "");
+        if (body.trim()) {
+          generated = this.toolGenerator.fillExecuteBody(skeleton, body);
+        }
+      } catch (err) {
+        logger.debug({ err }, "P1-2: LLM fill execute body failed, keeping skeleton");
+      }
+    }
+
+    // 3. 存 tool_proposals (pending_review)
+    const id = `toolprop_${uuid().slice(0, 8)}`;
+    const now = new Date().toISOString();
+    saveToolProposal({
+      id,
+      tool_name: toolName,
+      category: req.category,
+      description: gap.description.slice(0, 500),
+      gap_id: gap.id,
+      source_code: generated.sourceCode,
+      file_path: generated.registration.filePath,
+      feature_flag: generated.registration.featureFlag,
+      dependencies: JSON.stringify(generated.dependencies ?? []),
+      validation_json: JSON.stringify(generated.validation ?? {}),
+      status: "pending_review",
+      created_at: now,
+      updated_at: now,
+    });
+
+    // 4. 落地候选文件（不注册不加载，仅供审阅/重启后加载）
+    await this.writeProposalFile(generated.registration.filePath, generated.sourceCode);
+
+    this.emit("toolProposal:generated", { id, toolName, gapId: gap.id });
+    logger.info({ id, toolName, gapId: gap.id }, "P1-2: tool proposal generated (pending_review)");
+    return id;
+  }
+
+  /** P1-2: 列出工具提案（供路由/前端展示）。 */
+  getToolProposals(status?: string): Array<Record<string, unknown>> {
+    try {
+      return loadToolProposals(status);
+    } catch (err) {
+      logger.debug({ err }, "P1-2: loadToolProposals failed");
+      return [];
+    }
+  }
+
+  /**
+   * P1-2: 批准工具提案——必须先通过静态校验（含安全扫描）才 approved。
+   * 批准后仅标记状态 + 提示重启；绝不在运行时热注册未审计代码。
+   */
+  async approveToolProposal(id: string): Promise<{ ok: boolean; message: string }> {
+    const row = getToolProposal(id);
+    if (!row) return { ok: false, message: "提案不存在" };
+    if (row.status !== "pending_review") {
+      return { ok: false, message: `提案状态为 ${row.status}，无法批准` };
+    }
+    // 静态校验：导出契约 + 必要 import + execute 签名 + 危险模式扫描
+    const validation = this.toolGenerator.validate(String(row.source_code));
+    if (!validation.valid) {
+      updateToolProposalStatus(id, "pending_review", `校验未通过: ${validation.errors.join("; ")}`);
+      return { ok: false, message: `代码校验未通过：${validation.errors.join("; ")}` };
+    }
+    updateToolProposalStatus(id, "approved", "已通过静态校验，重启后由动态加载器纳入工具池");
+    this.emit("toolProposal:approved", { id });
+    logger.info({ id }, "P1-2: tool proposal approved");
+    return { ok: true, message: "提案已批准（通过静态校验）。重启服务后由动态加载器纳入工具池。" };
+  }
+
+  /** P1-2: 拒绝工具提案。 */
+  rejectToolProposal(id: string, reason?: string): { ok: boolean; message: string } {
+    const row = getToolProposal(id);
+    if (!row) return { ok: false, message: "提案不存在" };
+    updateToolProposalStatus(id, "rejected", reason ?? "人工拒绝");
+    this.emit("toolProposal:rejected", { id });
+    return { ok: true, message: "提案已拒绝" };
+  }
+
+  // ─── P1-3: 分阶段激活孤岛模块 ─────────────────
+
+  /**
+   * P1-3: 按 STAGE 激活自进化模块（0=关/1=检测/2=+生成/3=+自主）。
+   * 启动时由 context.ts 根据 SUPER_AGENT_EVOLUTION_STAGE 调用。
+   */
+  async activateEvolutionStage(stage: number): Promise<{ activated: string[]; skipped: string[] }> {
+    const result = await this.activationManager.activateStage(stage);
+    logger.info({ stage, activated: result.activated }, "P1-3: evolution modules activated by stage");
+    return result;
+  }
+
+  /** P1-3: 获取激活状态（供路由/前端展示）。 */
+  getActivationStatus() {
+    return this.activationManager.getStatus();
+  }
+
+  // ─── P1-2 私有辅助 ──────────────────────────
+
+  /** 从缺口派生一个合法的工具名（snake_case）。 */
+  private deriveToolName(gap: CapabilityGap): string {
+    const base = gap.id.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+    return `auto_${base}`;
+  }
+
+  /** GapCategory → ToolRequirement.category 的启发式映射。 */
+  private mapGapCategory(cat: CapabilityGap["category"]): ToolRequirement["category"] {
+    switch (cat) {
+      case "integration_missing": return "web";
+      case "knowledge_gap": return "data";
+      default: return "system";
+    }
+  }
+
+  /** 从 LLM 回复中提取 execute 函数体（剥离 markdown 代码围栏）。 */
+  private extractExecuteBody(content: string): string {
+    const fence = content.match(/```(?:ts|typescript|js)?\n([\s\S]*?)```/);
+    return (fence ? fence[1] : content).trim();
+  }
+
+  /** 落地候选工具文件到 evolution-generated 目录（不注册不加载，容错）。 */
+  private async writeProposalFile(filePath: string, code: string): Promise<void> {
+    try {
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      const rel = filePath.replace(/^\.\//, "");
+      const abs = path.join(process.cwd(), rel);
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      await fs.writeFile(abs, code, "utf-8");
+    } catch (err) {
+      logger.debug({ err, filePath }, "P1-2: writeProposalFile skipped (non-fatal)");
+    }
   }
 
   /**
@@ -412,6 +621,32 @@ export class EvolutionEngine extends EventEmitter {
           logger.debug({ err }, "Auto failure analysis failed (non-fatal)")
         );
       }
+    }
+
+    // P1-1: 能力缺口检测（异步容错，不阻塞主流程）
+    try {
+      const newGaps = this.gapDetector.detect({
+        agentId: data.agentId,
+        sessionId: data.sessionId,
+        agentResponse: data.agentResponse,
+        // P1-1: data.toolCalls 是工具名数组，映射为检测器需要的对象格式
+        // （整体 success 用 data.success 标志，单工具级成败详情此处不可得）
+        toolCalls: (data.toolCalls ?? []).map((name) => ({
+          name,
+          success: data.success ?? true,
+          ...(data.failureReason ? { error: data.failureReason } : {}),
+        })),
+      });
+      if (newGaps.length > 0) {
+        for (const gap of newGaps) {
+          this.emit("gap:detected", gap);
+          // P1-2: 缺口达阈值 → 尝试生成工具提案（Flag/STAGE 门控，异步容错）
+          this.maybeProposeToolForGap(gap);
+        }
+        logger.info({ agentId: data.agentId, count: newGaps.length }, "P1-1: capability gaps detected");
+      }
+    } catch (err) {
+      logger.debug({ err }, "P1-1: gap detection failed (non-fatal)");
     }
 
     return interactionCase;

@@ -18,6 +18,8 @@
 
 import { v4 as uuid } from "uuid";
 import pino from "pino";
+// P1-1: 能力缺口持久化（可选，persist=true 时启用；DB 未就绪时 try/catch 静默降级）
+import { saveCapabilityGap, loadCapabilityGaps, deleteCapabilityGap } from "../persistence/sqlite.js";
 
 const logger = pino({ name: "capability-gap-detector" });
 
@@ -127,6 +129,8 @@ export interface GapDetectorConfig {
   dedupWindowMs: number;
   /** 自动清理已解决差距的天数（默认 30 天） */
   cleanupResolvedDays: number;
+  /** P1-1: 是否持久化到 SQLite（默认 false；EvolutionEngine 装配时置 true） */
+  persist?: boolean;
 }
 
 const DEFAULT_CONFIG: GapDetectorConfig = {
@@ -197,6 +201,8 @@ export class CapabilityGapDetector {
 
   constructor(config?: Partial<GapDetectorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    // P1-1: 启用持久化时，从 SQLite 恢复历史缺口（跨重启累积）
+    if (this.config.persist) this.loadFromDB();
   }
 
   /**
@@ -398,6 +404,9 @@ export class CapabilityGapDetector {
       // 重新计算优先级
       existing.priority = this.computePriority(existing);
 
+      // P1-1: 持久化更新
+      this.persistGap(existing);
+
       logger.info(
         { gapId: existing.id, frequency: existing.frequency, priority: existing.priority },
         "Updated existing capability gap",
@@ -427,6 +436,8 @@ export class CapabilityGapDetector {
     gap.priority = this.computePriority(gap);
 
     this.gaps.set(gap.id, gap);
+    // P1-1: 持久化新缺口
+    this.persistGap(gap);
     logger.info({ gapId: gap.id, category: gap.category }, "New capability gap detected");
     return gap;
   }
@@ -555,6 +566,9 @@ export class CapabilityGapDetector {
     if (suggestedFix) gap.suggestedFix = suggestedFix;
     gap.lastDetectedAt = new Date();
 
+    // P1-1: 持久化状态变更
+    this.persistGap(gap);
+
     logger.info({ gapId, newStatus: status }, "Gap status updated");
     return true;
   }
@@ -619,5 +633,103 @@ export class CapabilityGapDetector {
     this.gaps.clear();
     this.consecutiveFailures.clear();
     logger.info("Capability gap detector reset");
+  }
+
+  // ─── P1-1: 持久化（SQLite） ───────────────────────────────
+
+  /**
+   * 从 SQLite 恢复历史缺口到内存 Map（启动时调用，容错）。
+   */
+  private loadFromDB(): void {
+    try {
+      const rows = loadCapabilityGaps();
+      for (const row of rows) {
+        const gap = this.fromRow(row);
+        if (gap) this.gaps.set(gap.id, gap);
+      }
+      if (rows.length > 0) {
+        logger.info({ count: rows.length }, "P1-1: capability gaps restored from SQLite");
+      }
+    } catch (err) {
+      // DB 未就绪或表不存在：静默降级为纯内存
+      logger.debug({ err }, "P1-1: loadCapabilityGaps skipped (DB not ready)");
+    }
+  }
+
+  /**
+   * 持久化单条缺口（容错，失败不影响内存态）。
+   */
+  private persistGap(gap: CapabilityGap): void {
+    if (!this.config.persist) return;
+    try {
+      saveCapabilityGap(this.toRow(gap));
+    } catch (err) {
+      logger.debug({ err, gapId: gap.id }, "P1-1: persistGap failed (non-fatal)");
+    }
+  }
+
+  /** CapabilityGap → SQLite 行对象（Date→ISO，数组→JSON，bool→0/1）。 */
+  private toRow(gap: CapabilityGap): Record<string, unknown> {
+    return {
+      id: gap.id,
+      category: gap.category,
+      description: gap.description,
+      agent_id: gap.agentId ?? null,
+      detected_at: gap.detectedAt.toISOString(),
+      last_detected_at: gap.lastDetectedAt.toISOString(),
+      frequency: gap.frequency,
+      attempted_tools: JSON.stringify(gap.attemptedTools ?? []),
+      session_ids: JSON.stringify(gap.sessionIds ?? []),
+      detected_by: gap.detectedBy,
+      sample_response: gap.sampleResponse ?? null,
+      solvable: gap.solvable ? 1 : 0,
+      suggested_fix: gap.suggestedFix ?? null,
+      priority: gap.priority,
+      status: gap.status,
+      resolution_note: gap.resolutionNote ?? null,
+      metadata: JSON.stringify(gap.metadata ?? {}),
+    };
+  }
+
+  /** SQLite 行对象 → CapabilityGap（容错解析）。 */
+  private fromRow(row: Record<string, unknown>): CapabilityGap | null {
+    try {
+      const parseArr = (v: unknown): string[] => {
+        try { const a = JSON.parse((v as string) || "[]"); return Array.isArray(a) ? a : []; }
+        catch { return []; }
+      };
+      return {
+        id: String(row.id),
+        category: row.category as GapCategory,
+        description: String(row.description ?? ""),
+        agentId: row.agent_id ? String(row.agent_id) : undefined,
+        detectedAt: new Date(String(row.detected_at)),
+        lastDetectedAt: new Date(String(row.last_detected_at)),
+        frequency: Number(row.frequency ?? 1),
+        attemptedTools: parseArr(row.attempted_tools),
+        sessionIds: parseArr(row.session_ids),
+        detectedBy: row.detected_by as GapDetectionMethod,
+        sampleResponse: row.sample_response ? String(row.sample_response) : undefined,
+        solvable: Number(row.solvable ?? 1) === 1,
+        suggestedFix: (row.suggested_fix as CapabilityGap["suggestedFix"]) ?? undefined,
+        priority: Number(row.priority ?? 1),
+        status: (row.status as CapabilityGap["status"]) ?? "open",
+        resolutionNote: row.resolution_note ? String(row.resolution_note) : undefined,
+        metadata: (() => { try { return JSON.parse((row.metadata as string) || "{}"); } catch { return {}; } })(),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 删除缺口（内存 + 持久化）。
+   */
+  removeGap(gapId: string): boolean {
+    const existed = this.gaps.delete(gapId);
+    if (existed && this.config.persist) {
+      try { deleteCapabilityGap(gapId); } catch (err) { logger.debug({ err, gapId }, "P1-1: deleteCapabilityGap failed"); }
+    }
+    return existed;
   }
 }

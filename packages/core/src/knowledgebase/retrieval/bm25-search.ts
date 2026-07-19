@@ -195,8 +195,13 @@ export function searchByBM25(opts: BM25SearchOptions): RetrievedChunk[] {
   if (opts.agentId !== undefined) filter.agentId = opts.agentId;
   if (opts.userId !== undefined) filter.userId = opts.userId;
 
-  // 优先 FTS5，失败降级
-  if (probeFts5()) {
+  // 【修复】FTS5 的 unicode61 分词器不切分 CJK（中文按空格当单 token），
+  // 导致 `MATCH '中文词'` 命中率极低。含 CJK 时直接走 LIKE 降级路径（
+  // tokenizeQuery 对 CJK 做 2-gram），保证中文可检索；纯 ASCII 查询仍优先 FTS5（BM25 打分更准）。
+  const hasCJK = /[\u4e00-\u9fff]/.test(opts.query);
+
+  // 纯 ASCII/无中文：优先 FTS5，运行时异常降级 LIKE
+  if (!hasCJK && probeFts5()) {
     try {
       return searchByFTS5(opts, filter, topK);
     } catch {

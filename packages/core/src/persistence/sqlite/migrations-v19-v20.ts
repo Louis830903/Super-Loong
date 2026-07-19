@@ -107,32 +107,11 @@ export function migrateV20(db: SqlJsDatabase): void {
     const existingTables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
     const tableNames = new Set(existingTables.length ? existingTables[0].values.map((v: unknown[]) => v[0] as string) : []);
 
-    // video_jobs (v15)
-    if (tableNames.has("video_jobs")) {
-      tablesToConvert.push({
-        name: "video_jobs",
-        createSql: `CREATE TABLE video_jobs (
-          id TEXT PRIMARY KEY,
-          status TEXT NOT NULL DEFAULT 'pending',
-          input_json TEXT,
-          progress_json TEXT,
-          output_json TEXT,
-          error TEXT,
-          workspace_dir TEXT,
-          cost_estimate_cny REAL DEFAULT 0,
-          cost_actual_cny REAL,
-          cost_limit_cny REAL DEFAULT 5.0,
-          concurrency_slot INTEGER,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )`,
-        indexSqls: [
-          "CREATE INDEX IF NOT EXISTS idx_video_jobs_status ON video_jobs(status)",
-          "CREATE INDEX IF NOT EXISTS idx_video_jobs_created ON video_jobs(created_at)",
-        ],
-        timestampCols: ["created_at", "updated_at"],
-      });
-    }
+    // video_jobs (v15/v16)：【修复】不纳入 TEXT 转换。
+    // video-job-repo 的 VideoJobRow.created_at/updated_at 契约是 number（epoch ms），
+    // 应用写入 Date.now() 数字；若转 TEXT 亲和性会把数字强制存成字符串，
+    // 违背 number 契约并破坏数值比较。历史上 v20 因 exec() 缺陷从未真正转过
+    // video_jobs，故排除零影响（时间戳统一由 repo 层保证）。
 
     // agent_provider_templates (v16)
     if (tableNames.has("agent_provider_templates")) {
@@ -151,57 +130,15 @@ export function migrateV20(db: SqlJsDatabase): void {
       });
     }
 
-    // kb_documents (v17)
-    if (tableNames.has("kb_documents")) {
-      tablesToConvert.push({
-        name: "kb_documents",
-        createSql: `CREATE TABLE kb_documents (
-          id TEXT PRIMARY KEY,
-          agent_id TEXT,
-          user_id TEXT,
-          filename TEXT NOT NULL,
-          mime TEXT,
-          size INTEGER NOT NULL DEFAULT 0,
-          content_hash TEXT NOT NULL,
-          source_path TEXT,
-          status TEXT NOT NULL DEFAULT 'pending',
-          error TEXT,
-          metadata TEXT DEFAULT '{}',
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )`,
-        indexSqls: [
-          "CREATE INDEX IF NOT EXISTS idx_kb_docs_agent ON kb_documents(agent_id)",
-          "CREATE INDEX IF NOT EXISTS idx_kb_docs_user ON kb_documents(user_id)",
-          "CREATE INDEX IF NOT EXISTS idx_kb_docs_hash ON kb_documents(content_hash)",
-          "CREATE INDEX IF NOT EXISTS idx_kb_docs_status ON kb_documents(status)",
-        ],
-        timestampCols: ["created_at", "updated_at"],
-      });
-    }
-
-    // kb_chunks (v17)
-    if (tableNames.has("kb_chunks")) {
-      tablesToConvert.push({
-        name: "kb_chunks",
-        createSql: `CREATE TABLE kb_chunks (
-          id TEXT PRIMARY KEY,
-          doc_id TEXT NOT NULL,
-          chunk_index INTEGER NOT NULL,
-          content TEXT NOT NULL,
-          embedding BLOB,
-          embedding_type TEXT DEFAULT 'simple',
-          token_count INTEGER DEFAULT 0,
-          metadata TEXT DEFAULT '{}',
-          created_at TEXT NOT NULL
-        )`,
-        indexSqls: [
-          "CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(doc_id)",
-          "CREATE UNIQUE INDEX IF NOT EXISTS uq_kb_chunks_doc_idx ON kb_chunks(doc_id, chunk_index)",
-        ],
-        timestampCols: ["created_at"],
-      });
-    }
+    // kb_documents / kb_chunks (v17)：【修复】不纳入 TEXT 转换。
+    // 两点原因：
+    //   1) kb_chunks 是 external-content FTS5 表 kb_chunks_fts 的内容源，其同步依赖
+    //      挂在 kb_chunks 上的 INSERT/DELETE/UPDATE 触发器（v17 创建）。v20 的"重建表"
+    //      （RENAME→CREATE→INSERT→DROP 旧表）会连带删除这些触发器且不重建，导致 FTS5
+    //      不再自动同步、BM25 检索全空。
+    //   2) kb-repo 的 KBDocument/KBChunk.createdAt 契约为 number（epoch ms），转 TEXT
+    //      亲和性会把数字强制存成字符串，违背 number 契约。
+    // v20 历史上因 exec() 缺陷从未真正运行过，故排除零影响。
 
     let convertedCount = 0;
     for (const table of tablesToConvert) {
@@ -233,7 +170,9 @@ export function migrateV20(db: SqlJsDatabase): void {
       db.run(table.createSql);
 
       // Step 3: Copy data with conversion
-      db.run(`INSERT INTO ${tName} SELECT ${selectCols} FROM ${oldName}`);
+      // 【修复】显式列名插入（位置无关）：避免新表列数与旧表 SELECT 列数不一致时报
+      // "N columns but M values"（如 v16 给 video_jobs ALTER 补列后，v20 建表 SQL 未同步）。
+      db.run(`INSERT INTO ${tName} (${allCols.join(", ")}) SELECT ${selectCols} FROM ${oldName}`);
 
       // Step 4: Drop old table
       db.run(`DROP TABLE ${oldName}`);

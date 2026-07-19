@@ -14,6 +14,8 @@ from .config import DINGTALK_CONFIG_SCHEMA, DINGTALK_CAPABILITIES
 from .gateway import DingTalkGateway
 from .outbound import DingTalkOutbound
 from .status import DingTalkStatus
+from .doctor import DingTalkDoctor
+from .security import DingTalkSecurity
 
 
 class DingTalkConfigAdapter:
@@ -46,6 +48,8 @@ def create_plugin() -> ChannelPlugin:
     gateway = DingTalkGateway()
     outbound = DingTalkOutbound()
     status = DingTalkStatus(gateway=gateway)
+    doctor = DingTalkDoctor()
+    security = DingTalkSecurity()
 
     return ChannelPlugin(
         id="dingtalk",
@@ -57,4 +61,6 @@ def create_plugin() -> ChannelPlugin:
         outbound_adapter=outbound,
         inbound_adapter=gateway,       # DingTalkGateway 同时实现 InboundAdapter
         status_adapter=status,
+        doctor_adapter=doctor,         # P2-2: 配置自检（对齐飞书）
+        security_adapter=security,     # P2-2: 安全审计（Stream 连接鉴权）
     )

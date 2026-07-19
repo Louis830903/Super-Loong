@@ -99,6 +99,53 @@ export async function evolutionRoutes(app: FastifyInstance, ctx: AppContext) {
     return agents.length > 0 ? agents[0].id : null;
   };
 
+  // P1-1: 查询能力缺口（系统在对话中自动发现"缺什么能力"）
+  app.get<{ Querystring: { status?: string; minPriority?: string } }>(
+    "/api/evolution/gaps",
+    async (request, reply) => {
+      const { status, minPriority } = request.query;
+      const gaps = engine.getCapabilityGaps({
+        status,
+        minPriority: minPriority ? parseInt(minPriority, 10) : undefined,
+      });
+      return sendSuccess(reply, { gaps, total: gaps.length });
+    },
+  );
+
+  // P1-2: 工具骨架提案（自进化生成的候选工具，人工审核）
+  app.get<{ Querystring: { status?: string } }>(
+    "/api/evolution/tool-proposals",
+    async (request, reply) => {
+      const proposals = engine.getToolProposals(request.query.status);
+      return sendSuccess(reply, { proposals, total: proposals.length });
+    },
+  );
+
+  // P1-2: 批准提案（先过静态校验 + 安全扫描，通过才 approved）
+  app.post<{ Params: { id: string } }>(
+    "/api/evolution/tool-proposals/:id/approve",
+    async (request, reply) => {
+      const result = await engine.approveToolProposal(request.params.id);
+      if (!result.ok) return Errors.badRequest(reply, result.message);
+      return sendSuccess(reply, result);
+    },
+  );
+
+  // P1-2: 拒绝提案
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    "/api/evolution/tool-proposals/:id/reject",
+    async (request, reply) => {
+      const result = engine.rejectToolProposal(request.params.id, request.body?.reason);
+      if (!result.ok) return Errors.badRequest(reply, result.message);
+      return sendSuccess(reply, result);
+    },
+  );
+
+  // P1-3: 自进化模块激活状态（按 STAGE 分阶段）
+  app.get("/api/evolution/activation", async (_req, reply) => {
+    return sendSuccess(reply, { steps: engine.getActivationStatus() });
+  });
+
   // ─── Interactions ──────────────────────────────────────────
 
   app.post("/api/evolution/interactions", async (req, reply) => {
