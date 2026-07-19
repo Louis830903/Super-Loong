@@ -50,12 +50,13 @@ function legacyIdFromEntry(tpl: (typeof builtinAgentCatalogMeta)[number]): strin
 export async function ensureBuiltinAgents(
   agentManager: AgentManager,
   defaultLlmConfig: Record<string, unknown>,
-): Promise<{ created: number; updated: number; skipped: number }> {
+): Promise<{ created: number; updated: number; skipped: number; pruned: number }> {
   let created = 0;
   let updated = 0;
   let skipped = 0;
   let migrated = 0;
   let failed = 0;
+  let pruned = 0;
   const total = builtinAgentCatalogMeta.length;
 
   // 🔧 事务批处理：211 次 SQLite 写入合并为 1 个事务
@@ -164,6 +165,38 @@ export async function ensureBuiltinAgents(
     }
   }
 
+  // 🔧 剪枝：删除“标记为内置、但已不在当前目录”的孤儿 Agent。
+  // 背景：加载器过去只增不删，跨版本累积的旧内置 Agent 一直残留在 SQLite 里，
+  //   导致运行时 Agent 数超过目录定义数（如 300 vs 211）。此处按当前目录做集合差集清理。
+  // 安全：仅清 isBuiltin=true 且 id 以 builtin_ 开头且不在目录里的官方孤儿；
+  //   用户 Fork(isBuiltin=false)、自定义 Agent、默认 Agent 一律保留。
+  try {
+    const catalogIds = new Set(builtinAgentCatalogMeta.map((t) => t.id));
+    // listAgents() 返回新数组快照，可安全边遍历边删除
+    const snapshot = agentManager.listAgents();
+    for (const state of snapshot) {
+      const meta = (state.config as { metadata?: Record<string, unknown> } | undefined)?.metadata;
+      const id = (state as { id?: string }).id;
+      if (
+        id &&
+        meta?.isBuiltin === true &&
+        id.startsWith("builtin_") &&
+        !catalogIds.has(id)
+      ) {
+        try {
+          agentManager.deleteAgent(id);
+          deleteAgentConfig(id);
+          logConfigChange("config.builtin-agent.prune", sanitizeForAudit({ agentId: id, reason: "not-in-catalog" }));
+          pruned++;
+        } catch (err) {
+          logger.warn({ agentId: id, err }, "Failed to prune orphan builtin agent");
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, "Builtin agent prune step failed (non-fatal)");
+  }
+
   // 提交事务
   if (inTransaction) {
     try {
@@ -178,9 +211,9 @@ export async function ensureBuiltinAgents(
 
   // P2-3: 始终输出摘要日志
   logger.info(
-    { created, updated, skipped, migrated, failed, total },
+    { created, updated, skipped, migrated, pruned, failed, total },
     "Builtin expert agents check complete",
   );
 
-  return { created, updated, skipped };
+  return { created, updated, skipped, pruned };
 }

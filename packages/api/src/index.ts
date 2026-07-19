@@ -19,7 +19,7 @@ import dotenv from "dotenv";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createAppContext } from "./context.js";
-import { closeDatabase, loadAllAgentConfigs, saveAgentConfig, setTracingEnabled, ensureBuiltinAgents, HeartbeatRunner, DEFAULT_HEARTBEAT_CONFIG, checkForUpdates, initTelemetry } from "@super-agent/core";
+import { closeDatabase, loadAllAgentConfigs, saveAgentConfig, deleteAgentConfig, setTracingEnabled, ensureBuiltinAgents, HeartbeatRunner, DEFAULT_HEARTBEAT_CONFIG, checkForUpdates, initTelemetry } from "@super-agent/core";
 import { getProviderById, getModelById, getModelCatalog } from "@super-agent/core";
 
 import { registerMiddleware } from "./middleware/index.js";
@@ -481,12 +481,44 @@ app.addHook("onClose", () => stopUpdatePoller());
     }
   }
 
+  // ─── Step 2.5: 清理历史累积的重复 "default" Agent ─────────────
+  // 背景：早期版本在每次启动都会创建一个 name="default" 的兑底 Agent 并持久化，
+  //   跨重启不断累积（实测多达数十个），导致 Agent 列表膨胀，用户误以为是“未定义的专家”。
+  //   Step 2 现已用 count===0 守卫只创建一个；此处清理历史垃圾，且每次启动自愈。
+  // 安全：仅删 name==="default" 且描述为默认文案、无 isBuiltin 标记、且非当前默认路由目标的 Agent；
+  //   保留默认 Agent（如“吕大胖”）、211 个内置专家、以及用户自定义 Agent。
+  {
+    const defaultRouteId = ctx.router.getDefaultAgentId();
+    let junkDefaultsRemoved = 0;
+    for (const state of ctx.agentManager.listAgents()) {
+      const cfg = (state.config ?? {}) as { name?: string; description?: string; metadata?: { isBuiltin?: boolean } };
+      const isJunkDefault =
+        cfg.name === "default" &&
+        cfg.description === "Default AI assistant" &&
+        cfg.metadata?.isBuiltin !== true &&
+        state.id !== defaultRouteId;
+      if (isJunkDefault) {
+        try {
+          ctx.agentManager.deleteAgent(state.id);
+          deleteAgentConfig(state.id);
+          junkDefaultsRemoved++;
+        } catch (err) {
+          app.log.warn({ agentId: state.id, err }, "Failed to remove duplicate default agent");
+        }
+      }
+    }
+    if (junkDefaultsRemoved > 0) {
+      app.log.info({ removed: junkDefaultsRemoved }, "已清理重复的 'default' Agent（历史累积垃圾）");
+    }
+  }
+
   // ─── Step 3: 在默认路由已确定之后，注册内置专家 Agent ────────
   // ⚠️ v3 审查关键时序：必须在 setDefaultAgent() 之后调用
   // 否则 211 个内置 Agent 会抢占默认路由目标
-  const { created: builtinCreated, updated: builtinUpdated, skipped: builtinSkipped } = await ensureBuiltinAgents(ctx.agentManager, llmConfig as unknown as Record<string, unknown>);
+  const { created: builtinCreated, updated: builtinUpdated, skipped: builtinSkipped, pruned: builtinPruned } = await ensureBuiltinAgents(ctx.agentManager, llmConfig as unknown as Record<string, unknown>);
   // P2-3: 始终输出摘要日志，不仅限于 created > 0
-  app.log.info({ created: builtinCreated, updated: builtinUpdated, skipped: builtinSkipped }, "Builtin expert agents check");
+  // pruned: 清理“已不在当前目录”的孤儿内置 Agent（跨版本累积），避免 Agent 列表膨胀
+  app.log.info({ created: builtinCreated, updated: builtinUpdated, skipped: builtinSkipped, pruned: builtinPruned }, "Builtin expert agents check");
 
   // ─── Step 4: HeartbeatRunner 接入全局调度 ───────────────
   // 为默认 Agent 构造 HeartbeatRunner（如果心跳配置启用）
