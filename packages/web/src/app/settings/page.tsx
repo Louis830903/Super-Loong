@@ -70,6 +70,10 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState<Record<string, boolean>>({});
   const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({});
   const [loading, setLoading] = useState(true);
+  // 实时拉取的模型列表（存在时覆盖静态目录用于下拉展示）
+  const [liveModels, setLiveModels] = useState<Record<string, ModelDef[]>>({});
+  const [refreshingModels, setRefreshingModels] = useState<Record<string, boolean>>({});
+  const [modelNotes, setModelNotes] = useState<Record<string, string>>({});
 
   // ── 服务配置状态 ──
   const [services, setServices] = useState<ServiceInfo[]>([]);
@@ -255,6 +259,31 @@ export default function SettingsPage() {
       setTestResults((r) => ({ ...r, [providerId]: { success: false, message: err.message || "清除失败" } }));
     } finally {
       setSaving((s) => ({ ...s, [providerId]: false }));
+    }
+  };
+
+  // 手动获取提供商最新模型列表（实时拉取 + 与静态目录合并）。
+  // 仅在用户点击时触发（不自动调外部接口）；未填新 Key 时后端用已存 Key。
+  const handleRefreshModels = async (providerId: string) => {
+    setRefreshingModels((r) => ({ ...r, [providerId]: true }));
+    setModelNotes((n) => { const x = { ...n }; delete x[providerId]; return x; });
+    try {
+      const body: Record<string, unknown> = {};
+      if (apiKeys[providerId]) body.apiKey = apiKeys[providerId];
+      if (baseUrls[providerId]) body.baseUrl = baseUrls[providerId];
+      const data = await apiFetch<{ models: ModelDef[]; liveCount: number; newCount: number }>(
+        `/api/models/providers/${providerId}/models`,
+        { method: "POST", body: JSON.stringify(body) },
+      );
+      setLiveModels((m) => ({ ...m, [providerId]: data.models }));
+      setModelNotes((n) => ({
+        ...n,
+        [providerId]: `已获取 ${data.liveCount} 个实时模型` + (data.newCount > 0 ? `，含 ${data.newCount} 个新型号` : ""),
+      }));
+    } catch (err: any) {
+      setModelNotes((n) => ({ ...n, [providerId]: err.message || "获取模型列表失败" }));
+    } finally {
+      setRefreshingModels((r) => ({ ...r, [providerId]: false }));
     }
   };
 
@@ -491,9 +520,22 @@ export default function SettingsPage() {
                   )}
 
                   {/* Model Selector — 非自定义、非端点型 provider 使用下拉选择 */}
-                  {!isCustom && !isEndpointBased && provider.models.length > 0 && (
+                  {!isCustom && !isEndpointBased && provider.models.length > 0 && (() => {
+                    const modelList = liveModels[provider.id] ?? provider.models;
+                    return (
                     <div>
-                      <label className="block text-sm text-zinc-400 mb-1.5">选择模型</label>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-sm text-zinc-400">选择模型</label>
+                        <button
+                          onClick={() => handleRefreshModels(provider.id)}
+                          disabled={refreshingModels[provider.id]}
+                          className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50"
+                          title="调用提供商接口获取最新模型型号（使用当前 API Key）"
+                        >
+                          {refreshingModels[provider.id] ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                          获取最新模型
+                        </button>
+                      </div>
                       <select
                         value={currentModel || ""}
                         onChange={(e) => setSelectedModels((m) => ({ ...m, [provider.id]: e.target.value }))}
@@ -501,17 +543,22 @@ export default function SettingsPage() {
                         className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-white focus:border-blue-500 focus:outline-none"
                       >
                         <option value="">-- 请选择 --</option>
-                        {provider.models.map((m) => (
+                        {modelList.map((m) => (
                           <option key={m.id} value={m.id}>
-                            {m.name} ({formatCtx(m.contextWindow)}
+                            {m.name} ({m.contextWindow > 0 ? formatCtx(m.contextWindow) : "长度未知"}
                             {m.supportsVision ? " · 视觉" : ""}
                             {m.supportsReasoning ? " · 推理" : ""}
-                            {m.tags.includes("free") ? " · 免费" : ""})
+                            {m.tags.includes("free") ? " · 免费" : ""}
+                            {m.tags.includes("live") ? " · 新" : ""})
                           </option>
                         ))}
                       </select>
+                      {modelNotes[provider.id] && (
+                        <p className="mt-1.5 text-[11px] text-zinc-500">{modelNotes[provider.id]}</p>
+                      )}
                     </div>
-                  )}
+                    );
+                  })()}
 
                   {/* 火山引擎端点 ID / 自定义 Model ID 自由输入 */}
                   {(isCustom || isEndpointBased) && (

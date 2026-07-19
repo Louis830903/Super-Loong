@@ -114,6 +114,26 @@ export class LLMProvider {
   }
 
   /**
+   * 列出该 provider 实时可用的模型 ID（调用 OpenAI 兼容的 GET {baseUrl}/models）。
+   *
+   * 用于设置页"获取最新模型"：提供商上新型号时无需改代码即可发现。
+   * 兼容两种返回：分页 Page.data 或异步迭代；失败时抛错，由调用方处理。
+   */
+  async listModels(): Promise<string[]> {
+    const page = await this.client.models.list();
+    const data = (page as unknown as { data?: Array<{ id?: string }> })?.data;
+    if (Array.isArray(data)) {
+      return data.map((m) => String(m?.id ?? "")).filter((id) => id.length > 0);
+    }
+    // 降级处理：部分非标准实现不返回 data 数组，改用异步迭代
+    const ids: string[] = [];
+    for await (const m of page as AsyncIterable<{ id?: string }>) {
+      if (m?.id) ids.push(String(m.id));
+    }
+    return ids;
+  }
+
+  /**
    * Send a chat completion request.
    * Automatically falls back to backup provider on error.
    */

@@ -25,6 +25,25 @@ import {
 import type { AppContext } from "../context.js";
 // SEC-P0-06：PUT / DELETE 需 RBAC 鉴权，对齐 /api/ws/broadcast 等同项目端点风格。
 import { requirePermission } from "../auth/index.js";
+import type { ModelDef } from "@super-agent/core";
+
+// 非对话模型 id 关键词（实时列表中过滤掉，只保留可对话的 chat 模型）
+const NON_CHAT_MODEL_RE = /(embedding|embed|rerank|whisper|tts|audio|speech|voice|moderation|image|dall|ocr|clip|\bbge\b)/i;
+
+/** 从模型 id 启发式推断能力（用于目录里没有的新型号）。 */
+function inferModelDef(id: string): ModelDef {
+  const lower = id.toLowerCase();
+  return {
+    id,
+    name: id,
+    contextWindow: 0,            // 未知（实时接口不返回上下文长度）
+    supportsFunctions: true,     // OpenAI 兼容型默认支持
+    supportsVision: /(vl|vision|multimodal|omni|image)/.test(lower),
+    supportsReasoning: /(reason|think|-r1|qwq|o1|o3)/.test(lower),
+    supportsStreaming: true,
+    tags: ["live"],              // 标记为实时发现的新模型
+  };
+}
 
 export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
   // ── GET /api/models/catalog ─────────────────────────────────
@@ -243,6 +262,85 @@ export async function modelRoutes(app: FastifyInstance, ctx: AppContext) {
         // API-P1-03：详细错误仅进日志，对外统一 502 不回显内部栈
         app.log.error({ providerId: id, modelId, err }, "Provider connectivity test failed");
         return Errors.badGateway(reply, "模型连接测试失败", { providerId: id, modelId });
+      }
+    }
+  );
+
+  // ── POST /api/models/providers/:id/models ───────────────
+  // 手动拉取提供商实时模型列表（OpenAI 兼容 GET /models）并与静态目录合并，
+  // 使提供商新发布的型号无需改代码即可在选择框出现。
+  // 安全：与 /test 同级——requirePermission("*") + 限速（防刷 Key 配额）。
+  app.post<{ Params: { id: string }; Body: { apiKey?: string; baseUrl?: string } }>(
+    "/api/models/providers/:id/models",
+    {
+      preHandler: requirePermission("*"),
+      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const body = request.body as { apiKey?: string; baseUrl?: string } | undefined;
+      const providerDef = getProviderById(id);
+      if (!providerDef) {
+        return Errors.notFound(reply, "Unknown provider");
+      }
+      const record = ctx.providerStore.get(id);
+
+      // 脱敏哨兵：前端可能回传脱敏 key，此时用已存的真实 key
+      const existingKeyMasked = record?.apiKey ? maskApiKey(record.apiKey) : undefined;
+      const incomingKeyRaw = typeof body?.apiKey === "string" ? body.apiKey : "";
+      const apiKey =
+        incomingKeyRaw && !isMaskedApiKey(incomingKeyRaw, existingKeyMasked)
+          ? incomingKeyRaw
+          : record?.apiKey;
+      if (!apiKey) {
+        return Errors.badRequest(reply, "请先配置 API Key 再获取模型列表");
+      }
+
+      const baseUrl = body?.baseUrl || record?.baseUrl || providerDef.baseUrl;
+
+      try {
+        const provider = new LLMProvider({ type: "openai", model: "", apiKey, baseUrl, providerId: id });
+        const liveIds = await provider.listModels();
+
+        // 合并：目录已有→用目录元数据；目录没有→启发式推断；过滤非对话模型
+        const catalogById = new Map(providerDef.models.map((m) => [m.id, m]));
+        const seen = new Set<string>();
+        const merged: ModelDef[] = [];
+        const newModels: string[] = [];
+        for (const raw of liveIds) {
+          const mid = (raw ?? "").trim();
+          if (!mid || NON_CHAT_MODEL_RE.test(mid) || seen.has(mid)) continue;
+          seen.add(mid);
+          const existing = catalogById.get(mid);
+          if (existing) {
+            merged.push(existing);
+          } else {
+            merged.push(inferModelDef(mid));
+            newModels.push(mid);
+          }
+        }
+        // 目录里有、实时未返回的模型也保留（避免误删用户在用的）
+        for (const m of providerDef.models) {
+          if (!seen.has(m.id)) merged.push(m);
+        }
+
+        logConfigChange("config.provider.models.refresh", {
+          providerId: id,
+          liveCount: seen.size,
+          newCount: newModels.length,
+        });
+
+        return sendSuccess(reply, {
+          models: merged,
+          liveCount: seen.size,
+          newCount: newModels.length,
+          newModels,
+          fetchedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        // 详细错误仅进日志，对外统一 502
+        app.log.error({ providerId: id, err }, "获取实时模型列表失败");
+        return Errors.badGateway(reply, "获取模型列表失败（请检查 API Key / Base URL）", { providerId: id });
       }
     }
   );
