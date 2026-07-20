@@ -103,7 +103,13 @@ class SqlJsCompatDB {
   }
 }
 
-/** sql.js 兼容 Statement 包装（桥接 step()/getAsObject()/bind()） */
+/**
+ * Statement 包装：同时暴露两套 API
+ *   - sql.js 兼容：bind()/step()/getAsObject()/free()
+ *   - better-sqlite3 原生：get()/run()/all()
+ * @why api-key-store、tools/index 等按 better-sqlite3 原生风格调用
+ *   prepare().run()/.all()；此前兼容层未暴露这两个方法，导致
+ *   API Key CRUD 运行时 500、动态工具持久化被 try/catch 静默降级。 */
 class CompatStatement {
   private stmt: Database.Statement;
   private _boundParams: unknown[] = [];
@@ -121,6 +127,18 @@ class CompatStatement {
   get(...params: unknown[]): Record<string, unknown> | undefined {
     const p = params.length > 0 ? params : this._boundParams;
     return this.stmt.get(...p) as Record<string, unknown> | undefined;
+  }
+
+  /** better-sqlite3 原生 run：写语句执行，返回 {changes, lastInsertRowid} */
+  run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint } {
+    const p = params.length > 0 ? params : this._boundParams;
+    return this.stmt.run(...p);
+  }
+
+  /** better-sqlite3 原生 all：读语句执行，返回全部行 */
+  all(...params: unknown[]): Record<string, unknown>[] {
+    const p = params.length > 0 ? params : this._boundParams;
+    return this.stmt.all(...p) as Record<string, unknown>[];
   }
 
   /** 兼容 sql.js 的 step() → getAsObject() 模式：直接执行并返回行 */

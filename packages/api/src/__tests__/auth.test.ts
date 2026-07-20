@@ -10,14 +10,37 @@
  *   DELETE /api/auth/keys/:key      — 撤销 API Key
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import { registerAuth, authRoutes } from "../auth/index.js";
+import { initDatabase, closeDatabase } from "@super-agent/core";
 
 describe("身份认证路由", () => {
   let app: FastifyInstance;
   let adminToken: string;
+  let tmpDir: string;
+
+  // 共享 SQLite 单例：ApiKeyStore 迁移到 getDatabase() 后，测试须先 initDatabase
+  beforeAll(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "sa-test-auth-"));
+    await initDatabase(path.join(tmpDir, "test.db"));
+  });
+
+  afterAll(async () => {
+    // 先 flush 事件循环：validate() 内 setImmediate 异步写 last_used_at，
+    // 避免在 closeDatabase() 之后才触发、对已关闭 DB 写入产生噪音
+    await new Promise((resolve) => setImmediate(resolve));
+    await closeDatabase();
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* 忽略清理失败 */
+    }
+  });
 
   beforeEach(async () => {
     // 启用完整认证链路

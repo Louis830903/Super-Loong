@@ -97,7 +97,7 @@ describe("语音路由", () => {
     });
     expect(res.statusCode).toBe(503);
     const body = JSON.parse(res.body);
-    expect(body.detail).toBeDefined();
+    expect(body.error.code).toBe("SERVICE_UNAVAILABLE");
   });
 
   // ── Synthesize ─────────────────────────────────────────
@@ -114,9 +114,7 @@ describe("语音路由", () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it("有 voiceProvider 时 synthesize 注册但 sendSuccess 包裹 Buffer 与 audio/mpeg Content-Type 冲突 → 500", async () => {
-    // 注：voice.ts 合成端点返回 raw binary 却用 sendSuccess 包裹成 JSON，
-    // Fastify 拒绝发送 object 类型到 audio/mpeg content-type。
+  it("有 voiceProvider 时 synthesize 返回音频二进制（200 + audio/mpeg）", async () => {
     const voiceProvider = new MockVoiceProvider();
     const ctx = { voiceProvider } as unknown as AppContext;
     const app = await buildApp(voiceRoutes, ctx);
@@ -125,7 +123,9 @@ describe("语音路由", () => {
       url: "/api/voice/synthesize",
       payload: { text: "你好世界" },
     });
-    // 当前返回 500（FST_ERR_REP_INVALID_PAYLOAD_TYPE）
-    expect(res.statusCode).toBe(500);
+    // 二进制端点：直发 Buffer，不再被 JSON 壳包裹
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("audio/mpeg");
+    expect(res.rawPayload.length).toBeGreaterThan(0);
   });
 });

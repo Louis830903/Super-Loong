@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Sidebar from "@/components/layout/sidebar";
-import { ToastContainer } from "@/components/ui/toast";
-import { AuthGuard } from "@/components/auth/auth-guard";
+import { AppShell } from "@/components/layout/app-shell";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -53,10 +51,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className="min-h-full bg-background text-foreground">
-        <AuthGuard sidebar={<Sidebar />}>
-          {children}
-        </AuthGuard>
-        <ToastContainer />
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

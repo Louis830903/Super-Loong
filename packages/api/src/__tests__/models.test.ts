@@ -322,6 +322,6 @@ describe("模型与 Provider 路由", () => {
     expect(res.statusCode).toBe(502);
     const body = JSON.parse(res.body);
     expect(body.success).toBe(false);
-    expect(body.error).toBe("Connection failed"); // 统一 502 不泄露内部栈
+    expect(body.error.code).toBe("BAD_GATEWAY"); // 统一错误壳：不泄露内部栈
   });
 });

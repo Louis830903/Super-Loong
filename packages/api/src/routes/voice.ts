@@ -377,7 +377,9 @@ export async function voiceRoutes(app: FastifyInstance, ctx: AppContext) {
       const contentType = format === "wav" ? "audio/wav" : "audio/mpeg";
       reply.header("Content-Type", contentType);
       reply.header("Content-Length", audioBuffer.length);
-      return sendSuccess(reply, audioBuffer);
+      // 二进制端点：直发 Buffer，不套 JSON 壳（sendSuccess 会将 Buffer 包成
+      // 对象与 audio/mpeg 冲突 → Fastify FST_ERR_REP_INVALID_PAYLOAD_TYPE → 500）
+      return reply.send(audioBuffer);
     } catch (err: any) {
       app.log.error({ err }, "Voice synthesis failed");
       // API-P1-03：内部栈仅进日志
